@@ -5,11 +5,13 @@
 use horizon_mod_sdk::{
     export_server_mod,
     server::{
-        BlockPos, Player, Pos, Registration, ServerMod, block_entities, entities, net, players,
+        BlockPos, Player, Pos, Registration, ServerMod, block_entities, containers, entities, net,
+        players,
     },
 };
 
 const COUNTER: &str = "gears:counter";
+const CRATE: &str = "gears:crate";
 const DIMENSION: &str = "minecraft:overworld";
 
 struct Gears {
@@ -25,6 +27,8 @@ impl ServerMod for Gears {
             ticks: Vec::new(),
             gears: Vec::new(),
         };
+        // The crate holds items (capability `containers`) and opens as a chest.
+        containers::register(CRATE)?;
         Ok((this, Registration::new().on_blocks()))
     }
 
@@ -82,6 +86,9 @@ impl ServerMod for Gears {
     }
 
     fn block_used(&mut self, player: &str, dimension: &str, pos: Pos, state: &str) -> bool {
+        if state.starts_with(CRATE) {
+            return containers::open(player, dimension, pos.x, pos.y, pos.z);
+        }
         if !state.starts_with(COUNTER) {
             return false;
         }

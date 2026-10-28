@@ -112,9 +112,11 @@ pub enum Capability {
     Net,
     /// Marker entities a server mod places and moves (interface `entities`).
     Entities,
+    /// The mod's own blocks that hold items (interface `containers`).
+    Containers,
 }
 impl Capability {
-    pub const ALL: [Capability; 15] = [
+    pub const ALL: [Capability; 16] = [
         Capability::GameRead,
         Capability::Chat,
         Capability::Hud,
@@ -130,6 +132,7 @@ impl Capability {
         Capability::BlockEntities,
         Capability::Net,
         Capability::Entities,
+        Capability::Containers,
     ];
     /// Whether a server mod may have it: the others act on a local player.
     pub fn on_server(self) -> bool {
@@ -141,6 +144,7 @@ impl Capability {
                 | Capability::BlockEntities
                 | Capability::Net
                 | Capability::Entities
+                | Capability::Containers
         )
     }
     /// The WIT interface it grants, in `horizon:mods`.
@@ -161,6 +165,7 @@ impl Capability {
             Capability::BlockEntities => "block-entities",
             Capability::Net => "net",
             Capability::Entities => "entities",
+            Capability::Containers => "containers",
         }
     }
     /// May change in any release: a mod uses it only with
@@ -175,6 +180,7 @@ impl Capability {
                 | Capability::BlockEntities
                 | Capability::Net
                 | Capability::Entities
+                | Capability::Containers
         )
     }
     /// What the player reads before turning the mod on: "May <this>".
@@ -198,6 +204,7 @@ impl Capability {
             }
             Capability::Net => "send messages between the game and the server it plays on",
             Capability::Entities => "place and move small entities in your worlds",
+            Capability::Containers => "keep items in its own blocks and open them for players",
             Capability::Recipes => {
                 "read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items"
             }
@@ -245,6 +252,7 @@ impl fmt::Display for Capability {
             Capability::BlockEntities => "block-entities",
             Capability::Net => "net",
             Capability::Entities => "entities",
+            Capability::Containers => "containers",
         };
         f.write_str(name)
     }

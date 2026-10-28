@@ -22,6 +22,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
 | `block-entities` | [`block-entities`](#block-entities) | keep data at the positions of its own blocks and tick them |
 | `net` | [`net`](#net) | send messages between the game and the server it plays on |
 | `entities` | [`entities`](#entities) | place and move small entities in your worlds |
+| `containers` | [`containers`](#containers) | keep items in its own blocks and open them for players |
 
 ## World `horizon-mod`
 
@@ -41,7 +42,7 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `entities`, `log`, `storage`, `players`, `world`
+- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `log`, `storage`, `players`, `world`
 - Exports (what the mod provides): `block-events`, `server-net-events`, `server-events`
 
 ## World `block-host`
@@ -57,6 +58,13 @@ The game's side of capability `net` for client mods (it adds the `net` import fo
 
 - Imports (what the game offers): `net`
 - Exports (what the mod provides): `net-events`
+
+## World `containers-host`
+
+The game's side of capability `containers` (imports only).
+
+- Imports (what the game offers): `containers`
+- Exports (what the mod provides): 
 
 ## World `entities-host`
 
@@ -881,3 +889,23 @@ Capability `entities`, server mods only (manifest `api = "0.3"`, experimental): 
 | `move-to` | `func(handle: u32, x: f64, y: f64, z: f64, yaw: f32) -> bool` | Moves one of the mod's entities; false for a handle it does not hold. |
 | `set-item` | `func(handle: u32, item: string) -> bool` | Changes the item an entity is drawn as. |
 | `remove` | `func(handle: u32) -> bool` | Removes one of the mod's entities. |
+
+## `containers`
+
+Access: capability `containers`.
+
+Capability `containers`, server mods only (manifest `api = "0.3"`, experimental): the mod's own blocks that hold items and open as a chest (27 slots) for a player. The game keeps the items in the block's chest entity, saved with the chunk.
+
+### record `item-stack`
+
+| Field | Type | |
+| --- | --- | --- |
+| `item` | `string` |  |
+| `count` | `u32` |  |
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `register` | `func(block: string) -> result<_, string>` | Makes a block of the mod's (`mymod:crate`, no properties) a container: the game gives its positions a chest's slots when opened or written. At most 64 blocks per mod. |
+| `open` | `func(player: string, dimension: string, x: s32, y: s32, z: s32) -> bool` | Opens the container at a position for the player with this id, after the call; false when the player is not online. |
+| `slots` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<option<item-stack>>>` | The 27 slots of a container in a loaded chunk, as of the start of this tick; none where there is no container with items yet or none loaded. (Item components are not shown.) |
+| `set-slot` | `func(dimension: string, x: s32, y: s32, z: s32, slot: u32, stack: option<item-stack>) -> result<_, string>` | Puts a stack in slot 0 to 26 (none empties it), after the call, in a registered container; count 1 to 99. Components of what was there go. |

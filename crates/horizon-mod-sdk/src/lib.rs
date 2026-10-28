@@ -211,6 +211,8 @@ pub mod server {
     /// Capability `block-entities`: bytes kept at the positions of the
     /// mod's own blocks.
     pub use horizon::mods::block_entities;
+    /// Capability `containers`: the mod's blocks that hold items.
+    pub use horizon::mods::containers;
     /// Capability `entities`: small marker entities.
     pub use horizon::mods::entities;
     /// Capability `net`: messages to and from the mod's client half.

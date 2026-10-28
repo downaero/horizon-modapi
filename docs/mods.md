@@ -88,6 +88,7 @@ folder, loads no runtime and plays exactly like vanilla 26.3.
 | `hud` | `hud` | `set-panel(corner, lines)`, `clear()`: up to 16 lines of 256 characters |
 | `storage` | `storage` | `get(key)`, `set(key, value)`, `delete(key)`: a per-mod folder of up to 64 files, 4 MiB total, at most 1 MiB written per call |
 | `command` | `command` | `run(line)`: a vanilla command run as the player, with the player's permissions, after the hook returns (8 per call); mods' own commands are not run. `run-quiet(lines)`: up to 256 a call, the same rights, nothing in the chat (single player and Horizon's servers run them 64 a tick and log one line a batch; elsewhere they go as chat commands and their feedback shows) |
+| `containers` | `containers` | server mods: `register`, `open`, `slots`, `set-slot` for the mod's own blocks that hold items and open as a chest ([below](#capability-containers)). **Experimental:** `experimental = ["containers"]` |
 | `entities` | `entities` | server mods: `spawn`, `move-to`, `set-item`, `remove` of small marker entities drawn as an item ([below](#capability-entities)). **Experimental:** `experimental = ["entities"]` |
 | `net` | `net` | `send(player, data)`: messages between a mod's client half and its server half ([below](#capability-net)). **Experimental:** `experimental = ["net"]` |
 | `block-entities` | `block-entities` | server mods: `get`, `set`, `remove` of bytes at the positions of the mod's own blocks, and the `block-tick` and `block-used` hooks ([below](#server-mods-api-03-experimental)). **Experimental:** `experimental = ["block-entities"]` |
@@ -563,6 +564,21 @@ running mods changes. `block-used` runs when a player (the window's own or a
 LAN guest) right-clicks a block of a mod's namespace with an empty-handed
 use, not sneaking with full hands: the mod returns true to take the click,
 and the game then does nothing else with it. Vanilla blocks never reach it.
+
+### Capability `containers`
+
+**API level 11, experimental, server mods.** A block of the mod's own that
+holds items and opens as a chest. `containers.register(block)` (`mymod:crate`,
+no properties; at most 64 blocks) makes it one; `open(player, dimension, x, y,
+z)` opens it for a player (the window's own or a LAN guest) after the call,
+from `block-used` for instance; `slots(dimension, x, y, z)` reads its 27 slots
+as of the tick's start (item and count, no components) and `set-slot(...,
+slot, stack)` writes one after the call. The game keeps the items in a chest
+block entity at the position, saved with the chunk. In this first step it is
+a 27-slot chest only (no custom title or menu, no hoppers or other machines
+feeding it), and only the dimension the world is simulating is reachable.
+How the chest entity of a block that is not a vanilla chest saves and loads
+is not yet proven: keep what matters in `block-entities` too until it is.
 
 ### Capability `entities`
 

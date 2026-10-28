@@ -59,6 +59,14 @@ mod entity_bindings {
     });
 }
 use entity_bindings::{EntitiesHost, horizon::mods::entities};
+/// Capability `containers`' imports.
+mod container_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "containers-host",
+    });
+}
+use container_bindings::{ContainersHost, horizon::mods::containers};
 mod server_net_bindings {
     wasmtime::component::bindgen!({
         path: "../horizon-mod-sdk/wit",
@@ -158,6 +166,11 @@ const NET_PER_CALL: usize = 64;
 /// Entities a mod may hold at once (`entities.spawn`), and the operations
 /// it may queue per hook call.
 pub const ENTITIES_PER_MOD: usize = 1024;
+/// Blocks a mod may register as containers, slots in one, and the changes
+/// it may queue per hook call.
+const CONTAINER_BLOCKS: usize = 64;
+pub const CONTAINER_SLOTS: u32 = 27;
+const CONTAINER_OPS_PER_CALL: usize = 4096;
 const ENTITY_OPS_PER_CALL: usize = 4096;
 /// Chat lines a mod may show per call, HUD lines and their length.
 const CHAT_PER_CALL: usize = 8;
@@ -266,6 +279,29 @@ pub enum EntityOp {
     },
 }
 
+/// A stack in a mod container slot: the item and its count.
+pub type SlotStack = (String, u32);
+
+/// One change to a mod's containers.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ContainerOp {
+    /// `containers.register`: the block now holds items.
+    Register { block: String },
+    /// `containers.open`: for this player, at a position.
+    Open {
+        player: String,
+        dimension: String,
+        pos: [i32; 3],
+    },
+    /// `containers.set-slot`.
+    SetSlot {
+        dimension: String,
+        pos: [i32; 3],
+        slot: u32,
+        stack: Option<SlotStack>,
+    },
+}
+
 /// What mods asked the game to show since the last [`Mods::drain`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum Output {
@@ -330,6 +366,8 @@ pub enum Output {
         player: Option<String>,
         data: Vec<u8>,
     },
+    /// `containers.*`: a change to the mod's containers, applied in order.
+    Container { mod_id: String, op: ContainerOp },
     /// `entities.*`: a change to the mod's entities, applied in order.
     Entity { mod_id: String, op: EntityOp },
     /// `recipes.give`: a stack for a creative player.
@@ -352,6 +390,17 @@ pub trait WorldView: std::any::Any + Send {
     fn has_dimension(&self, dimension: &str) -> bool;
     /// `Err` (why) for a state string that names no block state.
     fn check_state(&self, state: &str) -> Result<(), String>;
+    /// The 27 slots of a mod container at a position, as of the tick's
+    /// start (capability `containers`); `None` where there is none.
+    fn container(
+        &self,
+        _dimension: &str,
+        _x: i32,
+        _y: i32,
+        _z: i32,
+    ) -> Option<Vec<Option<SlotStack>>> {
+        None
+    }
 }
 
 /// The view lent for the current calls, shared by every mod's store.
@@ -542,6 +591,8 @@ struct State {
     /// the next one to hand out.
     entity_handles: std::collections::HashSet<u32>,
     next_handle: u32,
+    /// Capability `containers`: the blocks the mod registered.
+    container_blocks: Vec<String>,
 }
 
 fn block_pos(p: BlockPos) -> block_bindings::exports::horizon::mods::block_events::Pos {
@@ -585,6 +636,7 @@ impl Mods {
                 && e.manifest.as_ref().is_some_and(|m| {
                     m.capabilities.contains(&crate::Capability::World)
                         || m.capabilities.contains(&crate::Capability::BlockEntities)
+                        || m.capabilities.contains(&crate::Capability::Containers)
                 })
         })
     }
@@ -677,6 +729,8 @@ impl Mods {
             NetHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             EntitiesHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
+            ContainersHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
@@ -772,6 +826,7 @@ impl Mods {
             server,
             entity_handles: Default::default(),
             next_handle: 1,
+            container_blocks: Vec::new(),
         };
         let mut store = Store::new(engine, state);
         store.limiter(|s| &mut s.limits);
@@ -2030,6 +2085,101 @@ impl State {
             op,
         });
         true
+    }
+}
+impl State {
+    /// Queues a container change, within the per-call cap.
+    fn container_op(&mut self, op: ContainerOp) -> bool {
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Container { .. }))
+            .count();
+        if queued >= CONTAINER_OPS_PER_CALL {
+            return false;
+        }
+        self.out.push(Output::Container {
+            mod_id: self.id.clone(),
+            op,
+        });
+        true
+    }
+    fn owns_container_block(&self, id: &str) -> bool {
+        id.split_once(':')
+            .is_some_and(|(ns, _)| self.block_namespaces.iter().any(|n| n == ns))
+    }
+}
+impl containers::Host for State {
+    fn register(&mut self, block: String) -> Result<(), String> {
+        if block.contains('[') || !self.owns_container_block(&block) {
+            return Err(format!("{block} is not a block of this mod"));
+        }
+        if self.container_blocks.contains(&block) {
+            return Ok(());
+        }
+        if self.container_blocks.len() >= CONTAINER_BLOCKS {
+            return Err(format!("at most {CONTAINER_BLOCKS} container blocks"));
+        }
+        if !self.container_op(ContainerOp::Register {
+            block: block.clone(),
+        }) {
+            return Err(format!("at most {CONTAINER_OPS_PER_CALL} changes a call"));
+        }
+        self.container_blocks.push(block);
+        Ok(())
+    }
+    fn open(&mut self, player: String, dimension: String, x: i32, y: i32, z: i32) -> bool {
+        self.snapshot.players.iter().any(|p| p.id == player)
+            && self.container_op(ContainerOp::Open {
+                player,
+                dimension,
+                pos: [x, y, z],
+            })
+    }
+    fn slots(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+    ) -> Option<Vec<Option<containers::ItemStack>>> {
+        let view = self.world.lock().ok()?;
+        let slots = view.as_ref()?.container(&dimension, x, y, z)?;
+        Some(
+            slots
+                .into_iter()
+                .map(|s| s.map(|(item, count)| containers::ItemStack { item, count }))
+                .collect(),
+        )
+    }
+    fn set_slot(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        slot: u32,
+        stack: Option<containers::ItemStack>,
+    ) -> Result<(), String> {
+        if slot >= CONTAINER_SLOTS {
+            return Err(format!("slot {slot}: 0 to {}", CONTAINER_SLOTS - 1));
+        }
+        if let Some(s) = &stack
+            && (!(1..=99).contains(&s.count) || s.item.len() > 128)
+        {
+            return Err("a stack of 1 to 99".into());
+        }
+        let op = ContainerOp::SetSlot {
+            dimension,
+            pos: [x, y, z],
+            slot,
+            stack: stack.map(|s| (s.item, s.count)),
+        };
+        if self.container_op(op) {
+            Ok(())
+        } else {
+            Err(format!("at most {CONTAINER_OPS_PER_CALL} changes a call"))
+        }
     }
 }
 impl entities::Host for State {

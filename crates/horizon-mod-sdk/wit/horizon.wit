@@ -864,6 +864,31 @@ interface entities {
     remove: func(handle: u32) -> bool;
 }
 
+/// Capability `containers`, server mods only (manifest `api = "0.3"`,
+/// experimental): the mod's own blocks that hold items and open as a chest
+/// (27 slots) for a player. The game keeps the items in the block's chest
+/// entity, saved with the chunk.
+interface containers {
+    record item-stack {
+        item: string,
+        count: u32,
+    }
+    /// Makes a block of the mod's (`mymod:crate`, no properties) a
+    /// container: the game gives its positions a chest's slots when opened
+    /// or written. At most 64 blocks per mod.
+    register: func(block: string) -> result<_, string>;
+    /// Opens the container at a position for the player with this id, after
+    /// the call; false when the player is not online.
+    open: func(player: string, dimension: string, x: s32, y: s32, z: s32) -> bool;
+    /// The 27 slots of a container in a loaded chunk, as of the start of this
+    /// tick; none where there is no container with items yet or none loaded.
+    /// (Item components are not shown.)
+    slots: func(dimension: string, x: s32, y: s32, z: s32) -> option<list<option<item-stack>>>;
+    /// Puts a stack in slot 0 to 26 (none empties it), after the call, in a
+    /// registered container; count 1 to 99. Components of what was there go.
+    set-slot: func(dimension: string, x: s32, y: s32, z: s32, slot: u32, stack: option<item-stack>) -> result<_, string>;
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -896,6 +921,7 @@ world horizon-block-mod {
     import net;
     export server-net-events;
     import entities;
+    import containers;
 }
 
 /// The game's side of `horizon-block-mod` beyond `horizon-server-mod`.
@@ -909,6 +935,11 @@ world block-host {
 world net-host {
     import net;
     export net-events;
+}
+
+/// The game's side of capability `containers` (imports only).
+world containers-host {
+    import containers;
 }
 
 /// The game's side of capability `entities` (imports only).
