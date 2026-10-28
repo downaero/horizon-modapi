@@ -666,6 +666,17 @@ interface players {
     /// conveyor, a fan): false when no player with that id is online. Each
     /// component is clamped to -4 to 4. At most 256 pushes a call.
     push: func(player: string, x: f64, y: f64, z: f64) -> bool;
+    record slot-stack {
+        item: string,
+        count: u32,
+    }
+    /// A player's inventory as of the start of this tick: 41 slots, 0 to 8
+    /// the hotbar, 9 to 35 the rest, 36 to 39 the armor from feet to head,
+    /// 40 the off hand (item components not shown); none when they are not
+    /// online.
+    inventory: func(player: string) -> option<list<option<slot-stack>>>;
+    /// The hotbar slot (0 to 8) a player holds, as of the start of this tick.
+    selected-slot: func(player: string) -> option<u32>;
 }
 
 /// Capability `world`, server mods only (manifest `api = "0.3"`,
@@ -1274,6 +1285,18 @@ interface menu-events {
     button: func(player: string, id: u32);
 }
 
+/// Capability `console`, server mods only (experimental): any command run
+/// as the server's console, with an operator's rights, after the call, as
+/// a command block or a datapack function would: giving and clearing items,
+/// effects, experience, teleports, summons. Players see no feedback; the
+/// server's log has a line per batch. The SDK's `player_ops` builds the usual
+/// ones.
+interface console {
+    /// Runs `line` (no leading slash needed) at the end of this tick. At most
+    /// 256 commands a call; a line that does not parse fails then, not now.
+    run: func(line: string) -> result<_, string>;
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -1319,6 +1342,12 @@ world horizon-block-mod {
     export peer-events;
     import menus;
     export menu-events;
+    import console;
+}
+
+/// The game's side of capability `console` (imports only).
+world console-host {
+    import console;
 }
 
 /// The game's side of capability `menus`.

@@ -571,7 +571,8 @@ mod run {
             }
             self.world.neighbor_log.get_or_insert_with(Vec::new);
             let players = self.server_players(None);
-            let snapshot = self.mod_snapshot_with(players.clone());
+            let mut snapshot = self.mod_snapshot_with(players.clone());
+            self.fill_mod_inventories(&mut snapshot, None);
             self.mods.mods.set_snapshot(snapshot);
             self.lend_world();
             let before = std::mem::take(&mut self.mods.players);
@@ -658,6 +659,7 @@ mod run {
             self.apply_mod_breaks();
             self.apply_mod_item_uses();
             self.apply_mod_menus();
+            self.apply_mod_console();
             self.apply_mod_signals();
             self.apply_mod_drops();
             self.apply_mod_effects();
@@ -1232,12 +1234,67 @@ mod run {
                 return;
             };
             let players = self.server_players(None);
-            let snapshot = self.mod_snapshot_with(players);
+            let mut snapshot = self.mod_snapshot_with(players);
+            self.fill_mod_inventories(&mut snapshot, None);
             self.mods.mods.set_snapshot(snapshot);
             self.lend_world();
             self.mods.mods.menu_button(&mod_id, &player, id);
             self.return_world();
             self.show_mod_output();
+        }
+
+        /// Each online player's inventory for `players.inventory`: 41 slots
+        /// (hotbar, main, armor feet to head, off hand) and the selected slot.
+        pub(in crate::game) fn fill_mod_inventories(
+            &self,
+            snapshot: &mut horizon_mods::Snapshot,
+            host: Option<&LanHost>,
+        ) {
+            let stack = |s: &Option<horizon_client::items::ItemStack>| {
+                s.as_ref().map(|s| (s.item.to_string(), s.count))
+            };
+            let mut out = std::collections::HashMap::new();
+            if self.options.execution_role.is_client()
+                && self.remote.is_none()
+                && self.player.is_some()
+            {
+                let mut slots: Vec<_> = self.inventory.iter().take(36).map(stack).collect();
+                slots.resize(36, None);
+                slots.extend(self.armor.iter().map(stack));
+                slots.push(stack(&self.offhand));
+                out.insert(self.player_uuid_string(), (slots, self.selected as u32));
+            }
+            let guests = host
+                .or(self.lan.as_ref())
+                .into_iter()
+                .flat_map(|h| &h.hub.guests);
+            for g in guests.filter(|g| g.placed) {
+                let mut slots: Vec<_> = g.inventory.iter().take(36).map(stack).collect();
+                slots.resize(36, None);
+                slots.extend(g.armor.iter().map(stack));
+                slots.push(stack(&g.offhand));
+                out.insert(uuid_string(g.uuid), (slots, g.selected as u32));
+            }
+            snapshot.inventories = out;
+        }
+
+        /// Runs the commands server mods asked for as the server's console,
+        /// quietly; one line in the log a mod.
+        pub(in crate::game) fn apply_mod_console(&mut self) {
+            let lines = std::mem::take(&mut self.mods.console_lines);
+            if lines.is_empty() {
+                return;
+            }
+            let mut ran: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+            for (mod_id, line) in lines {
+                let ok = self.as_console(|g| g.run_command(&line));
+                let e = ran.entry(mod_id).or_default();
+                e.0 += 1;
+                e.1 += usize::from(!ok);
+            }
+            for (mod_id, (n, failed)) in ran {
+                log::info!("[mod {mod_id}] ran {n} console command(s): {failed} failed");
+            }
         }
 
         /// Opens the screens server mods asked for (their container's menu,
@@ -1851,7 +1908,8 @@ mod run {
                 face,
                 state: self.state_string(self.world.block(p[0], p[1], p[2])),
             });
-            let snapshot = self.mod_snapshot_with(players);
+            let mut snapshot = self.mod_snapshot_with(players);
+            self.fill_mod_inventories(&mut snapshot, Some(&*host));
             self.mods.mods.set_snapshot(snapshot);
             self.lend_world();
             let used = self
@@ -1882,7 +1940,8 @@ mod run {
                 return false;
             };
             let dimension = self.dim.id();
-            let snapshot = self.mod_snapshot_with(players);
+            let mut snapshot = self.mod_snapshot_with(players);
+            self.fill_mod_inventories(&mut snapshot, host.as_deref());
             self.mods.mods.set_snapshot(snapshot);
             self.lend_world();
             let pos = BlockPos {
@@ -1914,7 +1973,8 @@ mod run {
             let Some(me) = players.first().cloned() else {
                 return false;
             };
-            let snapshot = self.mod_snapshot_with(players);
+            let mut snapshot = self.mod_snapshot_with(players);
+            self.fill_mod_inventories(&mut snapshot, None);
             self.mods.mods.set_snapshot(snapshot);
             self.lend_world();
             let owned = self.mods.mods.server_command(&me, line);
@@ -1943,7 +2003,8 @@ mod run {
             let Some(me) = players.iter().find(|p| p.id == id).cloned() else {
                 return false;
             };
-            let snapshot = self.mod_snapshot_with(players);
+            let mut snapshot = self.mod_snapshot_with(players);
+            self.fill_mod_inventories(&mut snapshot, Some(&*host));
             self.mods.mods.set_snapshot(snapshot);
             self.lend_world();
             let owned = self.mods.mods.server_command(&me, line);
@@ -2195,6 +2256,12 @@ mod run {
                     let queue = &mut self.mods.effects;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((dimension, pos, effect));
+                    }
+                }
+                Output::Console { mod_id, line } => {
+                    let queue = &mut self.mods.console_lines;
+                    if queue.len() < MAX_QUEUED_NET {
+                        queue.push((mod_id, line));
                     }
                 }
                 Output::Menu { mod_id, op } => {

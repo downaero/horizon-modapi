@@ -4,7 +4,7 @@
 //! ingot, capability `entities`) floats above each counter placed.
 use horizon_mod_sdk::{
     contraption::{Contraption, ROTATION_STEP},
-    export_server_mod,
+    export_server_mod, player_ops,
     server::{
         BlockPos, BlockTarget, Player, Pos, Registration, ServerMod, attachments, block_entities,
         containers, effects, entities, files, items, menus, net, peers, players, redstone,
@@ -239,6 +239,25 @@ impl ServerMod for Gears {
         match target {
             Some(t) if item == "minecraft:stick" && t.state.starts_with("gears:") => {
                 players::tell(player, &format!("This is {}", t.state));
+                true
+            }
+            // A stick waved in the air: a diamond and a burst of speed
+            // (capability `console`, through the SDK's `player_ops`), and
+            // the sticks they carry counted (`players::inventory`).
+            None if item == "minecraft:stick" => {
+                let sticks: u32 = players::inventory(player)
+                    .unwrap_or_default()
+                    .iter()
+                    .flatten()
+                    .filter(|s| s.item == "minecraft:stick")
+                    .map(|s| s.count)
+                    .sum();
+                let _ = player_ops::give(player, "minecraft:diamond", 1);
+                let _ = player_ops::effect(player, "minecraft:speed", 5, 1, false);
+                players::tell(
+                    player,
+                    &format!("You carry {sticks} sticks; here is a diamond"),
+                );
                 true
             }
             _ => false,

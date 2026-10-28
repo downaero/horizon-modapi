@@ -28,6 +28,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
 | `effects` | [`effects`](#effects) | play sounds and particles in your worlds |
 | `transfer` | [`transfer`](#transfer) | move items, fluids and energy in and out of blocks |
 | `menus` | [`menus`](#menus) | show you screens of its own for its blocks |
+| `console` | [`console`](#console) | run any command as the server, with an operator's rights |
 
 ## World `horizon-mod`
 
@@ -47,8 +48,15 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `log`, `storage`, `players`, `world`
+- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `console`, `log`, `storage`, `players`, `world`
 - Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `item-events`, `peer-events`, `menu-events`, `server-events`
+
+## World `console-host`
+
+The game's side of capability `console` (imports only).
+
+- Imports (what the game offers): `console`
+- Exports (what the mod provides): 
 
 ## World `menus-host`
 
@@ -781,12 +789,21 @@ Capability `players`, server mods only (manifest `api = "0.3"`, experimental): t
 | `game-mode` | `game-mode` |  |
 | `health` | `f32` | Hit points as vanilla counts them: 20 is full health without effects. |
 
+### record `slot-stack`
+
+| Field | Type | |
+| --- | --- | --- |
+| `item` | `string` |  |
+| `count` | `u32` |  |
+
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `online` | `func() -> list<player>` | The players online, in the order they joined. |
 | `tell` | `func(player: string, text: string) -> bool` | A system message to one player, after the mod's name; false when no player with that id is online. Up to 8 messages per call. |
 | `broadcast` | `func(text: string)` | A system message to every player and the server's log, after the mod's name. Counts toward the same 8 per call. |
 | `push` | `func(player: string, x: f64, y: f64, z: f64) -> bool` | Adds a velocity, in blocks per tick, to a player after the call (a conveyor, a fan): false when no player with that id is online. Each component is clamped to -4 to 4. At most 256 pushes a call. |
+| `inventory` | `func(player: string) -> option<list<option<slot-stack>>>` | A player's inventory as of the start of this tick: 41 slots, 0 to 8 the hotbar, 9 to 35 the rest, 36 to 39 the armor from feet to head, 40 the off hand (item components not shown); none when they are not online. |
+| `selected-slot` | `func(player: string) -> option<u32>` | The hotbar slot (0 to 8) a player holds, as of the start of this tick. |
 
 ## `world`
 
@@ -1304,3 +1321,13 @@ What the server calls in a server mod about its screens.
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `button` | `func(player: string, id: u32)` | The player pressed button `id` on the mod's screen they have open. |
+
+## `console`
+
+Access: capability `console`.
+
+Capability `console`, server mods only (experimental): any command run as the server's console, with an operator's rights, after the call, as a command block or a datapack function would: giving and clearing items, effects, experience, teleports, summons. Players see no feedback; the server's log has a line per batch. The SDK's `player_ops` builds the usual ones.
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `run` | `func(line: string) -> result<_, string>` | Runs `line` (no leading slash needed) at the end of this tick. At most 256 commands a call; a line that does not parse fails then, not now. |

@@ -193,6 +193,8 @@ macro_rules! export_mod {
 pub mod contraption;
 /// Networks of connected blocks: shafts, pipes, cables.
 pub mod network;
+/// What a server mod does to players through capability `console`.
+pub mod player_ops;
 
 pub mod server {
     wit_bindgen::generate!({
@@ -222,6 +224,8 @@ pub mod server {
     /// Capability `block-entities`: bytes kept at the positions of the
     /// mod's own blocks.
     pub use horizon::mods::block_entities;
+    /// Capability `console`: commands as the server.
+    pub use horizon::mods::console;
     /// Capability `containers`: the mod's blocks that hold items.
     pub use horizon::mods::containers;
     /// Capability `effects`: sounds and particles.

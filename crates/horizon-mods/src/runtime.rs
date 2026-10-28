@@ -213,6 +213,13 @@ mod menu_bindings {
     });
 }
 use menu_bindings::{MenusHost, horizon::mods::menus};
+mod console_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "console-host",
+    });
+}
+use console_bindings::{ConsoleHost, horizon::mods::console};
 
 pub use crate::menu_layout::{MenuLayout, MenuWidget};
 /// A change to a mod's screens.
@@ -430,6 +437,9 @@ pub struct Snapshot {
     pub font_widths: Arc<[f32]>,
     /// The players on the server, for server mods.
     pub players: Vec<ServerPlayer>,
+    /// Each online player's 41 inventory slots and selected hotbar slot, by
+    /// UUID (`players.inventory`).
+    pub inventories: std::collections::HashMap<String, (Vec<Option<SlotStack>>, u32)>,
     /// The first block along the player's view within [`RAYCAST_MAX`] and
     /// its distance from the eye, for `game.raycast`; the game works it out
     /// only while a mod calls it ([`Mods::wants_raycast`]).
@@ -699,6 +709,8 @@ pub enum Output {
         face: u8,
         item: String,
     },
+    /// `console.run`: a command as the server's console.
+    Console { mod_id: String, line: String },
     /// `menus.*`: a screen of the mod's own opened, or its data.
     Menu { mod_id: String, op: MenuOp },
     /// `peers.send`: a message from one server mod to another.
@@ -1167,6 +1179,8 @@ impl Mods {
             PeersHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             MenusHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
+            ConsoleHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             EffectsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
@@ -3057,6 +3071,27 @@ impl State {
         }))
     }
 }
+impl console::Host for State {
+    fn run(&mut self, line: String) -> Result<(), String> {
+        let line = line.trim().trim_start_matches('/').to_owned();
+        if line.is_empty() || line.len() > 32_000 || line.contains(['\n', '\r']) {
+            return Err("one command line of at most 32000 characters".into());
+        }
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Console { .. }))
+            .count();
+        if queued >= 256 {
+            return Err("at most 256 commands a call".into());
+        }
+        self.out.push(Output::Console {
+            mod_id: self.id.clone(),
+            line,
+        });
+        Ok(())
+    }
+}
 impl menus::Host for State {
     fn open(
         &mut self,
@@ -3933,6 +3968,23 @@ impl State {
     }
 }
 impl players::Host for State {
+    fn inventory(&mut self, player: String) -> Option<Vec<Option<players::SlotStack>>> {
+        let (slots, _) = self.snapshot.inventories.get(&player)?;
+        Some(
+            slots
+                .iter()
+                .map(|s| {
+                    s.as_ref().map(|(item, count)| players::SlotStack {
+                        item: item.clone(),
+                        count: *count,
+                    })
+                })
+                .collect(),
+        )
+    }
+    fn selected_slot(&mut self, player: String) -> Option<u32> {
+        self.snapshot.inventories.get(&player).map(|(_, s)| *s)
+    }
     fn push(&mut self, player: String, x: f64, y: f64, z: f64) -> bool {
         self.snapshot.players.iter().any(|p| p.id == player)
             && State::push(self, PushTarget::Player(player), [x, y, z])

@@ -93,6 +93,9 @@ pub(super) struct ModsState {
     /// Buttons guests pressed (mod, player, id), for the next tick.
     #[cfg(feature = "mods")]
     pub(super) menu_buttons: Vec<(String, String, u32)>,
+    /// Commands server mods run as the console (mod, line), for the tick's end.
+    #[cfg(feature = "mods")]
+    pub(super) console_lines: Vec<(String, String)>,
     /// Blocks server mods break (dimension, position, tool, inventory the
     /// drops go into), for the tick's end.
     #[cfg(feature = "mods")]
@@ -548,6 +551,7 @@ impl Game<'_> {
         Snapshot {
             player,
             clock,
+            inventories: Default::default(),
             gui_size: self.gui_size(),
             held: self.mod_held(),
             frame: self.frame_reading(),
@@ -799,6 +803,7 @@ impl Game<'_> {
                 | Output::Peer { .. }
                 | Output::UseItem { .. }
                 | Output::Menu { .. }
+                | Output::Console { .. }
                 | Output::Effect { .. }
                 | Output::Container { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);

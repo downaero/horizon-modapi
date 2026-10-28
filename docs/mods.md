@@ -89,6 +89,7 @@ folder, loads no runtime and plays exactly like vanilla 26.3.
 | `storage` | `storage` | `get(key)`, `set(key, value)`, `delete(key)`: a per-mod folder of up to 64 files, 4 MiB total, at most 1 MiB written per call |
 | `command` | `command` | `run(line)`: a vanilla command run as the player, with the player's permissions, after the hook returns (8 per call); mods' own commands are not run. `run-quiet(lines)`: up to 256 a call, the same rights, nothing in the chat (single player and Horizon's servers run them 64 a tick and log one line a batch; elsewhere they go as chat commands and their feedback shows) |
 | `containers` | `containers` | server mods: `register`, `open`, `slots`, `set-slot` for the mod's own blocks that hold items and open as a chest ([below](#capability-containers)). **Experimental:** `experimental = ["containers"]` |
+| `console` | `console` | server mods: any command as the server's console, with an operator's rights ([below](#players-inventories-and-the-console)). **Experimental:** `experimental = ["console"]` |
 | `menus` | `menus` | server mods: screens of the mod's own for its containers: slots where it wants them, labels, progress bars, buttons ([below](#capability-menus-screens-of-the-mods-own)). **Experimental:** `experimental = ["menus"]` |
 | `transfer` | `transfer` | server mods: items into and out of any inventory, fluid tanks and batteries on the mod's blocks ([below](#capability-transfer-items-fluids-and-energy-between-blocks)). **Experimental:** `experimental = ["transfer"]` |
 | `effects` | `effects` | server mods: `play-sound` and `level-event` at the mod's blocks ([below](#capability-effects)). **Experimental:** `experimental = ["effects"]` |
@@ -692,6 +693,19 @@ example's `gears:mill` spins the 1 x 3 x 3 wheel above it, and its lift carries 
 by a cog) from each source to each member and marks a conflict where two disagree;
 `members(start, limit, connects)` lists one pipe or cable network. A mod keeps what flows
 (stress, fluid amounts) in `block-entities` data and shows it with entities and effects.
+
+### Players: inventories and the console
+
+`players.inventory(player)` (API level 33) is a player's 41 slots as of the tick's start (0 to 8 the
+hotbar, 9 to 35 the rest, 36 to 39 the armor from feet to head, 40 the off hand) and
+`players.selected-slot(player)` the hotbar slot they hold.
+
+Capability `console` (experimental) runs any command as the server's console, with an operator's
+rights, at the tick's end, as a command block would: `console.run(line)`, at most 256 a call, no
+feedback to players and a line per mod in the server's log. The SDK's `horizon_mod_sdk::player_ops`
+builds the usual ones with the player named by UUID and every id checked: `give`, `take`, `effect`,
+`clear_effects`, `experience`, `teleport` (to another dimension too) and `damage`. The gears example
+gives a diamond and speed to a player who waves a stick and counts the sticks they carry.
 
 ### Capability `menus`: screens of the mod's own
 
