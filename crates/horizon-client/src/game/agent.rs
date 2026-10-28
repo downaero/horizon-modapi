@@ -425,6 +425,7 @@ impl Game<'_> {
             Screen::CommandBlock => "command-block",
             Screen::Win => "win",
             Screen::Mod => "mod",
+            Screen::ModPanel => "mod_panel",
         }
     }
     pub(super) fn inventory_counts(&self) -> BTreeMap<String, i64> {

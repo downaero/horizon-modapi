@@ -113,6 +113,48 @@ fn press_screen() -> menus::Layout {
     }
 }
 
+/// The notebook: its note in a field, Save and Close.
+fn notebook(note: &str) -> menus::Layout {
+    use menus::{Button, Label, Layout, TextField, Widget};
+    Layout {
+        width: 200,
+        height: 86,
+        slots: Vec::new(),
+        widgets: vec![
+            Widget::Label(Label {
+                x: 8,
+                y: 8,
+                text: "Notebook".into(),
+                color: 0x40_40_40,
+            }),
+            Widget::TextField(TextField {
+                id: 1,
+                x: 8,
+                y: 24,
+                width: 184,
+                value: note.into(),
+                max_length: 64,
+            }),
+            Widget::Button(Button {
+                id: 2,
+                x: 8,
+                y: 56,
+                width: 60,
+                height: 20,
+                label: "Save".into(),
+            }),
+            Widget::Button(Button {
+                id: 3,
+                x: 74,
+                y: 56,
+                width: 60,
+                height: 20,
+                label: "Close".into(),
+            }),
+        ],
+    }
+}
+
 struct Gears {
     /// Ticks seen by each counter since its last write.
     ticks: Vec<([i32; 3], u32)>,
@@ -125,6 +167,8 @@ struct Gears {
     press: Vec<(String, String, u32)>,
     /// Each lift on its way up: its position, the load and the ticks gone.
     lifts: Vec<([i32; 3], Contraption, u32)>,
+    /// What each player last typed into the notebook, before Save.
+    drafts: Vec<(String, String)>,
     /// The players who opened a crate's screen, fed its progress bar.
     viewers: Vec<String>,
     /// Ticks the drills have seen.
@@ -143,6 +187,7 @@ impl ServerMod for Gears {
             lifts: Vec::new(),
             drill_ticks: 0,
             viewers: Vec::new(),
+            drafts: Vec::new(),
             mills: Vec::new(),
         };
         // The crate holds items (capability `containers`) and opens as a chest.
@@ -212,11 +257,37 @@ impl ServerMod for Gears {
         }
     }
 
-    /// The press screen's button.
+    /// The press screen's button, and the notebook's.
     fn menu_button(&mut self, player: &str, id: u32) {
-        if id == 1 {
-            players::tell(player, "The press says hello");
+        match id {
+            1 => {
+                players::tell(player, "The press says hello");
+            }
+            2 => {
+                let draft = self
+                    .drafts
+                    .iter()
+                    .find(|(p, _)| p == player)
+                    .map(|(_, d)| d.clone())
+                    .unwrap_or_default();
+                let me = attachments::Target::Player(player.to_owned());
+                let _ = attachments::set(&me, "note", draft.as_bytes());
+                players::tell(player, &format!("Saved: {draft}"));
+            }
+            3 => menus::close(player),
+            _ => {}
         }
+    }
+
+    /// What the player typed into the notebook.
+    fn menu_text(&mut self, player: &str, _id: u32, value: &str) {
+        self.drafts.retain(|(p, _)| p != player);
+        self.drafts.push((player.to_owned(), value.to_owned()));
+    }
+
+    /// The player left a screen of the mod's.
+    fn menu_closed(&mut self, player: &str) {
+        self.viewers.retain(|v| v != player);
     }
 
     /// A message from a server mod (here, from itself).
@@ -233,7 +304,7 @@ impl ServerMod for Gears {
         &mut self,
         player: &str,
         item: &str,
-        _sneaking: bool,
+        sneaking: bool,
         target: Option<&BlockTarget>,
     ) -> bool {
         match target {
@@ -244,6 +315,16 @@ impl ServerMod for Gears {
             // A stick waved in the air: a diamond and a burst of speed
             // (capability `console`, through the SDK's `player_ops`), and
             // the sticks they carry counted (`players::inventory`).
+            // Sneaking, a notebook: a panel with no block behind it, its
+            // note kept on the player (capabilities `menus`, attachments).
+            None if item == "minecraft:stick" && sneaking => {
+                let me = attachments::Target::Player(player.to_owned());
+                let note = attachments::get(&me, "note")
+                    .map(|b| String::from_utf8_lossy(&b).into_owned())
+                    .unwrap_or_default();
+                menus::open_panel(player, &notebook(&note));
+                true
+            }
             None if item == "minecraft:stick" => {
                 let sticks: u32 = players::inventory(player)
                     .unwrap_or_default()

@@ -55,7 +55,7 @@ impl Game<'_> {
     ) -> bool {
         false
     }
-    pub(super) fn local_menu_button(&mut self, _id: u32) {}
+    pub(super) fn local_menu_message(&mut self, _message: horizon_mods::menu_layout::MenuMessage) {}
     pub(super) fn guest_mod_net(
         &mut self,
         _host: &LanHost,
@@ -782,6 +782,12 @@ mod run {
             for (mod_id, player, id) in std::mem::take(&mut self.mods.menu_buttons) {
                 self.mods.mods.menu_button(&mod_id, &player, id);
             }
+            for (mod_id, player, id, value) in std::mem::take(&mut self.mods.menu_texts) {
+                self.mods.mods.menu_text(&mod_id, &player, id, &value);
+            }
+            for (mod_id, player) in std::mem::take(&mut self.mods.menu_closes) {
+                self.mods.mods.menu_closed(&mod_id, &player);
+            }
             for (from, to, data) in std::mem::take(&mut self.mods.peer_messages) {
                 self.mods.mods.peer_message(&to, &from, &data);
             }
@@ -1368,17 +1374,31 @@ mod run {
 
         /// This window's own player pressed a button of a mod's screen: the
         /// mod hears it at once.
-        pub(in crate::game) fn local_menu_button(&mut self, id: u32) {
+        pub(in crate::game) fn local_menu_message(
+            &mut self,
+            message: horizon_mods::menu_layout::MenuMessage,
+        ) {
+            use horizon_mods::menu_layout::MenuMessage;
             let player = self.player_uuid_string();
             let Some((mod_id, None)) = self.mods.menu_owner.get(&player).cloned() else {
                 return;
             };
+            if matches!(message, MenuMessage::Closed { .. }) {
+                self.mods.menu_owner.remove(&player);
+            }
             let players = self.server_players(None);
             let mut snapshot = self.mod_snapshot_with(players);
             self.fill_mod_inventories(&mut snapshot, None);
             self.mods.mods.set_snapshot(snapshot);
             self.lend_world();
-            self.mods.mods.menu_button(&mod_id, &player, id);
+            match message {
+                MenuMessage::Button { id, .. } => self.mods.mods.menu_button(&mod_id, &player, id),
+                MenuMessage::Text { id, value, .. } => {
+                    self.mods.mods.menu_text(&mod_id, &player, id, &value)
+                }
+                MenuMessage::Closed { .. } => self.mods.mods.menu_closed(&mod_id, &player),
+                _ => {}
+            }
             self.return_world();
             self.show_mod_output();
         }
@@ -1548,11 +1568,8 @@ mod run {
                             && self.player_uuid_string() == player
                         {
                             self.open_menu(pos);
-                            self.mod_menu = Some(crate::game::mod_menus::ModMenu {
-                                window: None,
-                                layout,
-                                data: [0; 32],
-                            });
+                            self.mod_menu =
+                                Some(crate::game::mod_menus::ModMenu::new(None, layout, false));
                             self.mods.menu_owner.insert(player, (mod_id, None));
                             continue;
                         }
@@ -1579,6 +1596,65 @@ mod run {
                             } else {
                                 self.container_openers_changed(key, false);
                             }
+                        }
+                        self.lan = Some(host);
+                    }
+                    MenuOp::Panel { player, layout } => {
+                        if self.options.execution_role.is_client()
+                            && self.remote.is_none()
+                            && self.player.is_some()
+                            && self.player_uuid_string() == player
+                        {
+                            self.open_mod_panel(None, layout);
+                            self.mods.menu_owner.insert(player, (mod_id, None));
+                            continue;
+                        }
+                        let Some(mut host) = self.lan.take() else {
+                            continue;
+                        };
+                        let conn = host
+                            .hub
+                            .guests
+                            .iter()
+                            .find(|g| g.placed && uuid_string(g.uuid) == player)
+                            .map(|g| g.conn);
+                        if let Some(conn) = conn {
+                            send(&mut host, conn, &MenuMessage::Panel { layout });
+                            self.mods
+                                .menu_owner
+                                .insert(player, (mod_id, Some(horizon_mods::menu_layout::PANEL)));
+                        }
+                        self.lan = Some(host);
+                    }
+                    MenuOp::Close { player } => {
+                        if self
+                            .mods
+                            .menu_owner
+                            .get(&player)
+                            .is_none_or(|(m, _)| *m != mod_id)
+                        {
+                            continue;
+                        }
+                        let (_, window) = self.mods.menu_owner.remove(&player).unwrap_or_default();
+                        if window.is_none() {
+                            if self.mod_menu.as_ref().is_some_and(|m| m.panel) {
+                                self.close_mod_panel(false);
+                            } else {
+                                self.close_container();
+                            }
+                            continue;
+                        }
+                        let Some(mut host) = self.lan.take() else {
+                            continue;
+                        };
+                        let conn = host
+                            .hub
+                            .guests
+                            .iter()
+                            .find(|g| uuid_string(g.uuid) == player)
+                            .map(|g| g.conn);
+                        if let Some(conn) = conn {
+                            send(&mut host, conn, &MenuMessage::Close);
                         }
                         self.lan = Some(host);
                     }
@@ -2338,19 +2414,39 @@ mod run {
                 let Some(g) = host.hub.guests.iter().find(|g| g.conn == conn) else {
                     return;
                 };
-                let Ok(horizon_mods::menu_layout::MenuMessage::Button { window, id }) =
-                    serde_json::from_slice(data)
-                else {
+                use horizon_mods::menu_layout::{MenuMessage, PANEL};
+                let Ok(message) = serde_json::from_slice::<MenuMessage>(data) else {
                     return;
                 };
                 let player = uuid_string(g.uuid);
-                let open = g.menu.as_ref().is_some_and(|m| m.window == window);
-                if let Some((mod_id, Some(w))) = self.mods.menu_owner.get(&player)
-                    && *w == window
-                    && open
-                    && self.mods.menu_buttons.len() < MAX_QUEUED_NET
-                {
-                    self.mods.menu_buttons.push((mod_id.clone(), player, id));
+                let window = match &message {
+                    MenuMessage::Button { window, .. }
+                    | MenuMessage::Text { window, .. }
+                    | MenuMessage::Closed { window } => *window,
+                    _ => return,
+                };
+                // A panel has no menu on the server; a container screen's
+                // window is the one the guest has open.
+                let open = window == PANEL || g.menu.as_ref().is_some_and(|m| m.window == window);
+                let Some((mod_id, Some(w))) = self.mods.menu_owner.get(&player).cloned() else {
+                    return;
+                };
+                if w != window || !open || self.mods.menu_texts.len() >= MAX_QUEUED_NET {
+                    return;
+                }
+                match message {
+                    MenuMessage::Button { id, .. } => {
+                        self.mods.menu_buttons.push((mod_id, player, id))
+                    }
+                    MenuMessage::Text { id, value, .. } => {
+                        let value: String = value.chars().take(256).collect();
+                        self.mods.menu_texts.push((mod_id, player, id, value));
+                    }
+                    MenuMessage::Closed { .. } => {
+                        self.mods.menu_owner.remove(&player);
+                        self.mods.menu_closes.push((mod_id, player));
+                    }
+                    _ => {}
                 }
                 return;
             }

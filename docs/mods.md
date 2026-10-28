@@ -735,6 +735,16 @@ draw it, and a vanilla client sees a chest. The panel is drawn in vanilla's cont
 textures of the mod's own are not drawn yet. The gears example opens its crate as a press with
 two slots, a moving bar and a button.
 
+**API level 35.** A screen with no block behind it (a toolbox, a book, a schedule, Create's
+filter screens): `menus.open-panel(player, layout)` draws the layout's widgets on a panel over
+the dimmed world (its slots are not drawn). Widgets include text fields (`text-field`: id,
+position, width, starting value, at most 256 characters); what the player typed reaches
+`ServerMod::menu_text(player, id, value)` when they press Enter, and for every field before a
+button press and as the screen closes. `menus.close(player)` closes the mod's screen, and
+`ServerMod::menu_closed(player)` hears the player leave one (Esc, or leaving its container). A
+vanilla client sees nothing of a panel. The gears example's stick, waved while sneaking, opens a
+notebook whose note is kept on the player in attachments.
+
 ### Items used and blocks broken
 
 `ServerMod::item_used(player, item, sneaking, target)` hears a player's right click with the item

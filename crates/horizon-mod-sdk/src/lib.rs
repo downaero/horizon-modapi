@@ -286,6 +286,10 @@ pub mod server {
         }
         /// The player pressed button `id` on the mod's screen they have open.
         fn menu_button(&mut self, _player: &str, _id: u32) {}
+        /// What the player typed into text field `id` of the mod's screen.
+        fn menu_text(&mut self, _player: &str, _id: u32, _value: &str) {}
+        /// The player closed the mod's screen.
+        fn menu_closed(&mut self, _player: &str) {}
         /// A message from another server mod (`peers::send`), by its id.
         fn peer_message(&mut self, _from: &str, _data: &[u8]) {}
         /// A player used `item` (on `target`, or in the air): true takes the
@@ -557,6 +561,12 @@ macro_rules! export_server_mod {
             impl $crate::server::__MenuGuest for Export {
                 fn button(player: String, id: u32) {
                     with(|m| m.menu_button(&player, id))
+                }
+                fn text(player: String, id: u32, value: String) {
+                    with(|m| m.menu_text(&player, id, &value))
+                }
+                fn closed(player: String) {
+                    with(|m| m.menu_closed(&player))
                 }
             }
             impl $crate::server::__PeerGuest for Export {

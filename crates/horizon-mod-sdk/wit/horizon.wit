@@ -1256,10 +1256,23 @@ interface menus {
         height: u32,
         label: string,
     }
+    /// A box the player types into: what they typed reaches
+    /// `menu-events.text` when they press Enter and when the screen closes.
+    record text-field {
+        id: u32,
+        x: s32,
+        y: s32,
+        width: u32,
+        /// What it holds when the screen opens.
+        value: string,
+        /// At most 256.
+        max-length: u32,
+    }
     variant widget {
         label(label),
         progress(progress),
         button(button),
+        text-field(text-field),
     }
     record layout {
         /// The screen's size, at most 512 x 512.
@@ -1278,12 +1291,24 @@ interface menus {
     /// Sets data value `index` (0 to 31) of the screen the player has open
     /// from this mod, sent to their client; the bars read it.
     set-data: func(player: string, index: u32, value: s32) -> bool;
+    /// Opens a screen of the mod's own with no block behind it (a toolbox,
+    /// a book, a schedule), after the call: the layout's widgets on a panel
+    /// over the dimmed world; its slots are not drawn. Esc closes it
+    /// (`menu-events.closed`). False when the player is not online.
+    open-panel: func(player: string, layout: layout) -> bool;
+    /// Closes the screen the mod opened for a player, after the call.
+    close: func(player: string);
 }
 
 /// What the server calls in a server mod about its screens.
 interface menu-events {
     /// The player pressed button `id` on the mod's screen they have open.
     button: func(player: string, id: u32);
+    /// What the player typed into text field `id` (on Enter, and for every
+    /// field as the screen closes).
+    text: func(player: string, id: u32, value: string);
+    /// The player closed the mod's screen (Esc, or leaving its container).
+    closed: func(player: string);
 }
 
 /// Capability `console`, server mods only (experimental): any command run

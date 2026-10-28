@@ -93,6 +93,12 @@ pub(super) struct ModsState {
     /// Buttons guests pressed (mod, player, id), for the next tick.
     #[cfg(feature = "mods")]
     pub(super) menu_buttons: Vec<(String, String, u32)>,
+    /// What guests typed into mods' screens (mod, player, field, text), and
+    /// who closed one (mod, player), for the next tick.
+    #[cfg(feature = "mods")]
+    pub(super) menu_texts: Vec<(String, String, u32, String)>,
+    #[cfg(feature = "mods")]
+    pub(super) menu_closes: Vec<(String, String)>,
     /// Commands server mods run as the console (mod, line), for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) console_lines: Vec<(String, String)>,

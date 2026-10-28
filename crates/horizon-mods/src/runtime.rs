@@ -257,6 +257,10 @@ pub enum MenuOp {
         index: u32,
         value: i32,
     },
+    /// `menus.open-panel`: a screen with no container.
+    Panel { player: String, layout: MenuLayout },
+    /// `menus.close`.
+    Close { player: String },
 }
 impl MenuLayout {
     fn from_wit(l: menus::Layout) -> Option<Self> {
@@ -295,6 +299,14 @@ impl MenuLayout {
                         width: b.width.min(512),
                         height: b.height.min(512),
                         label: clip(b.label),
+                    },
+                    Widget::TextField(f) => MenuWidget::TextField {
+                        id: f.id,
+                        x: f.x,
+                        y: f.y,
+                        width: f.width.min(512),
+                        max_length: f.max_length.min(256),
+                        value: f.value.chars().take(256).collect(),
                     },
                 })
                 .collect(),
@@ -1801,6 +1813,38 @@ impl Mods {
         });
         true
     }
+    /// What `player` typed into text field `id` of mod `mod_id`'s screen.
+    pub fn menu_text(&mut self, mod_id: &str, player: &str, id: u32, value: &str) {
+        let Some(i) = self.menu_owner_index(mod_id) else {
+            return;
+        };
+        self.call(i, FUEL_EVENT, |run| match &run.menu {
+            Some(h) => h
+                .horizon_mods_menu_events()
+                .call_text(&mut run.store, player, id, value),
+            None => Ok(()),
+        });
+    }
+    /// `player` closed the screen mod `mod_id` opened for them.
+    pub fn menu_closed(&mut self, mod_id: &str, player: &str) {
+        let Some(i) = self.menu_owner_index(mod_id) else {
+            return;
+        };
+        self.call(i, FUEL_EVENT, |run| match &run.menu {
+            Some(h) => h
+                .horizon_mods_menu_events()
+                .call_closed(&mut run.store, player),
+            None => Ok(()),
+        });
+    }
+    fn menu_owner_index(&self, mod_id: &str) -> Option<usize> {
+        (0..self.entries.len()).find(|&i| {
+            self.entries[i]
+                .run
+                .as_ref()
+                .is_some_and(|r| r.menu.is_some() && r.store.data().id == mod_id)
+        })
+    }
     /// `player` pressed button `id` on the screen mod `mod_id` opened for them.
     pub fn menu_button(&mut self, mod_id: &str, player: &str, id: u32) {
         let Some(i) = (0..self.entries.len()).find(|&i| {
@@ -3282,6 +3326,25 @@ impl menus::Host for State {
             },
         });
         true
+    }
+    fn open_panel(&mut self, player: String, layout: menus::Layout) -> bool {
+        let Some(layout) = MenuLayout::from_wit(layout) else {
+            return false;
+        };
+        if !self.snapshot.players.iter().any(|p| p.id == player) {
+            return false;
+        }
+        self.out.push(Output::Menu {
+            mod_id: self.id.clone(),
+            op: MenuOp::Panel { player, layout },
+        });
+        true
+    }
+    fn close(&mut self, player: String) {
+        self.out.push(Output::Menu {
+            mod_id: self.id.clone(),
+            op: MenuOp::Close { player },
+        });
     }
     fn set_data(&mut self, player: String, index: u32, value: i32) -> bool {
         if index > 31 {

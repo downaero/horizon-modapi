@@ -1298,6 +1298,19 @@ A bar filled as data value `value` is to data value `max` (a furnace's arrow, a 
 | `height` | `u32` |  |
 | `label` | `string` |  |
 
+### record `text-field`
+
+A box the player types into: what they typed reaches `menu-events.text` when they press Enter and when the screen closes.
+
+| Field | Type | |
+| --- | --- | --- |
+| `id` | `u32` |  |
+| `x` | `s32` |  |
+| `y` | `s32` |  |
+| `width` | `u32` |  |
+| `value` | `string` | What it holds when the screen opens. |
+| `max-length` | `u32` | At most 256. |
+
 ### variant `widget`
 
 | Case | Payload | |
@@ -1305,6 +1318,7 @@ A bar filled as data value `value` is to data value `max` (a furnace's arrow, a 
 | `label` | `label` |  |
 | `progress` | `progress` |  |
 | `button` | `button` |  |
+| `text-field` | `text-field` |  |
 
 ### record `layout`
 
@@ -1319,6 +1333,8 @@ A bar filled as data value `value` is to data value `max` (a furnace's arrow, a 
 | --- | --- | --- |
 | `open` | `func(player: string, dimension: string, x: s32, y: s32, z: s32, layout: layout) -> bool` | Opens the container at a position (one of the mod's registered containers) for a player, after the call, with this screen. False when the player is not online or the layout is too large. |
 | `set-data` | `func(player: string, index: u32, value: s32) -> bool` | Sets data value `index` (0 to 31) of the screen the player has open from this mod, sent to their client; the bars read it. |
+| `open-panel` | `func(player: string, layout: layout) -> bool` | Opens a screen of the mod's own with no block behind it (a toolbox, a book, a schedule), after the call: the layout's widgets on a panel over the dimmed world; its slots are not drawn. Esc closes it (`menu-events.closed`). False when the player is not online. |
+| `close` | `func(player: string)` | Closes the screen the mod opened for a player, after the call. |
 
 ## `menu-events`
 
@@ -1329,6 +1345,8 @@ What the server calls in a server mod about its screens.
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `button` | `func(player: string, id: u32)` | The player pressed button `id` on the mod's screen they have open. |
+| `text` | `func(player: string, id: u32, value: string)` | What the player typed into text field `id` (on Enter, and for every field as the screen closes). |
+| `closed` | `func(player: string)` | The player closed the mod's screen (Esc, or leaving its container). |
 
 ## `console`
 

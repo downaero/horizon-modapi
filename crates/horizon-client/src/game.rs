@@ -533,6 +533,8 @@ enum Screen {
     /// A `ui` mod's own screen, or its settings page from Options > Mods
     /// (game/mods.rs).
     Mod,
+    /// A server mod's panel, a screen with no container (game/mod_menus.rs).
+    ModPanel,
 }
 struct Mining {
     pos: [i32; 3],
@@ -6178,6 +6180,7 @@ impl Game<'_> {
             }
             Screen::Chat => self.draw_chat_screen(&mut batch),
             Screen::Mod => self.draw_mod_screen(&mut batch),
+            Screen::ModPanel => self.draw_mod_panel(&mut batch),
             Screen::Playing | Screen::Options | Screen::Win => {}
         }
         self.draw_saving_indicator(&mut batch);
@@ -12102,6 +12105,7 @@ impl Game<'_> {
                 Screen::Chat => self.close_chat(),
                 Screen::Win => self.close_win_screen()?,
                 Screen::Mod => self.close_mod_screen(true),
+                Screen::ModPanel => self.close_mod_panel(true),
             },
             KeyCode::Digit1
             | KeyCode::Digit2
@@ -13085,6 +13089,7 @@ impl ApplicationHandler for Game<'_> {
                         }
                         Screen::Stats if button == MouseButton::Left => self.stats_release(),
                         Screen::Mod if pressed => self.mod_screen_click(button),
+                        Screen::ModPanel if pressed => self.mod_panel_click(button),
                         _ => {}
                     }
                 }
@@ -13201,6 +13206,12 @@ impl ApplicationHandler for Game<'_> {
                         let backspace = event.physical_key == PhysicalKey::Code(KeyCode::Backspace);
                         self.station_text(event.text.as_deref(), backspace);
                     }
+                }
+                WindowEvent::KeyboardInput { event, .. }
+                    if self.screen == Screen::ModPanel
+                        && !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape)) =>
+                {
+                    self.mod_panel_key(&event)
                 }
                 WindowEvent::KeyboardInput { event, .. }
                     if self.screen == Screen::WorldOptions
