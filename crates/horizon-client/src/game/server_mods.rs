@@ -190,6 +190,111 @@ mod run {
     const MAX_POWER_READS: usize = 4096;
     /// Block changes a tick that server mods are told about.
     const MAX_NEIGHBOR_CHANGES: usize = 4096;
+    /// A stack as capability `stacks` shows it: every mod's own bytes from
+    /// `minecraft:custom_data` under `horizon:<mod id>`.
+    fn stack_info(s: &horizon_client::items::ItemStack) -> horizon_mods::StackInfo {
+        use horizon_world::nbt::Tag;
+        let data = s.extra.as_deref();
+        let custom = data
+            .and_then(|d| d.other.iter().find(|(k, _)| k == "minecraft:custom_data"))
+            .map(|(_, t)| t);
+        let mut mods = Vec::new();
+        if let Some(Tag::Compound(map)) = custom {
+            for (k, v) in map {
+                let Ok(k) = k.to_string() else { continue };
+                if let (Some(id), Tag::ByteArray(bytes)) = (k.strip_prefix("horizon:"), v) {
+                    mods.push((id.to_owned(), bytes.clone()));
+                }
+            }
+        }
+        horizon_mods::StackInfo {
+            item: s.item.to_string(),
+            count: s.count,
+            damage: s.damage,
+            name: s.custom_name().map(str::to_owned),
+            enchantments: data
+                .map(|d| {
+                    d.enchantments
+                        .iter()
+                        .map(|(e, l)| (e.to_string(), *l))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            data: mods,
+        }
+    }
+
+    /// The stack mod `mod_id` wrote: on `base` when it is the same item, so
+    /// what other mods and vanilla keep on it stays; the mod's own bytes set
+    /// (or taken off).
+    fn stack_with(
+        base: Option<&horizon_client::items::ItemStack>,
+        info: horizon_mods::StackInfo,
+        mod_id: &str,
+    ) -> horizon_client::items::ItemStack {
+        use horizon_world::nbt::Tag;
+        let mut s = match base {
+            Some(b) if *b.item == *info.item => b.clone(),
+            _ => horizon_client::items::ItemStack::new(info.item.as_str(), info.count),
+        };
+        s.count = info.count;
+        s.damage = info.damage;
+        {
+            let d = s.data_mut();
+            d.custom_name = info.name.clone();
+            d.enchantments = info
+                .enchantments
+                .iter()
+                .map(|(e, l)| (std::sync::Arc::from(e.as_str()), *l))
+                .collect();
+            let key = format!("horizon:{mod_id}");
+            let own = info
+                .data
+                .into_iter()
+                .find(|(m, _)| m == mod_id)
+                .map(|(_, b)| b);
+            let at = d
+                .other
+                .iter()
+                .position(|(k, _)| k == "minecraft:custom_data");
+            let mut map = match at.map(|i| d.other.remove(i).1) {
+                Some(Tag::Compound(map)) => map,
+                _ => Default::default(),
+            };
+            match own {
+                Some(bytes) => {
+                    map.insert(key.as_str().into(), Tag::ByteArray(bytes));
+                }
+                None => {
+                    map.remove(&key.as_str().into());
+                }
+            }
+            if !map.is_empty() {
+                d.other
+                    .push(("minecraft:custom_data".into(), Tag::Compound(map)));
+                d.other.sort_by(|a, b| a.0.cmp(&b.0));
+            }
+        }
+        // A stack with nothing beyond its item compares as a plain one.
+        if s.extra.as_deref().is_some_and(|d| *d == Default::default()) {
+            s.extra = None;
+        }
+        s
+    }
+
+    /// The slots of an inventory capability `stacks` reaches: a chest's (any
+    /// container's) or a furnace's.
+    fn inventory_slots(
+        entity: &mut horizon_client::containers::BlockEntity,
+    ) -> Option<&mut [Option<horizon_client::items::ItemStack>]> {
+        use horizon_client::containers::BlockEntity;
+        match entity {
+            BlockEntity::Chest(items) => Some(items.as_mut_slice()),
+            BlockEntity::Furnace(f) => Some(f.items.as_mut_slice()),
+            _ => None,
+        }
+    }
+
     /// Item entities lent to mods each tick.
     const MAX_LENT_ITEMS: usize = 4096;
     /// `net` messages waiting for a tick are kept up to this many.
@@ -255,6 +360,40 @@ mod run {
         }
     }
     impl WorldView for LentWorld {
+        fn stack_at(
+            &self,
+            dimension: &str,
+            pos: [i32; 3],
+            slot: u32,
+        ) -> Option<horizon_mods::StackInfo> {
+            if dimension != self.container_dim {
+                return None;
+            }
+            let mut entity = self.entities.get(&(pos[0], pos[1], pos[2]))?.clone();
+            let slots = inventory_slots(&mut entity)?;
+            slots.get(slot as usize)?.as_ref().map(stack_info)
+        }
+        fn set_stack_at(
+            &mut self,
+            dimension: &str,
+            pos: [i32; 3],
+            slot: u32,
+            stack: Option<horizon_mods::StackInfo>,
+            mod_id: &str,
+        ) -> bool {
+            if dimension != self.container_dim {
+                return false;
+            }
+            let Some(entity) = self.entities.get_mut(&(pos[0], pos[1], pos[2])) else {
+                return false;
+            };
+            let Some(cell) = inventory_slots(entity).and_then(|s| s.get_mut(slot as usize)) else {
+                return false;
+            };
+            *cell = stack.map(|info| stack_with(cell.as_ref(), info, mod_id));
+            self.touched.push((pos[0] >> 4, pos[2] >> 4));
+            true
+        }
         fn item_slots(
             &self,
             dimension: &str,
@@ -660,6 +799,7 @@ mod run {
             self.apply_mod_item_uses();
             self.apply_mod_menus();
             self.apply_mod_console();
+            self.apply_mod_player_stacks();
             self.apply_mod_signals();
             self.apply_mod_drops();
             self.apply_mod_effects();
@@ -1250,9 +1390,7 @@ mod run {
             snapshot: &mut horizon_mods::Snapshot,
             host: Option<&LanHost>,
         ) {
-            let stack = |s: &Option<horizon_client::items::ItemStack>| {
-                s.as_ref().map(|s| (s.item.to_string(), s.count))
-            };
+            let stack = |s: &Option<horizon_client::items::ItemStack>| s.as_ref().map(stack_info);
             let mut out = std::collections::HashMap::new();
             if self.options.execution_role.is_client()
                 && self.remote.is_none()
@@ -1276,6 +1414,76 @@ mod run {
                 out.insert(uuid_string(g.uuid), (slots, g.selected as u32));
             }
             snapshot.inventories = out;
+        }
+
+        /// Puts the stacks server mods asked for in players' slots (0 to 35
+        /// the inventory, 36 to 39 armor feet to head, 40 the off hand); a
+        /// guest is sent their inventory again.
+        pub(in crate::game) fn apply_mod_player_stacks(&mut self) {
+            let sets = std::mem::take(&mut self.mods.player_stacks);
+            if sets.is_empty() {
+                return;
+            }
+            type Stack = Option<horizon_client::items::ItemStack>;
+            fn cell<'a>(
+                inventory: &'a mut [Stack],
+                armor: &'a mut [Stack; 4],
+                offhand: &'a mut Stack,
+                slot: usize,
+            ) -> Option<&'a mut Stack> {
+                match slot {
+                    0..36 => inventory.get_mut(slot),
+                    36..40 => Some(&mut armor[slot - 36]),
+                    40 => Some(offhand),
+                    _ => None,
+                }
+            }
+            let mut host = self.lan.take();
+            let mut resend = Vec::new();
+            for (mod_id, player, slot, stack) in sets {
+                let local = self.options.execution_role.is_client()
+                    && self.remote.is_none()
+                    && self.player.is_some()
+                    && self.player_uuid_string() == player;
+                if local {
+                    if let Some(c) = cell(
+                        &mut self.inventory,
+                        &mut self.armor,
+                        &mut self.offhand,
+                        slot as usize,
+                    ) {
+                        *c = stack.map(|info| stack_with(c.as_ref(), info, &mod_id));
+                    }
+                    continue;
+                }
+                let Some(h) = host.as_mut() else { continue };
+                let Some(i) = h
+                    .hub
+                    .guests
+                    .iter()
+                    .position(|g| g.placed && uuid_string(g.uuid) == player)
+                else {
+                    continue;
+                };
+                let g = &mut h.hub.guests[i];
+                if let Some(c) = cell(
+                    &mut g.inventory,
+                    &mut g.armor,
+                    &mut g.offhand,
+                    slot as usize,
+                ) {
+                    *c = stack.map(|info| stack_with(c.as_ref(), info, &mod_id));
+                    if !resend.contains(&i) {
+                        resend.push(i);
+                    }
+                }
+            }
+            if let Some(h) = host.as_mut() {
+                for i in resend {
+                    h.hub.send_inventory(i);
+                }
+            }
+            self.lan = host;
         }
 
         /// Runs the commands server mods asked for as the server's console,
@@ -2256,6 +2464,17 @@ mod run {
                     let queue = &mut self.mods.effects;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((dimension, pos, effect));
+                    }
+                }
+                Output::SetPlayerStack {
+                    mod_id,
+                    player,
+                    slot,
+                    stack,
+                } => {
+                    let queue = &mut self.mods.player_stacks;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push((mod_id, player, slot, stack));
                     }
                 }
                 Output::Console { mod_id, line } => {

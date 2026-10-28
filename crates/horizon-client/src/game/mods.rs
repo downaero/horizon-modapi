@@ -96,6 +96,9 @@ pub(super) struct ModsState {
     /// Commands server mods run as the console (mod, line), for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) console_lines: Vec<(String, String)>,
+    /// Stacks server mods put in players' slots (mod, player, slot, stack).
+    #[cfg(feature = "mods")]
+    pub(super) player_stacks: Vec<(String, String, u32, Option<horizon_mods::StackInfo>)>,
     /// Blocks server mods break (dimension, position, tool, inventory the
     /// drops go into), for the tick's end.
     #[cfg(feature = "mods")]
@@ -804,6 +807,7 @@ impl Game<'_> {
                 | Output::UseItem { .. }
                 | Output::Menu { .. }
                 | Output::Console { .. }
+                | Output::SetPlayerStack { .. }
                 | Output::Effect { .. }
                 | Output::Container { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);

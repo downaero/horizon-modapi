@@ -245,6 +245,8 @@ pub mod server {
     pub use horizon::mods::players::{self, GameMode, Player};
     /// Capability `redstone`: the signal reaching the mod's blocks.
     pub use horizon::mods::redstone;
+    /// Capability `stacks`: names, enchantments and the mod's own data on items.
+    pub use horizon::mods::stacks;
     /// Capability `transfer`: items, fluids and energy between blocks.
     pub use horizon::mods::transfer;
     pub use horizon::mods::world::{self, BlockChange};

@@ -283,6 +283,7 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
             Output::Effect { .. } => "played an effect".to_string(),
             Output::Take { .. } => "took an item entity".to_string(),
             Output::Push { .. } => "pushed something".to_string(),
+            Output::SetPlayerStack { .. } => "changed a player's stack".to_string(),
             Output::Console { line, .. } => format!("ran /{line}"),
             Output::Menu { .. } => "opened a screen of its own or set its data".to_string(),
             Output::UseItem { item, .. } => format!("used {item} on a block"),

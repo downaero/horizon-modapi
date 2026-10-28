@@ -126,9 +126,11 @@ pub enum Capability {
     Menus,
     /// Any command as the server's console (interface `console`).
     Console,
+    /// Names, enchantments and the mod's own data on items (`stacks`).
+    Stacks,
 }
 impl Capability {
-    pub const ALL: [Capability; 22] = [
+    pub const ALL: [Capability; 23] = [
         Capability::GameRead,
         Capability::Chat,
         Capability::Hud,
@@ -151,6 +153,7 @@ impl Capability {
         Capability::Transfer,
         Capability::Menus,
         Capability::Console,
+        Capability::Stacks,
     ];
     /// Whether a server mod may have it: the others act on a local player.
     pub fn on_server(self) -> bool {
@@ -169,6 +172,7 @@ impl Capability {
                 | Capability::Transfer
                 | Capability::Menus
                 | Capability::Console
+                | Capability::Stacks
         )
     }
     /// The WIT interface it grants, in `horizon:mods`.
@@ -196,6 +200,7 @@ impl Capability {
             Capability::Transfer => "transfer",
             Capability::Menus => "menus",
             Capability::Console => "console",
+            Capability::Stacks => "stacks",
         }
     }
     /// May change in any release: a mod uses it only with
@@ -217,6 +222,7 @@ impl Capability {
                 | Capability::Transfer
                 | Capability::Menus
                 | Capability::Console
+                | Capability::Stacks
         )
     }
     /// What the player reads before turning the mod on: "May <this>".
@@ -247,6 +253,7 @@ impl Capability {
             Capability::Transfer => "move items, fluids and energy in and out of blocks",
             Capability::Menus => "show you screens of its own for its blocks",
             Capability::Console => "run any command as the server, with an operator's rights",
+            Capability::Stacks => "read and change the names, enchantments and data on items",
             Capability::Recipes => {
                 "read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items"
             }
@@ -301,6 +308,7 @@ impl fmt::Display for Capability {
             Capability::Transfer => "transfer",
             Capability::Menus => "menus",
             Capability::Console => "console",
+            Capability::Stacks => "stacks",
         };
         f.write_str(name)
     }

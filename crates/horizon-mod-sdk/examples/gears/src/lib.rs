@@ -7,7 +7,7 @@ use horizon_mod_sdk::{
     export_server_mod, player_ops,
     server::{
         BlockPos, BlockTarget, Player, Pos, Registration, ServerMod, attachments, block_entities,
-        containers, effects, entities, files, items, menus, net, peers, players, redstone,
+        containers, effects, entities, files, items, menus, net, peers, players, redstone, stacks,
         transfer, world,
     },
 };
@@ -252,6 +252,21 @@ impl ServerMod for Gears {
                     .filter(|s| s.item == "minecraft:stick")
                     .map(|s| s.count)
                     .sum();
+                // The stick keeps how often it was waved, in the mod's own
+                // bytes on it, and is named for it (capability `stacks`).
+                if let Some(slot) = players::selected_slot(player)
+                    && let Some(mut held) = stacks::player_stack(player, slot)
+                {
+                    let waves = held
+                        .data
+                        .as_deref()
+                        .and_then(|d| <[u8; 4]>::try_from(d).ok())
+                        .map_or(0, u32::from_le_bytes)
+                        + 1;
+                    held.data = Some(waves.to_le_bytes().to_vec());
+                    held.name = Some(format!("Wand ({waves})"));
+                    stacks::set_player_stack(player, slot, Some(&held));
+                }
                 let _ = player_ops::give(player, "minecraft:diamond", 1);
                 let _ = player_ops::effect(player, "minecraft:speed", 5, 1, false);
                 players::tell(

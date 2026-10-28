@@ -90,6 +90,7 @@ folder, loads no runtime and plays exactly like vanilla 26.3.
 | `command` | `command` | `run(line)`: a vanilla command run as the player, with the player's permissions, after the hook returns (8 per call); mods' own commands are not run. `run-quiet(lines)`: up to 256 a call, the same rights, nothing in the chat (single player and Horizon's servers run them 64 a tick and log one line a batch; elsewhere they go as chat commands and their feedback shows) |
 | `containers` | `containers` | server mods: `register`, `open`, `slots`, `set-slot` for the mod's own blocks that hold items and open as a chest ([below](#capability-containers)). **Experimental:** `experimental = ["containers"]` |
 | `console` | `console` | server mods: any command as the server's console, with an operator's rights ([below](#players-inventories-and-the-console)). **Experimental:** `experimental = ["console"]` |
+| `stacks` | `stacks` | server mods: damage, names, enchantments and the mod's own bytes on item stacks ([below](#capability-stacks-data-on-items)). **Experimental:** `experimental = ["stacks"]` |
 | `menus` | `menus` | server mods: screens of the mod's own for its containers: slots where it wants them, labels, progress bars, buttons ([below](#capability-menus-screens-of-the-mods-own)). **Experimental:** `experimental = ["menus"]` |
 | `transfer` | `transfer` | server mods: items into and out of any inventory, fluid tanks and batteries on the mod's blocks ([below](#capability-transfer-items-fluids-and-energy-between-blocks)). **Experimental:** `experimental = ["transfer"]` |
 | `effects` | `effects` | server mods: `play-sound` and `level-event` at the mod's blocks ([below](#capability-effects)). **Experimental:** `experimental = ["effects"]` |
@@ -706,6 +707,17 @@ feedback to players and a line per mod in the server's log. The SDK's `horizon_m
 builds the usual ones with the player named by UUID and every id checked: `give`, `take`, `effect`,
 `clear_effects`, `experience`, `teleport` (to another dimension too) and `damage`. The gears example
 gives a diamond and speed to a player who waves a stick and counts the sticks they carry.
+
+### Capability `stacks`: data on items
+
+**API level 34, experimental, server mods.** What a stack carries beyond its item and count, as
+NeoForge's data components: damage, a custom name, enchantments, and the mod's own bytes (at most 16
+KiB), kept in vanilla's `minecraft:custom_data` under `horizon:<mod id>` so they stay with the stack
+wherever it goes, saves included. `stacks.player-stack(player, slot)` reads one of a player's 41
+slots as of the tick's start and `set-player-stack` writes it after the call (a guest is sent their
+inventory again); `container-stack` and `set-container-stack` read and write an inventory's slot at
+once. A mod sees and writes only its own bytes, and what other mods keep on a stack stays when its
+item does. The gears stick counts how often it was waved and is named for it.
 
 ### Capability `menus`: screens of the mod's own
 

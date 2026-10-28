@@ -220,6 +220,27 @@ mod console_bindings {
     });
 }
 use console_bindings::{ConsoleHost, horizon::mods::console};
+mod stack_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "stacks-host",
+    });
+}
+use stack_bindings::{StacksHost, horizon::mods::stacks};
+/// Largest bytes a mod keeps on one stack.
+const STACK_DATA_BYTES: usize = 16 << 10;
+
+/// An item stack as capability `stacks` sees it: every mod's own bytes on
+/// it, by mod id (each mod is shown only its own).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StackInfo {
+    pub item: String,
+    pub count: u32,
+    pub damage: u32,
+    pub name: Option<String>,
+    pub enchantments: Vec<(String, u32)>,
+    pub data: Vec<(String, Vec<u8>)>,
+}
 
 pub use crate::menu_layout::{MenuLayout, MenuWidget};
 /// A change to a mod's screens.
@@ -439,7 +460,7 @@ pub struct Snapshot {
     pub players: Vec<ServerPlayer>,
     /// Each online player's 41 inventory slots and selected hotbar slot, by
     /// UUID (`players.inventory`).
-    pub inventories: std::collections::HashMap<String, (Vec<Option<SlotStack>>, u32)>,
+    pub inventories: std::collections::HashMap<String, (Vec<Option<StackInfo>>, u32)>,
     /// The first block along the player's view within [`RAYCAST_MAX`] and
     /// its distance from the eye, for `game.raycast`; the game works it out
     /// only while a mod calls it ([`Mods::wants_raycast`]).
@@ -709,6 +730,14 @@ pub enum Output {
         face: u8,
         item: String,
     },
+    /// `stacks.set-player-stack`: a stack (with the mod's own bytes only)
+    /// for a player's slot.
+    SetPlayerStack {
+        mod_id: String,
+        player: String,
+        slot: u32,
+        stack: Option<StackInfo>,
+    },
     /// `console.run`: a command as the server's console.
     Console { mod_id: String, line: String },
     /// `menus.*`: a screen of the mod's own opened, or its data.
@@ -797,6 +826,23 @@ pub trait WorldView: std::any::Any + Send {
         _simulate: bool,
     ) -> Option<SlotStack> {
         None
+    }
+    /// The stack in slot `slot` of the inventory at a position, as it is now.
+    fn stack_at(&self, _dimension: &str, _pos: [i32; 3], _slot: u32) -> Option<StackInfo> {
+        None
+    }
+    /// Puts a stack in slot `slot` of the inventory at a position (none
+    /// empties it); mod `mod_id`'s bytes are the stack's, other mods' stay
+    /// when the item does. False when there is no such slot.
+    fn set_stack_at(
+        &mut self,
+        _dimension: &str,
+        _pos: [i32; 3],
+        _slot: u32,
+        _stack: Option<StackInfo>,
+        _mod_id: &str,
+    ) -> bool {
+        false
     }
     /// The redstone signal reaching a block of the mod's, as of the tick's
     /// start (capability `redstone`); `None` where it is not known.
@@ -1181,6 +1227,8 @@ impl Mods {
             MenusHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             ConsoleHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
+            StacksHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             EffectsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
@@ -3079,6 +3127,114 @@ impl State {
         }))
     }
 }
+impl State {
+    /// A stack as this mod sees it: its own bytes only.
+    fn stack_view(&self, s: &StackInfo) -> stacks::Stack {
+        stacks::Stack {
+            item: s.item.clone(),
+            count: s.count,
+            damage: s.damage,
+            name: s.name.clone(),
+            enchantments: s.enchantments.clone(),
+            data: s
+                .data
+                .iter()
+                .find(|(m, _)| *m == self.id)
+                .map(|(_, d)| d.clone()),
+        }
+    }
+    /// A stack this mod wrote, its bytes under its own id; `None` when it
+    /// is out of bounds.
+    fn stack_from(&self, s: stacks::Stack) -> Option<StackInfo> {
+        let ok = !s.item.is_empty()
+            && s.item.len() <= 128
+            && (1..=99).contains(&s.count)
+            && s.name.as_ref().is_none_or(|n| n.len() <= 256)
+            && s.enchantments.len() <= 32
+            && s.data.as_ref().is_none_or(|d| d.len() <= STACK_DATA_BYTES);
+        ok.then(|| StackInfo {
+            item: s.item,
+            count: s.count,
+            damage: s.damage,
+            name: s.name,
+            enchantments: s.enchantments,
+            data: s
+                .data
+                .map(|d| vec![(self.id.clone(), d)])
+                .unwrap_or_default(),
+        })
+    }
+}
+impl stacks::Host for State {
+    fn player_stack(&mut self, player: String, slot: u32) -> Option<stacks::Stack> {
+        let (slots, _) = self.snapshot.inventories.get(&player)?;
+        let s = slots.get(slot as usize)?.as_ref()?;
+        Some(self.stack_view(s))
+    }
+    fn set_player_stack(
+        &mut self,
+        player: String,
+        slot: u32,
+        stack: Option<stacks::Stack>,
+    ) -> bool {
+        if slot > 40 || !self.snapshot.players.iter().any(|p| p.id == player) {
+            return false;
+        }
+        let stack = match stack {
+            Some(s) => match self.stack_from(s) {
+                Some(s) => Some(s),
+                None => return false,
+            },
+            None => None,
+        };
+        self.out.push(Output::SetPlayerStack {
+            mod_id: self.id.clone(),
+            player,
+            slot,
+            stack,
+        });
+        true
+    }
+    fn container_stack(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        slot: u32,
+    ) -> Option<stacks::Stack> {
+        let s = self
+            .world
+            .lock()
+            .ok()?
+            .as_ref()?
+            .stack_at(&dimension, [x, y, z], slot)?;
+        Some(self.stack_view(&s))
+    }
+    fn set_container_stack(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        slot: u32,
+        stack: Option<stacks::Stack>,
+    ) -> bool {
+        let stack = match stack {
+            Some(s) => match self.stack_from(s) {
+                Some(s) => Some(s),
+                None => return false,
+            },
+            None => None,
+        };
+        let id = self.id.clone();
+        let Ok(mut view) = self.world.lock() else {
+            return false;
+        };
+        view.as_mut()
+            .is_some_and(|v| v.set_stack_at(&dimension, [x, y, z], slot, stack, &id))
+    }
+}
 impl console::Host for State {
     fn run(&mut self, line: String) -> Result<(), String> {
         let line = line.trim().trim_start_matches('/').to_owned();
@@ -3982,9 +4138,9 @@ impl players::Host for State {
             slots
                 .iter()
                 .map(|s| {
-                    s.as_ref().map(|(item, count)| players::SlotStack {
-                        item: item.clone(),
-                        count: *count,
+                    s.as_ref().map(|s| players::SlotStack {
+                        item: s.item.clone(),
+                        count: s.count,
                     })
                 })
                 .collect(),

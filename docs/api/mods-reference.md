@@ -29,6 +29,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
 | `transfer` | [`transfer`](#transfer) | move items, fluids and energy in and out of blocks |
 | `menus` | [`menus`](#menus) | show you screens of its own for its blocks |
 | `console` | [`console`](#console) | run any command as the server, with an operator's rights |
+| `stacks` | [`stacks`](#stacks) | read and change the names, enchantments and data on items |
 
 ## World `horizon-mod`
 
@@ -48,8 +49,15 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `console`, `log`, `storage`, `players`, `world`
+- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `console`, `stacks`, `log`, `storage`, `players`, `world`
 - Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `item-events`, `peer-events`, `menu-events`, `server-events`
+
+## World `stacks-host`
+
+The game's side of capability `stacks` (imports only).
+
+- Imports (what the game offers): `stacks`
+- Exports (what the mod provides): 
 
 ## World `console-host`
 
@@ -1331,3 +1339,27 @@ Capability `console`, server mods only (experimental): any command run as the se
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `run` | `func(line: string) -> result<_, string>` | Runs `line` (no leading slash needed) at the end of this tick. At most 256 commands a call; a line that does not parse fails then, not now. |
+
+## `stacks`
+
+Access: capability `stacks`.
+
+Capability `stacks`, server mods only (experimental): what an item stack carries beyond its item and count, as NeoForge's data components: damage, a custom name, enchantments, and the mod's own bytes, kept in vanilla's `minecraft:custom_data` under `horizon:<mod id>` so they stay with the stack wherever it goes (a filter's setting, a tool's charge). Each mod sees and writes only its own bytes.
+
+### record `stack`
+
+| Field | Type | |
+| --- | --- | --- |
+| `item` | `string` |  |
+| `count` | `u32` |  |
+| `damage` | `u32` | Durability used up. |
+| `name` | `option<string>` | `minecraft:custom_name` as plain text. |
+| `enchantments` | `list<tuple<string, u32>>` | `minecraft:fortune`, 3. |
+| `data` | `option<list<u8>>` | The mod's own bytes on it, at most 16 KiB. |
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `player-stack` | `func(player: string, slot: u32) -> option<stack>` | A slot of a player's inventory (0 to 40, as `players.inventory`) as of the start of this tick. |
+| `set-player-stack` | `func(player: string, slot: u32, stack: option<stack>) -> bool` | Puts a stack in a player's slot (none empties it), after the call. What other mods keep on the stack there stays when the item does. |
+| `container-stack` | `func(dimension: string, x: s32, y: s32, z: s32, slot: u32) -> option<stack>` | A slot of an inventory (a chest, a mod container, a furnace) in the simulated dimension, as it is now. |
+| `set-container-stack` | `func(dimension: string, x: s32, y: s32, z: s32, slot: u32, stack: option<stack>) -> bool` | Puts a stack in an inventory's slot at once (none empties it); false when there is no such slot. |
