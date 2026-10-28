@@ -36,6 +36,9 @@ impl Game<'_> {
     pub(super) fn tick_server_mods(&mut self) {}
     pub(super) fn mod_block_event(&mut self, _pos: [i32; 3], _state: BlockStateId, _placed: bool) {}
     pub(super) fn mod_player_chat(&mut self, _who: Who, _text: &str) {}
+    pub(super) fn mod_block_use(&mut self, _pos: [i32; 3]) -> bool {
+        false
+    }
     pub(super) fn local_server_mod_command(&mut self, _line: &str) -> bool {
         false
     }
@@ -48,6 +51,82 @@ impl Game<'_> {
         false
     }
     pub(super) fn apply_mod_block_writes(&mut self) {}
+    pub(super) fn flush_mod_block_data(&mut self) {}
+}
+
+/// Where a world keeps what server mods store at block positions
+/// (capability `block-entities`): `<world>/horizon-mod-data/<mod id>.blocks`,
+/// beside the vanilla save and never part of it.
+#[cfg_attr(not(feature = "mods"), allow(dead_code))]
+pub(super) const BLOCK_DATA_DIR: &str = "horizon-mod-data";
+
+/// One mod's block data as a file: per position, the dimension (u16 length
+/// and bytes), x y z (i32), the data (u32 length and bytes), little-endian.
+#[cfg_attr(not(feature = "mods"), allow(dead_code))]
+pub(super) fn encode_block_data<'a>(
+    entries: impl Iterator<Item = (&'a str, [i32; 3], &'a [u8])>,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (dimension, pos, data) in entries {
+        out.extend((dimension.len() as u16).to_le_bytes());
+        out.extend(dimension.as_bytes());
+        for c in pos {
+            out.extend(c.to_le_bytes());
+        }
+        out.extend((data.len() as u32).to_le_bytes());
+        out.extend(data);
+    }
+    out
+}
+
+/// [`encode_block_data`]'s inverse; a damaged tail is dropped.
+#[cfg_attr(not(feature = "mods"), allow(dead_code))]
+pub(super) fn decode_block_data(mut bytes: &[u8]) -> Vec<(String, [i32; 3], Vec<u8>)> {
+    fn take<'a>(bytes: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
+        let (head, rest) = bytes.split_at_checked(n)?;
+        *bytes = rest;
+        Some(head)
+    }
+    let mut out = Vec::new();
+    while !bytes.is_empty() {
+        let Some(entry) = (|| {
+            let n = u16::from_le_bytes(take(&mut bytes, 2)?.try_into().ok()?) as usize;
+            let dimension = String::from_utf8(take(&mut bytes, n)?.to_vec()).ok()?;
+            let mut pos = [0i32; 3];
+            for c in &mut pos {
+                *c = i32::from_le_bytes(take(&mut bytes, 4)?.try_into().ok()?);
+            }
+            let n = u32::from_le_bytes(take(&mut bytes, 4)?.try_into().ok()?) as usize;
+            Some((dimension, pos, take(&mut bytes, n)?.to_vec()))
+        })() else {
+            break;
+        };
+        out.push(entry);
+    }
+    out
+}
+
+#[cfg(test)]
+mod block_data_tests {
+    use super::*;
+
+    #[test]
+    fn block_data_round_trips_and_drops_a_damaged_tail() {
+        let entries = [
+            ("minecraft:overworld", [1, -64, 3], &[1u8, 2, 3][..]),
+            ("minecraft:the_nether", [-5, 70, 9], &[][..]),
+        ];
+        let mut bytes = encode_block_data(entries.iter().copied());
+        let back = decode_block_data(&bytes);
+        assert_eq!(back.len(), 2);
+        assert_eq!(
+            back[0],
+            ("minecraft:overworld".into(), [1, -64, 3], vec![1, 2, 3])
+        );
+        assert_eq!(back[1].2, Vec::<u8>::new());
+        bytes.extend([9, 9, 9]);
+        assert_eq!(decode_block_data(&bytes).len(), 2);
+    }
 }
 
 #[cfg(feature = "mods")]
@@ -308,11 +387,117 @@ mod run {
                     }
                 }
             }
+            self.sync_mod_block_data();
             self.mods.mods.server_tick(self.ticks);
+            self.mods.mods.tick_blocks();
             self.return_world();
             self.mods.players = players;
             self.show_mod_output();
             self.apply_mod_block_writes();
+            if self.mods.block_data_dirty && self.ticks % 200 == 0 {
+                self.flush_mod_block_data();
+            }
+        }
+
+        /// Hands the mods the block data saved with this world: when the
+        /// world or the set of running mods changed since the last tick.
+        fn sync_mod_block_data(&mut self) {
+            let key = (self.world_root.clone(), self.mods.mods.generation());
+            if self.mods.block_data_key.as_ref() == Some(&key) {
+                return;
+            }
+            if self.mods.block_data_key.as_ref().map(|k| &k.0) != Some(&key.0) {
+                self.mods.block_data.clear();
+                self.mods.block_data_dirty = false;
+                if !key.0.as_os_str().is_empty()
+                    && let Ok(dir) = std::fs::read_dir(key.0.join(super::BLOCK_DATA_DIR))
+                {
+                    for file in dir.flatten() {
+                        let path = file.path();
+                        let id = path.file_stem().and_then(|s| s.to_str());
+                        if path.extension().is_none_or(|e| e != "blocks") {
+                            continue;
+                        }
+                        let (Some(id), Ok(bytes)) = (id, std::fs::read(&path)) else {
+                            continue;
+                        };
+                        for (dimension, pos, data) in super::decode_block_data(&bytes) {
+                            self.mods
+                                .block_data
+                                .insert((id.to_owned(), dimension, pos), data);
+                        }
+                    }
+                }
+            }
+            for ((id, dimension, pos), data) in &self.mods.block_data {
+                self.mods
+                    .mods
+                    .load_block_data(id, dimension, *pos, data.clone());
+            }
+            self.mods.block_data_key = Some(key);
+        }
+
+        /// Records what a mod stored at (or removed from) a block position.
+        fn store_mod_block_data(
+            &mut self,
+            mod_id: String,
+            dimension: String,
+            pos: [i32; 3],
+            data: Option<Vec<u8>>,
+        ) {
+            let key = (mod_id, dimension, pos);
+            let changed = match data {
+                Some(data) => self.mods.block_data.insert(key, data.clone()) != Some(data),
+                None => self.mods.block_data.remove(&key).is_some(),
+            };
+            self.mods.block_data_dirty |= changed;
+        }
+
+        /// Writes the block data of every mod to the world's folder, and
+        /// removes the files of mods that keep none.
+        pub(in crate::game) fn flush_mod_block_data(&mut self) {
+            if !self.mods.block_data_dirty || self.world_root.as_os_str().is_empty() {
+                return;
+            }
+            let dir = self.world_root.join(super::BLOCK_DATA_DIR);
+            let mut ids: std::collections::BTreeMap<&str, Vec<(&str, [i32; 3], &[u8])>> =
+                Default::default();
+            for ((id, dimension, pos), data) in &self.mods.block_data {
+                ids.entry(id).or_default().push((dimension, *pos, data));
+            }
+            let result = (|| -> std::io::Result<()> {
+                if !ids.is_empty() {
+                    std::fs::create_dir_all(&dir)?;
+                }
+                for (id, entries) in &ids {
+                    // A mod's id names a file: nothing that could leave the folder.
+                    if id.is_empty() || id.contains(['/', '\\', ':', '.']) {
+                        continue;
+                    }
+                    let bytes = super::encode_block_data(entries.iter().copied());
+                    let tmp = dir.join(format!("{id}.blocks.tmp"));
+                    std::fs::write(&tmp, bytes)?;
+                    std::fs::rename(&tmp, dir.join(format!("{id}.blocks")))?;
+                }
+                if let Ok(files) = std::fs::read_dir(&dir) {
+                    for file in files.flatten() {
+                        let path = file.path();
+                        let stale = path.extension().is_some_and(|e| e == "blocks")
+                            && path
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .is_some_and(|id| !ids.contains_key(id));
+                        if stale {
+                            std::fs::remove_file(path)?;
+                        }
+                    }
+                }
+                Ok(())
+            })();
+            match result {
+                Ok(()) => self.mods.block_data_dirty = false,
+                Err(e) => log::warn!("Horizon: could not save server mods' block data: {e}"),
+            }
         }
 
         /// Players' command trees list the running server mods' commands
@@ -417,6 +602,48 @@ mod run {
                 state,
                 placed,
             });
+        }
+
+        /// The acting player used the block at `pos` with an empty-handed
+        /// click: whether a server mod took it. Only blocks of a mod's own
+        /// namespace are offered, so vanilla blocks cost nothing here.
+        pub(in crate::game) fn mod_block_use(&mut self, pos: [i32; 3]) -> bool {
+            if !self.hears_players() {
+                return false;
+            }
+            let state = self.world.block(pos[0], pos[1], pos[2]);
+            let state = self.state_string(state);
+            if state.starts_with("minecraft:") {
+                return false;
+            }
+            let players = self.server_players(None);
+            let id = match self.lan_acting {
+                None => self.player_uuid_string(),
+                Some(conn) => {
+                    let guests = self.lan.iter().flat_map(|h| &h.hub.guests);
+                    match guests.into_iter().find(|g| g.conn == conn) {
+                        Some(g) => uuid_string(g.uuid),
+                        None => return false,
+                    }
+                }
+            };
+            let Some(me) = players.iter().find(|p| p.id == id).cloned() else {
+                return false;
+            };
+            let dimension = self.dim.id();
+            let snapshot = self.mod_snapshot_with(players);
+            self.mods.mods.set_snapshot(snapshot);
+            self.lend_world();
+            let pos = BlockPos {
+                x: pos[0],
+                y: pos[1],
+                z: pos[2],
+            };
+            let used = self.mods.mods.block_used(&me, dimension, pos, &state);
+            self.return_world();
+            self.show_mod_output();
+            self.apply_mod_block_writes();
+            used
         }
 
         /// A chat message a player sent.
@@ -569,6 +796,12 @@ mod run {
                         );
                     }
                 }
+                Output::BlockData {
+                    mod_id,
+                    dimension,
+                    pos,
+                    data,
+                } => self.store_mod_block_data(mod_id, dimension, pos, data),
                 _ => {}
             }
         }

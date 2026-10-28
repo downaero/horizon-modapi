@@ -1051,6 +1051,7 @@ impl Game<'_> {
         if self.world_root.as_os_str().is_empty() {
             return;
         }
+        self.flush_mod_block_data();
         use horizon_world::nbt::Tag;
         let c = self.ui.clock;
         // The other clocks stay as saved; the overworld one keeps the fields Horizon

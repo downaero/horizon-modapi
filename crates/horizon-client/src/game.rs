@@ -4226,6 +4226,10 @@ impl Game<'_> {
             // TRY_WITH_EMPTY_HAND: only the main hand's turn uses the block
             // itself (useWithoutItem).
             if !anchor_passed && self.hand == Hand::Main {
+                if self.mod_block_use(hit.pos) {
+                    self.swing_arm();
+                    return Ok(true);
+                }
                 let face = match hit.face {
                     [0, 1, 0] => Direction::Up,
                     [0, -1, 0] => Direction::Down,

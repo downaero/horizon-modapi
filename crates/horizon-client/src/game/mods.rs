@@ -71,6 +71,17 @@ pub(super) struct ModsState {
     /// tick.
     #[cfg(feature = "mods")]
     pub(super) block_writes: Vec<(String, horizon_mods::BlockChange)>,
+    /// What server mods store at block positions (capability
+    /// `block-entities`), by mod id, dimension and position; saved in the
+    /// world's folder.
+    #[cfg(feature = "mods")]
+    pub(super) block_data: std::collections::BTreeMap<(String, String, [i32; 3]), Vec<u8>>,
+    /// `block_data` changed since it was written.
+    #[cfg(feature = "mods")]
+    pub(super) block_data_dirty: bool,
+    /// The world and the mods' generation `block_data` was last handed over for.
+    #[cfg(feature = "mods")]
+    pub(super) block_data_key: Option<(PathBuf, u64)>,
     /// `command.run` lines for this window's own world, run on the next tick:
     /// run at once, their chat lines would reach the mods while their output
     /// is still being shown, and a mod answering its own lines would recurse.
@@ -704,7 +715,8 @@ impl Game<'_> {
                 server @ (Output::Tell { .. }
                 | Output::Broadcast { .. }
                 | Output::Reply { .. }
-                | Output::SetBlocks { .. }) => {
+                | Output::SetBlocks { .. }
+                | Output::BlockData { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);
                     continue;
                 }
