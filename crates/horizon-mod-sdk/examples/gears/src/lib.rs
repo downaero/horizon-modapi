@@ -6,7 +6,7 @@ use horizon_mod_sdk::{
     export_server_mod,
     server::{
         BlockPos, Player, Pos, Registration, ServerMod, block_entities, containers, effects,
-        entities, items, net, players, redstone,
+        entities, files, items, net, players, redstone,
     },
 };
 
@@ -16,6 +16,24 @@ const BELT: &str = "gears:belt";
 const GAUGE: &str = "gears:gauge";
 const DIMENSION: &str = "minecraft:overworld";
 
+/// The press recipes the mod carries as data, one `input output count` a line.
+fn read_press() -> Vec<(String, String, u32)> {
+    let Some(bytes) = files::read("data/gears/recipes/press.txt") else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .filter_map(|line| {
+            let mut w = line.split_whitespace();
+            Some((
+                w.next()?.to_owned(),
+                w.next()?.to_owned(),
+                w.next()?.parse().ok()?,
+            ))
+        })
+        .collect()
+}
+
 struct Gears {
     /// Ticks seen by each counter since its last write.
     ticks: Vec<([i32; 3], u32)>,
@@ -23,6 +41,9 @@ struct Gears {
     gears: Vec<([i32; 3], u32)>,
     /// The turn of the gears, in degrees (capability `entities`).
     spin: f32,
+    /// The recipes of the counter's press: (input, output, count) read from
+    /// the mod's own `data/gears/recipes/press.txt` (capability-free `files`).
+    press: Vec<(String, String, u32)>,
 }
 
 impl ServerMod for Gears {
@@ -31,6 +52,7 @@ impl ServerMod for Gears {
             ticks: Vec::new(),
             gears: Vec::new(),
             spin: 0.0,
+            press: read_press(),
         };
         // The crate holds items (capability `containers`) and opens as a chest.
         containers::register(CRATE)?;
@@ -160,7 +182,7 @@ impl ServerMod for Gears {
         let _ = block_entities::set(dimension, pos.x, pos.y, pos.z, &(seconds + 1).to_le_bytes());
         // The counter swallows iron ingots lying next to it (capability
         // `items`): it counts them in the nuggets it gives back.
-        let mut swallowed = 0;
+        let mut gives: Vec<(String, u32)> = Vec::new();
         for item in items::nearby(
             dimension,
             f64::from(pos.x) + 0.5,
@@ -168,18 +190,20 @@ impl ServerMod for Gears {
             f64::from(pos.z) + 0.5,
             2.0,
         ) {
-            if item.item == "minecraft:iron_ingot" && items::take(item.id) {
-                swallowed += item.count;
+            if let Some((_, out, n)) = self.press.iter().find(|(i, _, _)| *i == item.item)
+                && items::take(item.id)
+            {
+                gives.push((out.clone(), (item.count * n).min(99)));
             }
         }
-        if swallowed > 0 {
+        for (out, count) in gives {
             let _ = items::drop(
                 dimension,
                 f64::from(pos.x) + 0.5,
                 f64::from(pos.y) + 1.0,
                 f64::from(pos.z) + 0.5,
-                "minecraft:iron_nugget",
-                (swallowed * 9).min(99),
+                &out,
+                count,
             );
         }
         // A minute of running makes an iron nugget (capability `items`).

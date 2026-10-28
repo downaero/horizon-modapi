@@ -83,6 +83,14 @@ mod item_bindings {
     });
 }
 use item_bindings::{ItemsHost, horizon::mods::items};
+/// The package files every mod may read.
+mod file_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "files-host",
+    });
+}
+use file_bindings::{FilesHost, horizon::mods::files};
 /// Capability `effects`' imports.
 mod effect_bindings {
     wasmtime::component::bindgen!({
@@ -711,6 +719,8 @@ struct State {
     browser: BrowserState,
     /// Capability `storage`'s folder; made on first `set`.
     data_dir: PathBuf,
+    /// The mod's own `.hmod` or folder, for `files`.
+    package_path: PathBuf,
     /// Bytes `storage::set` may still write before this hook call ends
     /// (reset per call in [`Mods::call`]): fuel bounds a mod's CPU time but
     /// not disk I/O time, so a loop of small-fuel, large-payload `set`s
@@ -889,6 +899,8 @@ impl Mods {
                 .map_err(|e| e.to_string())?;
             ItemsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
+            FilesHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
             EffectsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
@@ -971,6 +983,7 @@ impl Mods {
             input: InputState::default(),
             browser: BrowserState::default(),
             data_dir,
+            package_path: path.to_owned(),
             storage_budget: STORAGE_WRITE_BUDGET,
             limits: StoreLimitsBuilder::new()
                 .memory_size(MEMORY)
@@ -2452,6 +2465,74 @@ impl effects::Host for State {
             data: data.clamp(0, 15),
         };
         self.effect(dimension, [x, y, z], effect)
+    }
+}
+/// The package path `files` may read: under `data/` or `assets/`, no way out.
+fn package_file_ok(path: &str) -> bool {
+    (path.starts_with("data/") || path.starts_with("assets/"))
+        && !path.contains("..")
+        && !path.contains('\\')
+        && !path.starts_with('/')
+}
+/// Largest file `files.read` gives, and most paths `files.paths` gives.
+const PACKAGE_FILE_BYTES: u64 = 1 << 20;
+const PACKAGE_LIST: usize = 1024;
+impl files::Host for State {
+    fn read(&mut self, path: String) -> Option<Vec<u8>> {
+        if !package_file_ok(&path) {
+            return None;
+        }
+        if self.package_path.is_dir() {
+            let file = self.package_path.join(&path);
+            let meta = std::fs::metadata(&file).ok()?;
+            return (meta.is_file() && meta.len() <= PACKAGE_FILE_BYTES)
+                .then(|| std::fs::read(file).ok())
+                .flatten();
+        }
+        let file = std::fs::File::open(&self.package_path).ok()?;
+        let mut zip = zip::ZipArchive::new(file).ok()?;
+        let entry = zip.by_name(&path).ok()?;
+        if entry.size() > PACKAGE_FILE_BYTES {
+            return None;
+        }
+        let mut out = Vec::with_capacity(entry.size() as usize);
+        std::io::Read::read_to_end(
+            &mut std::io::Read::take(entry, PACKAGE_FILE_BYTES),
+            &mut out,
+        )
+        .ok()?;
+        Some(out)
+    }
+    fn paths(&mut self, prefix: String) -> Vec<String> {
+        if !package_file_ok(&prefix) {
+            return Vec::new();
+        }
+        let mut found = Vec::new();
+        if self.package_path.is_dir() {
+            fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+                let Ok(read) = std::fs::read_dir(dir) else {
+                    return;
+                };
+                for e in read.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        walk(&p, root, out);
+                    } else if let Ok(rel) = p.strip_prefix(root) {
+                        out.push(rel.to_string_lossy().replace('\\', "/"));
+                    }
+                }
+            }
+            walk(&self.package_path, &self.package_path, &mut found);
+        } else if let Some(zip) = std::fs::File::open(&self.package_path)
+            .ok()
+            .and_then(|f| zip::ZipArchive::new(f).ok())
+        {
+            found = zip.file_names().map(str::to_owned).collect();
+        }
+        found.retain(|p| p.starts_with(&prefix) && !p.ends_with('/'));
+        found.sort();
+        found.truncate(PACKAGE_LIST);
+        found
     }
 }
 impl items::Host for State {

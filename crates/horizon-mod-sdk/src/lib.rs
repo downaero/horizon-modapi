@@ -220,6 +220,8 @@ pub mod server {
     pub use horizon::mods::items;
     /// Capability `effects`: sounds and particles.
     pub use horizon::mods::effects;
+    /// The files in the mod's own package, read only.
+    pub use horizon::mods::files;
     /// Capability `entities`: small marker entities.
     pub use horizon::mods::entities;
     /// Capability `net`: messages to and from the mod's client half.

@@ -1010,6 +1010,19 @@ interface neighbor-events {
     neighbor-changed: func(dimension: string, x: s32, y: s32, z: s32, state: string, from-x: s32, from-y: s32, from-z: s32, from-state: string);
 }
 
+/// The files a mod carries in its own package (`data/` and `assets/`), read
+/// only: every mod has them, with no capability. A server mod keeps its own
+/// recipe types there as JSON, a machine reads them at its start.
+interface files {
+    /// A file of the mod's package by its path in it (`data/mymod/press.json`),
+    /// at most 1 MiB; none where there is no such file. Only `data/` and
+    /// `assets/` are readable.
+    read: func(path: string) -> option<list<u8>>;
+    /// The paths in the package that start with `prefix` (`data/mymod/recipes/`),
+    /// in order, at most 1024.
+    paths: func(prefix: string) -> list<string>;
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -1047,6 +1060,12 @@ world horizon-block-mod {
     import items;
     import effects;
     export neighbor-events;
+    import files;
+}
+
+/// The game's side of `files` (imports only).
+world files-host {
+    import files;
 }
 
 /// The game's side of `neighbor-events`.

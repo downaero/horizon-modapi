@@ -663,6 +663,15 @@ guests'; hoppers and the mod itself are not held to it. Not saved: the mod sets
 its rules again after a load (the gears crate does at each open). A progress bar or
 a screen of its own is not part of this.
 
+### Reading the mod's own files
+
+Every mod, with no capability, can read what its package carries under `data/` and
+`assets/` (API level 23): `files.read(path)` gives a file (at most 1 MiB) or none,
+`files.paths(prefix)` the paths that start with a prefix (at most 1024, sorted). That is
+where a server mod keeps its own recipe types as data: the gears example's
+counter reads `data/gears/recipes/press.txt`, one `input output count` a line, when it
+starts. Nothing outside `data/` and `assets/` of the mod's own package can be read.
+
 ### Capability `entities`
 
 **API level 10, experimental, server mods.** A first, small step toward mod

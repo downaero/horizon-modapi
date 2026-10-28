@@ -1,0 +1,2 @@
+minecraft:iron_ingot minecraft:iron_nugget 9
+minecraft:gold_ingot minecraft:gold_nugget 9

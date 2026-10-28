@@ -273,6 +273,9 @@ impl World {
         if previous != state.0 {
             self.block_entities
                 .state_changed((x, y, z), previous, state.0);
+            if !self.slot_rules.is_empty() {
+                self.slot_rules.remove(&(x, y, z));
+            }
             let watches = |id: u32| self.watched.get(id as usize).copied().unwrap_or(false);
             if watches(previous) || watches(state.0) {
                 self.watched_writes.push(((x, y, z), previous, state.0));

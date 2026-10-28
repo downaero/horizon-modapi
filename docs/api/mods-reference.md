@@ -45,8 +45,15 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `log`, `storage`, `players`, `world`
+- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `log`, `storage`, `players`, `world`
 - Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `server-events`
+
+## World `files-host`
+
+The game's side of `files` (imports only).
+
+- Imports (what the game offers): `files`
+- Exports (what the mod provides): 
 
 ## World `neighbor-host`
 
@@ -1025,3 +1032,14 @@ What the server calls in a server mod when a block next to one of its blocks cha
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `neighbor-changed` | `func(dimension: string, x: s32, y: s32, z: s32, state: string, from-x: s32, from-y: s32, from-z: s32, from-state: string)` | The block at (from-x, from-y, from-z) became `from-state`; the mod's block next to it, at (x, y, z) in `state`, is told, in the tick the change was noticed (the start of the next server tick). At most 1024 calls a tick; the rest are dropped. |
+
+## `files`
+
+Access: not granted by any capability.
+
+The files a mod carries in its own package (`data/` and `assets/`), read only: every mod has them, with no capability. A server mod keeps its own recipe types there as JSON, a machine reads them at its start.
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `read` | `func(path: string) -> option<list<u8>>` | A file of the mod's package by its path in it (`data/mymod/press.json`), at most 1 MiB; none where there is no such file. Only `data/` and `assets/` are readable. |
+| `paths` | `func(prefix: string) -> list<string>` | The paths in the package that start with `prefix` (`data/mymod/recipes/`), in order, at most 1024. |
