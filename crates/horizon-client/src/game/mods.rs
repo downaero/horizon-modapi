@@ -174,6 +174,15 @@ pub(super) struct ModsState {
     pub(super) container_ops: Vec<(String, horizon_mods::ContainerOp)>,
     #[cfg(feature = "mods")]
     pub(super) container_blocks: std::collections::HashMap<String, usize>,
+    /// The `block_data` entries a server mod set with `set-synced`: sent to
+    /// the players whose games have their chunks.
+    #[cfg(feature = "mods")]
+    pub(super) block_synced: std::collections::HashSet<(String, String, [i32; 3])>,
+    /// The synced block data the server this window plays on sent, by mod
+    /// id and position, in the player's dimension (`block-data`).
+    #[cfg(feature = "mods")]
+    pub(super) client_block_data:
+        std::sync::Arc<std::collections::HashMap<(String, [i32; 3]), Vec<u8>>>,
     /// `block_data` changed since it was written.
     #[cfg(feature = "mods")]
     pub(super) block_data_dirty: bool,
@@ -579,6 +588,7 @@ impl Game<'_> {
             clock,
             inventories: Default::default(),
             typed_entities: std::sync::Arc::new(self.mods.typed.clone()),
+            block_data: self.mod_block_data_view(),
             gui_size: self.gui_size(),
             held: self.mod_held(),
             frame: self.frame_reading(),

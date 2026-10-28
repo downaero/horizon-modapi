@@ -99,6 +99,11 @@ pub trait Block: 'static {
 pub trait BlockEntity: Sized + 'static {
     /// Ticked each server tick while its chunk is loaded.
     const TICKING: bool = true;
+    /// Saved with `block-entities.set-synced`: the players whose games have
+    /// its chunk get what it saves, for the mod's client half to read with
+    /// `block_data` (NeoForge's update tag). Every change is sent, so a
+    /// synced entity saves only what players need to see change.
+    const SYNCED: bool = false;
     /// A new one, for a block just placed or before its data is read.
     fn new(pos: BlockPos, state: &BlockState) -> Self;
     /// Reads what [`BlockEntity::save_additional`] wrote.
@@ -173,7 +178,11 @@ fn tick<T: BlockEntity>(level: &Level, pos: BlockPos, state: &BlockState) {
     let mut after = Vec::new();
     entity.save_additional(&mut after);
     if after != before {
-        let _ = block_entities::set(d, pos.x, pos.y, pos.z, &after);
+        let _ = if T::SYNCED {
+            block_entities::set_synced(d, pos.x, pos.y, pos.z, &after)
+        } else {
+            block_entities::set(d, pos.x, pos.y, pos.z, &after)
+        };
     }
 }
 

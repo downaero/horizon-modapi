@@ -727,7 +727,8 @@ no change to them. `horizon_mod_sdk::level` has `BlockPos` (`above`, `relative(d
 `get_block_entity` and `set_block_entity`, each needing the capability of the interface it calls.
 `horizon_mod_sdk::block` has the `Block` trait (`use_without_item`, `use_item_on`, `set_placed_by`,
 `player_will_destroy`, `neighbor_changed`, returning `InteractionResult`) and `BlockEntity` (`new`,
-`load_additional`, `save_additional`, `tick`). A mod registers them at `init`:
+`load_additional`, `save_additional`, `tick`, and `SYNCED` for one players' games get, see
+[Synced block data](#capability-net)). A mod registers them at `init`:
 `block::register("mymod:press", Press)` and `block::register_entity::<PressData>("mymod:press")`.
 `export_server_mod!` then calls them for those blocks before the mod's own hooks, which hear every
 other block and the clicks a block passes (`InteractionResult::Pass`).
@@ -939,6 +940,24 @@ connections, and a client mod playing on a server reaches that server's mod
 of the same id. Vanilla servers ignore the payloads. A mod built before `net`
 (no `net-events` export) hears nothing. **Experimental:**
 `experimental = ["net"]`.
+
+**Synced block data (API level 38).** What a server half keeps at a block
+with `block-entities.set-synced` (as `set`, with the same limits) also goes
+to every player whose game has the block's chunk: at once, whenever it
+changes, and when the chunk reaches a player later, as NeoForge sends a block
+entity's update tag. The client half reads it with `block-data.get(x, y, z)`
+and `block-data.in-box(min, max)` (at most 256 positions, nearest the box's
+minimum corner first), as of its tick, in the player's dimension; a chunk the
+player's game forgets takes its data with it. A later `set` at the position
+keeps the bytes on the server only, and `remove` takes them from the players'
+games too. They travel as custom payloads on `horizon:block_data`, sent after
+the chunk they belong to, so every change is a packet to each player near
+it: a block syncs what players see change (a gauge's reading, a tank's
+level), not every counter it keeps. Synced entries stay synced when the world
+is saved and loaded. In-frame single player has no connection: the window's
+client half reads its own server half's synced data directly. In the SDK, a
+`BlockEntity` with `const SYNCED: bool = true` is saved this way; the gears
+example's counter syncs its seconds.
 
 **Where they run.** The game that simulates the world starts the server mods
 that are on, and only that one:

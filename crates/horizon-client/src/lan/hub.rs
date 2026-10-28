@@ -163,6 +163,16 @@ pub enum HostEvent {
     Error(String),
 }
 
+/// [`Hub::set_chunk_payload`]'s packets: dimension, chunk, then (key,
+/// position) to the encoded packet.
+type ChunkPayloads = std::collections::HashMap<
+    String,
+    crate::fast_hash::FxHashMap<
+        (i32, i32),
+        std::collections::BTreeMap<(String, [i32; 3]), Vec<u8>>,
+    >,
+>;
+
 pub struct Hub {
     pub lan: Lan,
     pub config: HubConfig,
@@ -211,6 +221,10 @@ pub struct Hub {
     entities: std::collections::HashMap<String, Entities>,
     /// What one tick of entity tracking sends each guest, kept between ticks.
     entity_out: Vec<Vec<Vec<u8>>>,
+    /// Packets that go with block positions, by dimension and chunk (a
+    /// server mod's synced block data): each player gets them right after
+    /// the chunk, keyed by who set them and the position.
+    chunk_payloads: ChunkPayloads,
     /// Server mods' commands, a root in the commands report's format, sent
     /// after vanilla's; the key the game last set them for.
     mod_commands: (serde_json::Value, Option<u64>),
@@ -384,7 +398,47 @@ impl Hub {
             entity_out: Vec::new(),
             mod_commands: (serde_json::Value::Null, None),
             teams: Vec::new(),
+            chunk_payloads: Default::default(),
         }
+    }
+
+    /// Sends `packet` to every player in `dimension` whose game has the
+    /// chunk holding `pos`; with `keep`, also to each player the chunk
+    /// reaches later, until a packet for the same `key` and position
+    /// without `keep` replaces it.
+    pub fn set_chunk_payload(
+        &mut self,
+        dimension: &str,
+        key: &str,
+        pos: [i32; 3],
+        packet: &C,
+        keep: bool,
+    ) {
+        let chunk = (pos[0] >> 4, pos[2] >> 4);
+        let body = packet.encode();
+        for g in &self.guests {
+            if g.placed && g.dimension == dimension && g.sent_chunks.contains(&chunk) {
+                g.sender.send(body.clone());
+            }
+        }
+        let chunks = self.chunk_payloads.entry(dimension.to_owned()).or_default();
+        let at = chunks.entry(chunk).or_default();
+        if keep {
+            at.insert((key.to_owned(), pos), body);
+        } else {
+            at.remove(&(key.to_owned(), pos));
+            if at.is_empty() {
+                chunks.remove(&chunk);
+            }
+        }
+    }
+    /// How many packets [`Hub::set_chunk_payload`] keeps.
+    pub fn chunk_payload_count(&self) -> usize {
+        self.chunk_payloads
+            .values()
+            .flat_map(|c| c.values())
+            .map(|a| a.len())
+            .sum()
     }
 
     pub fn guest(&self, conn: u32) -> Option<&Guest> {
@@ -1415,9 +1469,13 @@ impl Hub {
                 size: size as i32,
             }));
             g.unacknowledged += 1;
+            let payloads = self.chunk_payloads.get(&self.config.dimension);
             for idx in taken.into_iter().rev() {
                 let key = g.chunk_queue.remove(idx);
                 g.sent_chunks.insert(key);
+                for body in payloads.and_then(|p| p.get(&key)).into_iter().flatten() {
+                    g.sender.send(body.1.clone());
+                }
             }
         }
     }

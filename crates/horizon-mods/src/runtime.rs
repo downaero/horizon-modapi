@@ -220,6 +220,15 @@ mod entity_type_bindings {
     });
 }
 use entity_type_bindings::{EntityTypesHost, horizon::mods::entity_types};
+mod block_data_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "block-data-host",
+    });
+}
+use block_data_bindings::{BlockDataHost, horizon::mods::block_data};
+/// Most positions `block-data.in-box` answers with.
+const BLOCK_DATA_IN_BOX: usize = 256;
 /// Most entities of its own types one mod has at once.
 pub const TYPED_PER_MOD: usize = 256;
 /// Most entity types one mod registers.
@@ -590,6 +599,9 @@ pub struct Snapshot {
     /// Every server mod's typed entities (`entity-types`); each mod sees
     /// its own.
     pub typed_entities: Arc<Vec<TypedEntity>>,
+    /// The synced block data the player's game has (`block-data`), by mod
+    /// id and position, in the player's dimension; each mod sees its own.
+    pub block_data: Arc<std::collections::HashMap<(String, [i32; 3]), Vec<u8>>>,
     /// The first block along the player's view within [`RAYCAST_MAX`] and
     /// its distance from the eye, for `game.raycast`; the game works it out
     /// only while a mod calls it ([`Mods::wants_raycast`]).
@@ -800,12 +812,15 @@ pub enum Output {
     /// it when `all`.
     PlaceRecipe { book_id: i32, all: bool },
     /// `block-entities.set` (`data` some) or `remove` (none): the game saves
-    /// the bytes with the chunk holding `pos`, for the mod `mod_id`.
+    /// the bytes with the chunk holding `pos`, for the mod `mod_id`; with
+    /// `synced` (`set-synced`) it also sends them to the players who have
+    /// the chunk.
     BlockData {
         mod_id: String,
         dimension: String,
         pos: [i32; 3],
         data: Option<Vec<u8>>,
+        synced: bool,
     },
     /// `net.send`: a message on the mod's channel. `player` is the target
     /// of a server mod's message (none: every player); a client mod's goes to
@@ -1365,6 +1380,8 @@ impl Mods {
                 .map_err(|e| e.to_string())?;
             NetHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
+            BlockDataHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
             EntitiesHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             ContainersHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
@@ -1853,6 +1870,7 @@ impl Mods {
                             dimension,
                             pos,
                             data: None,
+                            synced: false,
                         });
                     }
                 }
@@ -3117,6 +3135,52 @@ impl mod_world::Host for State {
         Ok(())
     }
 }
+impl block_data::Host for State {
+    fn get(&mut self, x: i32, y: i32, z: i32) -> Option<Vec<u8>> {
+        self.snapshot
+            .block_data
+            .get(&(self.id.clone(), [x, y, z]))
+            .cloned()
+    }
+    fn in_box(
+        &mut self,
+        min_x: i32,
+        min_y: i32,
+        min_z: i32,
+        max_x: i32,
+        max_y: i32,
+        max_z: i32,
+    ) -> Vec<block_data::SyncedBlock> {
+        let inside = |p: &[i32; 3]| {
+            (min_x..=max_x).contains(&p[0])
+                && (min_y..=max_y).contains(&p[1])
+                && (min_z..=max_z).contains(&p[2])
+        };
+        let mut found: Vec<_> = self
+            .snapshot
+            .block_data
+            .iter()
+            .filter(|((id, p), _)| *id == self.id && inside(p))
+            .collect();
+        let far = |p: &[i32; 3]| {
+            [p[0] - min_x, p[1] - min_y, p[2] - min_z]
+                .map(|d| i64::from(d) * i64::from(d))
+                .iter()
+                .sum::<i64>()
+        };
+        found.sort_by_key(|((_, p), _)| (far(p), *p));
+        found
+            .into_iter()
+            .take(BLOCK_DATA_IN_BOX)
+            .map(|((_, p), data)| block_data::SyncedBlock {
+                x: p[0],
+                y: p[1],
+                z: p[2],
+                data: data.clone(),
+            })
+            .collect()
+    }
+}
 impl block_entities::Host for State {
     fn get(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<Vec<u8>> {
         self.block_data.get(&(dimension, [x, y, z])).cloned()
@@ -3159,7 +3223,22 @@ impl block_entities::Host for State {
             dimension,
             pos: [x, y, z],
             data: Some(data),
+            synced: false,
         });
+        Ok(())
+    }
+    fn set_synced(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        data: Vec<u8>,
+    ) -> Result<(), String> {
+        self.set(dimension, x, y, z, data)?;
+        if let Some(Output::BlockData { synced, .. }) = self.out.last_mut() {
+            *synced = true;
+        }
         Ok(())
     }
     fn remove(&mut self, dimension: String, x: i32, y: i32, z: i32) {
@@ -3173,6 +3252,7 @@ impl block_entities::Host for State {
                 dimension,
                 pos: [x, y, z],
                 data: None,
+                synced: false,
             });
         }
     }
@@ -3353,6 +3433,7 @@ impl State {
             dimension: dimension.to_owned(),
             pos,
             data: storage.map(Storage::encode),
+            synced: false,
         });
     }
     /// Whether one of this mod's blocks stands at a position (true with no
@@ -4166,6 +4247,7 @@ impl attachments::Host for State {
             dimension: format!("{ATTACHMENT_MARK}{}", k.0),
             pos: k.1,
             data: Some(data),
+            synced: false,
         });
         Ok(())
     }
@@ -4177,6 +4259,7 @@ impl attachments::Host for State {
                 dimension: format!("{ATTACHMENT_MARK}{}", k.0),
                 pos: k.1,
                 data: None,
+                synced: false,
             });
         }
     }

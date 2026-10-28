@@ -65,6 +65,8 @@ impl Game<'_> {
     ) {
     }
     pub(super) fn remote_mod_net(&mut self, _channel: &str, _data: Vec<u8>) {}
+    pub(super) fn remote_mod_block_data(&mut self, _data: &[u8]) {}
+    pub(super) fn forget_mod_block_data(&mut self, _chunk: Option<(i32, i32)>) {}
     pub(super) fn local_server_mod_command(&mut self, _line: &str) -> bool {
         false
     }
@@ -100,8 +102,57 @@ pub(super) const NET_CHANNEL: &str = "horizon:mod/";
 #[cfg_attr(not(feature = "mods"), allow(dead_code))]
 pub(super) const BLOCK_DATA_DIR: &str = "horizon-mod-data";
 
+/// The channel a server's synced block data travels on, as
+/// [`encode_synced_block`] writes it (`block-entities.set-synced`).
+#[cfg_attr(not(feature = "mods"), allow(dead_code))]
+pub(super) const BLOCK_DATA_CHANNEL: &str = "horizon:block_data";
+
+/// Marks a synced entry's dimension in a `.blocks` file.
+#[cfg_attr(not(feature = "mods"), allow(dead_code))]
+pub(super) const SYNCED_MARK: char = '\u{2}';
+
+/// One synced position's data for a client: the mod id (u16 length and
+/// bytes), x y z (i32), then 1 and the data, or 0 when it was removed.
+#[cfg_attr(not(feature = "mods"), allow(dead_code))]
+pub(super) fn encode_synced_block(mod_id: &str, pos: [i32; 3], data: Option<&[u8]>) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend((mod_id.len() as u16).to_le_bytes());
+    out.extend(mod_id.as_bytes());
+    for c in pos {
+        out.extend(c.to_le_bytes());
+    }
+    match data {
+        Some(data) => {
+            out.push(1);
+            out.extend(data);
+        }
+        None => out.push(0),
+    }
+    out
+}
+
+/// [`encode_synced_block`]'s inverse; none for damaged bytes.
+#[cfg_attr(not(feature = "mods"), allow(dead_code))]
+pub(super) fn decode_synced_block(bytes: &[u8]) -> Option<(String, [i32; 3], Option<Vec<u8>>)> {
+    let n = u16::from_le_bytes(bytes.get(..2)?.try_into().ok()?) as usize;
+    let id = std::str::from_utf8(bytes.get(2..2 + n)?).ok()?.to_owned();
+    let mut rest = &bytes[2 + n..];
+    let mut pos = [0i32; 3];
+    for c in &mut pos {
+        let (head, tail) = rest.split_at_checked(4)?;
+        *c = i32::from_le_bytes(head.try_into().ok()?);
+        rest = tail;
+    }
+    match rest.split_first()? {
+        (1, data) => Some((id, pos, Some(data.to_vec()))),
+        (0, []) => Some((id, pos, None)),
+        _ => None,
+    }
+}
+
 /// One mod's block data as a file: per position, the dimension (u16 length
-/// and bytes), x y z (i32), the data (u32 length and bytes), little-endian.
+/// and bytes, after [`SYNCED_MARK`] when it is synced), x y z (i32), the data
+/// (u32 length and bytes), little-endian.
 #[cfg_attr(not(feature = "mods"), allow(dead_code))]
 pub(super) fn encode_block_data<'a>(
     entries: impl Iterator<Item = (&'a str, [i32; 3], &'a [u8])>,
@@ -166,6 +217,37 @@ mod block_data_tests {
         assert_eq!(back[1].2, Vec::<u8>::new());
         bytes.extend([9, 9, 9]);
         assert_eq!(decode_block_data(&bytes).len(), 2);
+    }
+
+    #[test]
+    fn synced_block_data_round_trips_and_refuses_damage() {
+        let set = encode_synced_block("gears", [4, -60, -7], Some(&[7, 0, 0, 0]));
+        assert_eq!(
+            decode_synced_block(&set),
+            Some(("gears".into(), [4, -60, -7], Some(vec![7, 0, 0, 0])))
+        );
+        let removed = encode_synced_block("gears", [4, -60, -7], None);
+        assert_eq!(
+            decode_synced_block(&removed),
+            Some(("gears".into(), [4, -60, -7], None))
+        );
+        // Removed with bytes after it, cut short, or a flag that is neither.
+        assert_eq!(
+            decode_synced_block(&[removed.clone(), vec![1]].concat()),
+            None
+        );
+        assert_eq!(decode_synced_block(&set[..5]), None);
+        let mut odd = removed;
+        *odd.last_mut().unwrap() = 2;
+        assert_eq!(decode_synced_block(&odd), None);
+        // A synced entry keeps its mark through the world's file.
+        let marked = format!("{SYNCED_MARK}minecraft:overworld");
+        let file = encode_block_data([(marked.as_str(), [0, 0, 0], &[1u8][..])].into_iter());
+        let (dimension, ..) = &decode_block_data(&file)[0];
+        assert_eq!(
+            dimension.strip_prefix(SYNCED_MARK),
+            Some("minecraft:overworld")
+        );
     }
 }
 
@@ -897,6 +979,7 @@ mod run {
             self.apply_mod_signals();
             self.apply_mod_drops();
             self.apply_mod_effects();
+            self.send_synced_block_data();
             if self.ticks.is_multiple_of(200) {
                 if self.mods.block_data_dirty {
                     self.flush_mod_block_data();
@@ -914,6 +997,7 @@ mod run {
             }
             if self.mods.block_data_key.as_ref().map(|k| &k.0) != Some(&key.0) {
                 self.mods.block_data.clear();
+                self.mods.block_synced.clear();
                 self.mods.block_data_dirty = false;
                 if !key.0.as_os_str().is_empty()
                     && let Ok(dir) = std::fs::read_dir(key.0.join(super::BLOCK_DATA_DIR))
@@ -928,9 +1012,15 @@ mod run {
                             continue;
                         };
                         for (dimension, pos, data) in super::decode_block_data(&bytes) {
-                            self.mods
-                                .block_data
-                                .insert((id.to_owned(), dimension, pos), data);
+                            let key = match dimension.strip_prefix(super::SYNCED_MARK) {
+                                Some(d) => {
+                                    let key = (id.to_owned(), d.to_owned(), pos);
+                                    self.mods.block_synced.insert(key.clone());
+                                    key
+                                }
+                                None => (id.to_owned(), dimension, pos),
+                            };
+                            self.mods.block_data.insert(key, data);
                         }
                     }
                 }
@@ -950,13 +1040,65 @@ mod run {
             dimension: String,
             pos: [i32; 3],
             data: Option<Vec<u8>>,
+            synced: bool,
+            host: Option<&mut LanHost>,
         ) {
             let key = (mod_id, dimension, pos);
+            let was_synced = if synced && data.is_some() {
+                !self.mods.block_synced.insert(key.clone())
+            } else {
+                self.mods.block_synced.remove(&key)
+            };
+            if synced || was_synced {
+                let sent = data.as_deref().filter(|_| synced);
+                self.send_mod_block_data(host, &key.0, &key.1, pos, sent);
+            }
             let changed = match data {
                 Some(data) => self.mods.block_data.insert(key, data.clone()) != Some(data),
                 None => self.mods.block_data.remove(&key).is_some(),
             };
-            self.mods.block_data_dirty |= changed;
+            self.mods.block_data_dirty |= changed || synced != was_synced;
+        }
+
+        /// Tells the players whose games have the chunk what a server mod
+        /// keeps synced at `pos` (none: nothing any more), and those it
+        /// reaches later too.
+        fn send_mod_block_data(
+            &mut self,
+            host: Option<&mut LanHost>,
+            mod_id: &str,
+            dimension: &str,
+            pos: [i32; 3],
+            data: Option<&[u8]>,
+        ) {
+            let hub = match host {
+                Some(h) => Some(h),
+                None => self.lan.as_mut(),
+            };
+            let Some(hub) = hub else { return };
+            let packet = C::CustomPayload(CustomPayload {
+                channel: super::BLOCK_DATA_CHANNEL.into(),
+                data: super::encode_synced_block(mod_id, pos, data),
+            });
+            hub.hub
+                .set_chunk_payload(dimension, mod_id, pos, &packet, data.is_some());
+        }
+
+        /// A hub opened since synced block data was set (a world opened to
+        /// LAN, a server thread started): it gets all of it.
+        fn send_synced_block_data(&mut self) {
+            let fresh = self
+                .lan
+                .as_ref()
+                .is_some_and(|h| h.hub.chunk_payload_count() == 0);
+            if !fresh || self.mods.block_synced.is_empty() {
+                return;
+            }
+            let synced: Vec<_> = self.mods.block_synced.iter().cloned().collect();
+            for key in synced {
+                let data = self.mods.block_data.get(&key).cloned();
+                self.send_mod_block_data(None, &key.0, &key.1, key.2, data.as_deref());
+            }
         }
 
         /// Writes the block data of every mod to the world's folder, and
@@ -966,9 +1108,15 @@ mod run {
                 return;
             }
             let dir = self.world_root.join(super::BLOCK_DATA_DIR);
-            let mut ids: std::collections::BTreeMap<&str, Vec<(&str, [i32; 3], &[u8])>> =
+            let mut ids: std::collections::BTreeMap<&str, Vec<(String, [i32; 3], &[u8])>> =
                 Default::default();
-            for ((id, dimension, pos), data) in &self.mods.block_data {
+            for (key, data) in &self.mods.block_data {
+                let (id, dimension, pos) = key;
+                let dimension = if self.mods.block_synced.contains(key) {
+                    format!("{}{dimension}", super::SYNCED_MARK)
+                } else {
+                    dimension.clone()
+                };
                 ids.entry(id).or_default().push((dimension, *pos, data));
             }
             let result = (|| -> std::io::Result<()> {
@@ -980,7 +1128,11 @@ mod run {
                     if id.is_empty() || id.contains(['/', '\\', ':', '.']) {
                         continue;
                     }
-                    let bytes = super::encode_block_data(entries.iter().copied());
+                    let bytes = super::encode_block_data(
+                        entries
+                            .iter()
+                            .map(|(d, pos, data)| (d.as_str(), *pos, *data)),
+                    );
                     let tmp = dir.join(format!("{id}.blocks.tmp"));
                     std::fs::write(&tmp, bytes)?;
                     std::fs::rename(&tmp, dir.join(format!("{id}.blocks")))?;
@@ -2568,6 +2720,57 @@ mod run {
             }
         }
 
+        /// Synced block data from the server this window plays on.
+        pub(in crate::game) fn remote_mod_block_data(&mut self, data: &[u8]) {
+            let Some((mod_id, pos, data)) = super::decode_synced_block(data) else {
+                return;
+            };
+            let store = std::sync::Arc::make_mut(&mut self.mods.client_block_data);
+            match data {
+                Some(data) => {
+                    store.insert((mod_id, pos), data);
+                }
+                None => {
+                    store.remove(&(mod_id, pos));
+                }
+            }
+        }
+
+        /// Forgets the synced block data of a chunk the server took back,
+        /// or all of it (`None`: a new level).
+        pub(in crate::game) fn forget_mod_block_data(&mut self, chunk: Option<(i32, i32)>) {
+            if self.mods.client_block_data.is_empty() {
+                return;
+            }
+            let store = std::sync::Arc::make_mut(&mut self.mods.client_block_data);
+            match chunk {
+                Some(c) => store.retain(|(_, p), _| (p[0] >> 4, p[2] >> 4) != c),
+                None => store.clear(),
+            }
+        }
+
+        /// The synced block data client mods read (`block-data`): what the
+        /// server sent, or in this window's own world (in-frame) the
+        /// server mods' own, in the player's dimension.
+        pub(in crate::game) fn mod_block_data_view(
+            &self,
+        ) -> std::sync::Arc<std::collections::HashMap<(String, [i32; 3]), Vec<u8>>> {
+            if self.remote.is_some() || self.mods.block_synced.is_empty() {
+                return self.mods.client_block_data.clone();
+            }
+            let dimension = self.dim.id();
+            std::sync::Arc::new(
+                self.mods
+                    .block_synced
+                    .iter()
+                    .filter(|(_, d, _)| d == dimension)
+                    .filter_map(|k| {
+                        Some(((k.0.clone(), k.2), self.mods.block_data.get(k)?.clone()))
+                    })
+                    .collect(),
+            )
+        }
+
         /// A custom payload from the server this window plays on, for the
         /// client mod of that channel's id.
         pub(in crate::game) fn remote_mod_net(&mut self, channel: &str, data: Vec<u8>) {
@@ -2641,7 +2844,8 @@ mod run {
                     dimension,
                     pos,
                     data,
-                } => self.store_mod_block_data(mod_id, dimension, pos, data),
+                    synced,
+                } => self.store_mod_block_data(mod_id, dimension, pos, data, synced, host),
                 Output::Container {
                     op: horizon_mods::ContainerOp::Register { block, slots },
                     ..

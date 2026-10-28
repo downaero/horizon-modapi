@@ -41,7 +41,7 @@ pub use exports::horizon::mods::events::{Guest as __Guest, Registration};
 pub use exports::horizon::mods::net_events::Guest as __NetGuest;
 pub use exports::horizon::mods::ui_events::Guest as __UiEventsGuest;
 pub use horizon::mods::{
-    browser, chat, command, game, hud, input, log, net, recipes, render, storage, ui,
+    block_data, browser, chat, command, game, hud, input, log, net, recipes, render, storage, ui,
 };
 
 /// The game's calls into a mod. Only the hooks [`Registration`] asks for

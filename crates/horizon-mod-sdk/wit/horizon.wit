@@ -846,6 +846,31 @@ interface block-entities {
     set: func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>;
     /// Forgets the bytes at a position.
     remove: func(dimension: string, x: s32, y: s32, z: s32);
+    /// `set`, and the bytes also go to every player whose game has the
+    /// chunk, now, whenever they change and when the chunk reaches a player
+    /// later: what the mod's client half reads with `block-data` (NeoForge's
+    /// update tag). A later `set` at the position keeps them on the server
+    /// only; `remove` takes them from the players' games too. Saved with the
+    /// world as `set`'s are.
+    set-synced: func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>;
+}
+
+/// Capability `net`, client mods: the bytes the mod's server half keeps
+/// with `block-entities.set-synced`, at the blocks of the chunks the
+/// player's game has, in the dimension the player is in, as of this tick.
+interface block-data {
+    record synced-block {
+        x: s32,
+        y: s32,
+        z: s32,
+        data: list<u8>,
+    }
+    /// The bytes at a position, none where the server sent none.
+    get: func(x: s32, y: s32, z: s32) -> option<list<u8>>;
+    /// Every position from (min-x, min-y, min-z) to (max-x, max-y, max-z),
+    /// both ends included, holding bytes: at most 256, nearest the box's
+    /// minimum corner first.
+    in-box: func(min-x: s32, min-y: s32, min-z: s32, max-x: s32, max-y: s32, max-z: s32) -> list<synced-block>;
 }
 
 /// What the server calls in a mod's blocks, beside `server-events` (a mod
@@ -1673,6 +1698,12 @@ world horizon-ui-mod {
     export ui-events;
     import net;
     export net-events;
+    import block-data;
+}
+
+/// The game's side of `block-data` (imports only).
+world block-data-host {
+    import block-data;
 }
 
 /// The game's side of `horizon-ui-mod` beyond `horizon-mod`.

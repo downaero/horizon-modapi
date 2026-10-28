@@ -278,6 +278,11 @@ impl Capability {
         if interface == "entity-types" {
             return Ok(Some(Capability::Entities));
         }
+        // What a client half reads of its server half's blocks comes over
+        // the mod's channel: capability `net`.
+        if interface == "block-data" {
+            return Ok(Some(Capability::Net));
+        }
         // A recipe viewer's panel is part of capability `ui`.
         if interface == "browser" {
             return Ok(Some(Capability::Ui));

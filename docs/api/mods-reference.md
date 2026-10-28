@@ -189,8 +189,15 @@ The game's side of `server-net-events`.
 
 A mod with widgets (capability `ui`): the SDK builds every mod against this world. Mods built for `horizon-mod` alone (no `ui-events` export) still load and simply hear nothing of their widgets.
 
-- Imports (what the game offers): `ui`, `render`, `input`, `recipes`, `browser`, `net`, `log`, `game`, `chat`, `hud`, `storage`, `command`
+- Imports (what the game offers): `ui`, `render`, `input`, `recipes`, `browser`, `net`, `block-data`, `log`, `game`, `chat`, `hud`, `storage`, `command`
 - Exports (what the mod provides): `ui-events`, `net-events`, `events`
+
+## World `block-data-host`
+
+The game's side of `block-data` (imports only).
+
+- Imports (what the game offers): `block-data`
+- Exports (what the mod provides): 
 
 ## World `ui-host`
 
@@ -964,6 +971,27 @@ Capability `block-entities`, server mods only (manifest `api = "0.3"`, experimen
 | `get` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<u8>>` | The bytes last stored at a position, none when there are none. |
 | `set` | `func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>` | Stores bytes at a position (at most 64 KiB; 65,536 positions per mod), replacing any there. The game forgets them when the block is broken or replaced by something that is not one of the mod's. |
 | `remove` | `func(dimension: string, x: s32, y: s32, z: s32)` | Forgets the bytes at a position. |
+| `set-synced` | `func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>` | `set`, and the bytes also go to every player whose game has the chunk, now, whenever they change and when the chunk reaches a player later: what the mod's client half reads with `block-data` (NeoForge's update tag). A later `set` at the position keeps them on the server only; `remove` takes them from the players' games too. Saved with the world as `set`'s are. |
+
+## `block-data`
+
+Access: not granted by any capability.
+
+Capability `net`, client mods: the bytes the mod's server half keeps with `block-entities.set-synced`, at the blocks of the chunks the player's game has, in the dimension the player is in, as of this tick.
+
+### record `synced-block`
+
+| Field | Type | |
+| --- | --- | --- |
+| `x` | `s32` |  |
+| `y` | `s32` |  |
+| `z` | `s32` |  |
+| `data` | `list<u8>` |  |
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `get` | `func(x: s32, y: s32, z: s32) -> option<list<u8>>` | The bytes at a position, none where the server sent none. |
+| `in-box` | `func(min-x: s32, min-y: s32, min-z: s32, max-x: s32, max-y: s32, max-z: s32) -> list<synced-block>` | Every position from (min-x, min-y, min-z) to (max-x, max-y, max-z), both ends included, holding bytes: at most 256, nearest the box's minimum corner first. |
 
 ## `block-events`
 

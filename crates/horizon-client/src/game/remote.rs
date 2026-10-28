@@ -1737,11 +1737,14 @@ impl Game<'_> {
             }
             // A server mod's message to its client half (capability `net`).
             C::CustomPayload(p) => {
-                if !self.remote_menu_message(&p.channel, &p.data) {
+                if p.channel == super::server_mods::BLOCK_DATA_CHANNEL {
+                    self.remote_mod_block_data(&p.data);
+                } else if !self.remote_menu_message(&p.channel, &p.data) {
                     self.remote_mod_net(&p.channel, p.data)
                 }
             }
             C::Login(p) => {
+                self.forget_mod_block_data(None);
                 self.level.hardcore = p.hardcore;
                 // handleLogin makes a new MultiPlayerGameMode (carried index 0) and a
                 // new LocalPlayer (slot 0).
@@ -1766,6 +1769,8 @@ impl Game<'_> {
                 self.send(S::ClientInformation(info));
             }
             C::Respawn(p) => {
+                // Another level: the server sends its chunks' block data anew.
+                self.forget_mod_block_data(None);
                 // A new player, without effects (the server sends them
                 // again) and with no item in use.
                 self.potions.effects.clear();
@@ -1796,6 +1801,7 @@ impl Game<'_> {
             C::LightUpdate(p) => self.remote_light_update(&p),
             C::ForgetLevelChunk(p) => {
                 let [x, z] = p.pos;
+                self.forget_mod_block_data(Some((x, z)));
                 self.streaming.forget(&mut self.world, x, z);
                 self.world
                     .block_entities

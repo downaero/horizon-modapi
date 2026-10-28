@@ -338,8 +338,9 @@ impl Level {
         entity.load_additional(&data);
         Some(entity)
     }
-    /// Keeps `entity` at `pos` (capability `block-entities`): refused where
-    /// the block there is not one of the mod's.
+    /// Keeps `entity` at `pos` (capability `block-entities`), synced to
+    /// players when its type is ([`BlockEntity::SYNCED`]): refused where the
+    /// block there is not one of the mod's.
     pub fn set_block_entity<T: BlockEntity>(
         &self,
         pos: BlockPos,
@@ -347,7 +348,11 @@ impl Level {
     ) -> Result<(), String> {
         let mut data = Vec::new();
         entity.save_additional(&mut data);
-        block_entities::set(&self.dimension, pos.x, pos.y, pos.z, &data)
+        if T::SYNCED {
+            block_entities::set_synced(&self.dimension, pos.x, pos.y, pos.z, &data)
+        } else {
+            block_entities::set(&self.dimension, pos.x, pos.y, pos.z, &data)
+        }
     }
 }
 

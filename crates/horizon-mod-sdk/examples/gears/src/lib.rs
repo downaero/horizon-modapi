@@ -1,6 +1,7 @@
 //! Gears: a server mod with its own block. `gears:counter` keeps the seconds
 //! it has stood as four bytes at its position (capability `block-entities`);
-//! the server ticks it and saves the bytes with the world. A gear (an iron
+//! the server ticks it and saves the bytes with the world, and sends them to
+//! the players near it for a client half to read. A gear (an iron
 //! ingot, capability `entities`) floats above each counter placed.
 use horizon_mod_sdk::{
     block::{self, Block, BlockEntity, BlockHitResult, InteractionResult},
@@ -345,7 +346,8 @@ impl ServerMod for Gears {
             let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &[0]);
         }
         if state.starts_with(COUNTER) {
-            let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &0u32.to_le_bytes());
+            // Synced: players' games have its seconds too (`block_data`).
+            let _ = block_entities::set_synced(DIMENSION, pos.x, pos.y, pos.z, &0u32.to_le_bytes());
             // A battery on it, charged each second it runs (capability
             // `transfer`), and the placer's count of counters, saved on them
             // (`attachments`).
@@ -689,7 +691,8 @@ impl ServerMod for Gears {
         let seconds = block_entities::get(dimension, pos.x, pos.y, pos.z)
             .and_then(|d| <[u8; 4]>::try_from(d).ok())
             .map_or(0, u32::from_le_bytes);
-        let _ = block_entities::set(dimension, pos.x, pos.y, pos.z, &(seconds + 1).to_le_bytes());
+        let bytes = (seconds + 1).to_le_bytes();
+        let _ = block_entities::set_synced(dimension, pos.x, pos.y, pos.z, &bytes);
         transfer::receive_energy(dimension, pos.x, pos.y, pos.z, 10, false);
         // The counter swallows iron ingots lying next to it (capability
         // `items`): it counts them in the nuggets it gives back.
