@@ -76,6 +76,12 @@ pub(super) struct ModsState {
     /// world's folder.
     #[cfg(feature = "mods")]
     pub(super) block_data: std::collections::BTreeMap<(String, String, [i32; 3]), Vec<u8>>,
+    /// Capability `net`: messages for a client mod (mod id, bytes) and for a
+    /// server mod (mod id, player id, bytes), delivered on the next tick.
+    #[cfg(feature = "mods")]
+    pub(super) net_to_client: Vec<(String, Vec<u8>)>,
+    #[cfg(feature = "mods")]
+    pub(super) net_to_server: Vec<(String, String, Vec<u8>)>,
     /// `block_data` changed since it was written.
     #[cfg(feature = "mods")]
     pub(super) block_data_dirty: bool,
@@ -606,6 +612,9 @@ impl Game<'_> {
         if !self.mods.mods.is_running() {
             return;
         }
+        for (mod_id, data) in std::mem::take(&mut self.mods.net_to_client) {
+            self.mods.mods.net_message(&mod_id, None, &data);
+        }
         self.tick_mod_use();
         let snapshot = self.mod_snapshot();
         self.mods.mods.set_snapshot(snapshot);
@@ -718,6 +727,15 @@ impl Game<'_> {
                 | Output::SetBlocks { .. }
                 | Output::BlockData { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);
+                    continue;
+                }
+                Output::Net {
+                    mod_id,
+                    server,
+                    player,
+                    data,
+                } => {
+                    self.route_mod_net(host.as_deref_mut(), mod_id, server, player, data);
                     continue;
                 }
                 Output::OpenScreen { owner } => {

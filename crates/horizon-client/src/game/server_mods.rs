@@ -39,6 +39,15 @@ impl Game<'_> {
     pub(super) fn mod_block_use(&mut self, _pos: [i32; 3]) -> bool {
         false
     }
+    pub(super) fn guest_mod_net(
+        &mut self,
+        _host: &LanHost,
+        _conn: u32,
+        _channel: &str,
+        _data: &[u8],
+    ) {
+    }
+    pub(super) fn remote_mod_net(&mut self, _channel: &str, _data: Vec<u8>) {}
     pub(super) fn local_server_mod_command(&mut self, _line: &str) -> bool {
         false
     }
@@ -53,6 +62,11 @@ impl Game<'_> {
     pub(super) fn apply_mod_block_writes(&mut self) {}
     pub(super) fn flush_mod_block_data(&mut self) {}
 }
+
+/// Capability `net`: a mod's messages travel as custom payloads on
+/// `horizon:mod/<mod id>`.
+#[cfg_attr(not(feature = "mods"), allow(dead_code))]
+pub(super) const NET_CHANNEL: &str = "horizon:mod/";
 
 /// Where a world keeps what server mods store at block positions
 /// (capability `block-entities`): `<world>/horizon-mod-data/<mod id>.blocks`,
@@ -141,9 +155,13 @@ mod run {
     use horizon_mods::{
         ArgumentKind, BlockPos, GameMode, Output, ServerCommand, ServerPlayer, WorldView,
     };
+    use horizon_protocol::packets::configuration::CustomPayload;
     use horizon_protocol::packets::play::{self, Clientbound as C};
     use horizon_world::registry::{BlockRegistry, BlockStateId};
     use serde_json::{Value, json};
+
+    /// `net` messages waiting for a tick are kept up to this many.
+    const MAX_QUEUED_NET: usize = 4096;
 
     /// Blocks queued for levels that don't tick (another dimension, in-frame)
     /// are kept up to this many; the oldest go first.
@@ -388,6 +406,9 @@ mod run {
                 }
             }
             self.sync_mod_block_data();
+            for (mod_id, player, data) in std::mem::take(&mut self.mods.net_to_server) {
+                self.mods.mods.net_message(&mod_id, Some(&player), &data);
+            }
             self.mods.mods.server_tick(self.ticks);
             self.mods.mods.tick_blocks();
             self.return_world();
@@ -737,6 +758,103 @@ mod run {
                         overlay: false,
                     }),
                 );
+            }
+        }
+
+        /// A message a mod sent with `net.send`. A client mod's goes to the
+        /// server it plays on (this window's own world included); a server
+        /// mod's to one player or all, this window's own player included.
+        pub(in crate::game) fn route_mod_net(
+            &mut self,
+            mut host: Option<&mut LanHost>,
+            mod_id: String,
+            server: bool,
+            player: Option<String>,
+            data: Vec<u8>,
+        ) {
+            let channel = format!("{}{mod_id}", super::NET_CHANNEL);
+            if !server {
+                if self.remote.is_some() {
+                    self.send(play::Serverbound::CustomPayload(CustomPayload {
+                        channel,
+                        data,
+                    }));
+                } else {
+                    let me = self.player_uuid_string();
+                    self.mods.net_to_server.push((mod_id, me, data));
+                }
+                return;
+            }
+            let local = self.options.execution_role.is_client()
+                && self.remote.is_none()
+                && self.player.is_some();
+            let me = local.then(|| self.player_uuid_string());
+            let targets = match player {
+                Some(id) => vec![id],
+                None => self
+                    .server_players(host.as_deref())
+                    .into_iter()
+                    .map(|p| p.id)
+                    .collect(),
+            };
+            for id in targets {
+                if me.as_deref() == Some(id.as_str()) {
+                    self.mods.net_to_client.push((mod_id.clone(), data.clone()));
+                    continue;
+                }
+                let hub = match host.as_deref_mut() {
+                    Some(h) => Some(h),
+                    None => self.lan.as_mut(),
+                };
+                let Some(hub) = hub else { continue };
+                let to = hub
+                    .hub
+                    .guests
+                    .iter()
+                    .find(|g| g.placed && uuid_string(g.uuid) == id)
+                    .map(|g| g.conn);
+                if let Some(conn) = to {
+                    hub.hub.send_to(
+                        conn,
+                        &C::CustomPayload(CustomPayload {
+                            channel: channel.clone(),
+                            data: data.clone(),
+                        }),
+                    );
+                }
+            }
+        }
+
+        /// A guest's custom payload on a mod's channel, for the server mod
+        /// of that id: queued for the tick's end.
+        pub(in crate::game) fn guest_mod_net(
+            &mut self,
+            host: &LanHost,
+            conn: u32,
+            channel: &str,
+            data: &[u8],
+        ) {
+            let Some(mod_id) = channel.strip_prefix(super::NET_CHANNEL) else {
+                return;
+            };
+            let guest = host.hub.guests.iter().find(|g| g.conn == conn);
+            if let Some(g) = guest.filter(|g| g.placed) {
+                let queue = &mut self.mods.net_to_server;
+                if queue.len() < MAX_QUEUED_NET {
+                    queue.push((mod_id.to_owned(), uuid_string(g.uuid), data.to_vec()));
+                }
+            }
+        }
+
+        /// A custom payload from the server this window plays on, for the
+        /// client mod of that channel's id.
+        pub(in crate::game) fn remote_mod_net(&mut self, channel: &str, data: Vec<u8>) {
+            let Some(mod_id) = channel.strip_prefix(super::NET_CHANNEL) else {
+                return;
+            };
+            let queue = &mut self.mods.net_to_client;
+            if queue.len() < MAX_QUEUED_NET {
+                queue.push((mod_id.to_owned(), data));
             }
         }
 

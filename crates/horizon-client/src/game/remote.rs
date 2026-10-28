@@ -1724,6 +1724,8 @@ impl Game<'_> {
                 let delay = self.debug_millis() - p.time;
                 self.debug_charts.ping.log(delay);
             }
+            // A server mod's message to its client half (capability `net`).
+            C::CustomPayload(p) => self.remote_mod_net(&p.channel, p.data),
             C::Login(p) => {
                 self.level.hardcore = p.hardcore;
                 // handleLogin makes a new MultiPlayerGameMode (carried index 0) and a
