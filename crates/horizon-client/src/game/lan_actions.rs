@@ -1187,7 +1187,9 @@ impl Game<'_> {
                 {
                     // A server mod took the click with the item (`item-used`).
                     self.lan_swing_back(host, conn, Some(true));
-                } else if hand == Hand::Main && self.mod_block_use_by_guest(host, conn, p.pos) {
+                } else if hand == Hand::Main
+                    && self.mod_block_use_by_guest(host, conn, p.pos, p.face as u8)
+                {
                     // A server mod took the click (capability `block-entities`).
                     self.lan_swing_back(host, conn, Some(true));
                 } else {

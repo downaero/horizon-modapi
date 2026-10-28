@@ -985,6 +985,7 @@ Capability `block-entities`, server mods only (manifest `api = "0.3"`, experimen
 | `get` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<u8>>` | The bytes last stored at a position, none when there are none. |
 | `set` | `func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>` | Stores bytes at a position (at most 64 KiB; 65,536 positions per mod), replacing any there. The game forgets them when the block is broken or replaced by something that is not one of the mod's. |
 | `remove` | `func(dimension: string, x: s32, y: s32, z: s32)` | Forgets the bytes at a position. |
+| `clicked-face` | `func() -> option<u8>` | During `block-events.block-used`: the face the player clicked (0 down, 1 up, 2 north, 3 south, 4 west, 5 east), as `item-events` gives it; none at any other time. |
 | `set-synced` | `func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>` | `set`, and the bytes also go to every player whose game has the chunk, now, whenever they change and when the chunk reaches a player later: what the mod's client half reads with `block-data` (NeoForge's update tag). A later `set` at the position keeps them on the server only; `remove` takes them from the players' games too. Saved with the world as `set`'s are. |
 
 ## `structures`
@@ -1142,6 +1143,16 @@ Capability `containers`, server mods only (manifest `api = "0.3"`, experimental)
 | `item` | `string` |  |
 | `count` | `u32` |  |
 
+### record `hopper-rule`
+
+What hoppers, droppers and other containers' moves may do with one slot of a registered container, as a WorldlyContainer's faces allow (players are held to `set-slot-rule` instead).
+
+| Field | Type | |
+| --- | --- | --- |
+| `insert` | `bool` | Items may be put in. |
+| `extract` | `bool` | Items may be taken out. |
+| `max` | `u32` | The most items a move fills the slot to, 1 to 99: 1 takes an item only while the slot is empty. |
+
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `register` | `func(block: string) -> result<_, string>` | Makes a block of the mod's (`mymod:crate`, no properties) a container: the game gives its positions a chest's slots when opened or written. At most 64 blocks per mod. |
@@ -1151,6 +1162,7 @@ Capability `containers`, server mods only (manifest `api = "0.3"`, experimental)
 | `set-slot` | `func(dimension: string, x: s32, y: s32, z: s32, slot: u32, stack: option<item-stack>) -> result<_, string>` | Puts a stack in slot 0 to 26 (none empties it), after the call, in a registered container; count 1 to 99. Components of what was there go. |
 | `set-name` | `func(dimension: string, x: s32, y: s32, z: s32, name: option<string>) -> result<_, string>` | Names the container at a position (the title its window shows, saved with the chunk as a renamed chest's is); none clears it. After the call, in a registered container; at most 64 characters. |
 | `set-slot-rule` | `func(dimension: string, x: s32, y: s32, z: s32, slot: u32, allowed: option<list<string>>) -> result<_, string>` | Limits what a player may put in one slot of a registered container, as vanilla's slots do (a furnace's fuel slot): `some(items)` allows only those item ids (`minecraft:coal`), an empty list nothing (an output or display slot players can only take from); none lifts the rule. Hoppers and the mod itself are not held to it. After the call; not saved, so the mod sets its rules again after a load. |
+| `set-hopper-rule` | `func(dimension: string, x: s32, y: s32, z: s32, slot: u32, rule: option<hopper-rule>) -> result<_, string>` | Sets one slot's rule for hoppers (none: vanilla's), after the call. Not saved, as `set-slot-rule` is not; gone when the block changes. |
 
 ## `redstone`
 
@@ -1162,6 +1174,7 @@ Capability `redstone`, server mods only (manifest `api = "0.3"`, experimental): 
 | --- | --- | --- |
 | `power` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<u8>` | The strongest signal (0 to 15) reaching the block at a position from its neighbours (vanilla's best neighbour signal), as of the start of this tick. Known only for positions where the mod keeps block data (`block-entities.set`) or has a container, in the simulated dimension; none elsewhere. |
 | `set-signal` | `func(dimension: string, x: s32, y: s32, z: s32, level: u8) -> result<_, string>` | Makes a block of the mod's give a redstone signal of 0 to 15 to its neighbours, after the call, until the mod sets another: the signal a trapped chest gives (analog, to every side). Only a block declared with the template `minecraft:trapped_chest` in `data/<id>/horizon/block/` gives one; any other block is left as it is. The signal is not saved: the mod sets it again when the world loads. At most 1024 a call. |
+| `set-comparator-signal` | `func(dimension: string, x: s32, y: s32, z: s32, level: option<u8>) -> result<_, string>` | The signal (0 to 15) a comparator reads from a block of the mod's (`getAnalogOutputSignal`: how full a depot or a tank is), after the call, until the mod sets another; none gives back vanilla's (a container's fullness). Comparators read a block whose template has an analog output (a chest, barrel, hopper or composter). Not saved; gone when the block changes. At most 1024 a call, with `set-signal`'s. |
 
 ## `items`
 
@@ -1199,6 +1212,7 @@ Capability `effects`, server mods only (manifest `api = "0.3"`, experimental): s
 | --- | --- | --- |
 | `play-sound` | `func(dimension: string, x: s32, y: s32, z: s32, event: string, volume: f32, pitch: f32) -> result<_, string>` | Plays a sound event (`minecraft:block.anvil.use`, or one a mod's pack adds) at a block's position, after the call; volume and pitch are clamped to 0 to 4 and 0.5 to 2. At most 64 effects a call. |
 | `level-event` | `func(dimension: string, x: s32, y: s32, z: s32, id: s32, data: s32) -> result<_, string>` | Vanilla's `levelEvent` at a block: 2000 smoke (data 0 to 8, the direction), 2004 spawner flames, 2005 bone meal particles (data 0 to 15, how many) and 2009 water evaporating. Others are refused. |
+| `particles` | `func(dimension: string, x: f64, y: f64, z: f64, particle: string, delta: tuple<f32, f32, f32>, speed: f32, count: u32) -> result<_, string>` | Particles as `/particle` sends them (`ServerLevel.sendParticles`), after the call, to the players within 32 blocks: `particle` as the command writes it, with no spaces (`minecraft:flame`, `minecraft:item{item:"minecraft:iron_ingot"}`, `minecraft:block{block_state:"minecraft:stone"}`); `count` of them (0: one moving by `speed` times `delta`) spread by `delta`. At most 1000 a call, counting toward the same 64 effects. |
 
 ## `neighbor-events`
 

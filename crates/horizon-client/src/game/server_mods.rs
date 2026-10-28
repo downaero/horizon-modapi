@@ -36,7 +36,7 @@ impl Game<'_> {
     pub(super) fn tick_server_mods(&mut self) {}
     pub(super) fn mod_block_event(&mut self, _pos: [i32; 3], _state: BlockStateId, _placed: bool) {}
     pub(super) fn mod_player_chat(&mut self, _who: Who, _text: &str) {}
-    pub(super) fn mod_block_use(&mut self, _pos: [i32; 3]) -> bool {
+    pub(super) fn mod_block_use(&mut self, _pos: [i32; 3], _face: u8) -> bool {
         false
     }
     pub(super) fn mod_block_use_by_guest(
@@ -44,6 +44,7 @@ impl Game<'_> {
         _host: &mut LanHost,
         _conn: u32,
         _pos: [i32; 3],
+        _face: u8,
     ) -> bool {
         false
     }
@@ -444,6 +445,12 @@ mod run {
         /// The simulated dimension's block entities, moved out of the game
         /// for the call (capability `transfer` moves items in and out).
         entities: horizon_client::block_entities::BlockEntities,
+        /// Mods' rules for what moves may do with their containers' slots
+        /// (`containers.set-hopper-rule`), which `transfer` keeps to.
+        hopper_rules: std::collections::HashMap<
+            (i32, i32, i32),
+            Vec<Option<horizon_client::world::HopperRule>>,
+        >,
         res: std::sync::Arc<crate::game::Resources>,
         /// Chunks whose block entities `transfer` changed, to save.
         touched: Vec<(i32, i32)>,
@@ -639,6 +646,8 @@ mod run {
             let Some((slots, open)) = reachable(entity, face, true) else {
                 return count;
             };
+            let rules = self.hopper_rules.get(&(pos[0], pos[1], pos[2]));
+            let rule = |i: usize| rules.and_then(|r| r.get(i).copied().flatten());
             let mut left = count;
             // Like stacks first, then empty slots (`HopperBlockEntity.addItem`).
             for merge in [true, false] {
@@ -650,6 +659,12 @@ mod run {
                     if furnace && i == 1 && !fuel {
                         continue;
                     }
+                    // A mod's rule: no insert, or filled to its count only.
+                    let max = match rule(i) {
+                        Some(r) if !r.insert => continue,
+                        Some(r) => max.min(r.max),
+                        None => max,
+                    };
                     match &mut slots[i] {
                         Some(s)
                             if merge && &*s.item == item && s.damage == 0 && s.extra.is_none() =>
@@ -687,9 +702,16 @@ mod run {
             if dimension != self.container_dim {
                 return None;
             }
+            let rules = self.hopper_rules.get(&(pos[0], pos[1], pos[2]));
             let entity = self.entities.get_mut(&(pos[0], pos[1], pos[2]))?;
             let (slots, open) = reachable(entity, face, false)?;
             for i in open {
+                if rules
+                    .and_then(|r| r.get(i).copied().flatten())
+                    .is_some_and(|r| !r.extract)
+                {
+                    continue;
+                }
                 let Some(s) = &mut slots[i] else {
                     continue;
                 };
@@ -1032,6 +1054,7 @@ mod run {
             self.apply_mod_console();
             self.apply_mod_player_stacks();
             self.apply_mod_signals();
+            self.apply_mod_comparator_signals();
             self.apply_mod_drops();
             self.apply_mod_effects();
             self.send_synced_block_data();
@@ -1523,6 +1546,7 @@ mod run {
                 dropped,
                 power,
                 entities,
+                hopper_rules: self.world.hopper_rules.clone(),
                 res: self.res.clone(),
                 touched: Vec::new(),
             }));
@@ -1708,6 +1732,37 @@ mod run {
                             self.world.slot_rules.remove(&(pos[0], pos[1], pos[2]));
                         }
                     }
+                    horizon_mods::ContainerOp::HopperRule {
+                        dimension,
+                        pos,
+                        slot,
+                        rule,
+                    } => {
+                        if dimension != self.dim.id() {
+                            continue;
+                        }
+                        let block = self.world.block(pos[0], pos[1], pos[2]);
+                        if self
+                            .mod_container_entity(&self.res.facts().get(block).name)
+                            .is_none()
+                        {
+                            continue;
+                        }
+                        let key = (pos[0], pos[1], pos[2]);
+                        let rules = self.world.hopper_rules.entry(key).or_default();
+                        if rules.len() <= slot as usize {
+                            rules.resize(slot as usize + 1, None);
+                        }
+                        rules[slot as usize] =
+                            rule.map(|(insert, extract, max)| horizon_client::world::HopperRule {
+                                insert,
+                                extract,
+                                max,
+                            });
+                        if rules.iter().all(Option::is_none) {
+                            self.world.hopper_rules.remove(&key);
+                        }
+                    }
                     horizon_mods::ContainerOp::SetName {
                         dimension,
                         pos,
@@ -1770,6 +1825,22 @@ mod run {
                 if dimension != dim {
                     continue;
                 }
+                // Particles go as `/particle` sends them, as the server.
+                if let horizon_mods::EffectOp::Particles {
+                    particle,
+                    at,
+                    delta,
+                    speed,
+                    count,
+                } = effect
+                {
+                    let line = format!(
+                        "particle {particle} {} {} {} {} {} {} {speed} {count}",
+                        at[0], at[1], at[2], delta[0], delta[1], delta[2]
+                    );
+                    self.as_console(|g| g.run_command_quietly(&line));
+                    continue;
+                }
                 let pos = horizon_core::position::BlockPos::new(p[0], p[1], p[2]);
                 self.level_events.push(match effect {
                     horizon_mods::EffectOp::Sound {
@@ -1785,6 +1856,7 @@ mod run {
                     horizon_mods::EffectOp::LevelEvent { id, data } => {
                         horizon_world::level::LevelEvent::LevelEvent { id, pos, data }
                     }
+                    horizon_mods::EffectOp::Particles { .. } => continue,
                 });
             }
             if let Err(e) = self.process_level_events() {
@@ -2332,6 +2404,31 @@ mod run {
         /// Sets the redstone signals server mods asked for, through the
         /// table a trapped chest's signal is read from, and tells the blocks
         /// around of a change. Only the dimension the window simulates.
+        /// Sets what comparators read from mod blocks, and tells the
+        /// comparators next to each one that changed.
+        pub(in crate::game) fn apply_mod_comparator_signals(&mut self) {
+            for (dimension, p, level) in std::mem::take(&mut self.mods.comparator_signals) {
+                if dimension != self.dim.id() {
+                    continue;
+                }
+                let state = self.world.block(p[0], p[1], p[2]);
+                if self.res.facts().get(state).name.starts_with("minecraft:") {
+                    continue;
+                }
+                let key = (p[0], p[1], p[2]);
+                let before = self.world.comparator_signals.get(&key).copied();
+                if before == level {
+                    continue;
+                }
+                match level {
+                    Some(level) => self.world.comparator_signals.insert(key, level),
+                    None => self.world.comparator_signals.remove(&key),
+                };
+                // Level.updateNeighbourForOutputSignal, as a container's change.
+                self.container_changed(key);
+            }
+        }
+
         pub(in crate::game) fn apply_mod_signals(&mut self) {
             for (dimension, p, level) in std::mem::take(&mut self.mods.signals) {
                 if dimension != self.dim.id() {
@@ -2652,7 +2749,8 @@ mod run {
         /// The acting player used the block at `pos` with an empty-handed
         /// click: whether a server mod took it. Only blocks of a mod's own
         /// namespace are offered, so vanilla blocks cost nothing here.
-        pub(in crate::game) fn mod_block_use(&mut self, pos: [i32; 3]) -> bool {
+        /// `face`: the face clicked, 0 down to 5 east.
+        pub(in crate::game) fn mod_block_use(&mut self, pos: [i32; 3], face: u8) -> bool {
             if !self.hears_players() {
                 return false;
             }
@@ -2667,7 +2765,7 @@ mod run {
                     }
                 }
             };
-            self.mod_block_used_by(None, players, &id, pos)
+            self.mod_block_used_by(None, players, &id, pos, face)
         }
 
         /// A guest's empty-handed click on the block at `pos`, offered to the
@@ -2679,6 +2777,7 @@ mod run {
             host: &mut LanHost,
             conn: u32,
             pos: [i32; 3],
+            face: u8,
         ) -> bool {
             if !self.hears_players() {
                 return false;
@@ -2691,7 +2790,7 @@ mod run {
             }
             let id = uuid_string(g.uuid);
             let players = self.server_players(Some(host));
-            self.mod_block_used_by(Some(host), players, &id, pos)
+            self.mod_block_used_by(Some(host), players, &id, pos, face)
         }
 
         /// A guest's right click with the item in their main hand, on a block
@@ -2764,6 +2863,7 @@ mod run {
             players: Vec<ServerPlayer>,
             id: &str,
             pos: [i32; 3],
+            face: u8,
         ) -> bool {
             let state = self.world.block(pos[0], pos[1], pos[2]);
             let state = self.state_string(state);
@@ -2783,7 +2883,10 @@ mod run {
                 y: pos[1],
                 z: pos[2],
             };
-            let used = self.mods.mods.block_used(&me, dimension, pos, &state);
+            let used = self
+                .mods
+                .mods
+                .block_used(&me, dimension, pos, Some(face), &state);
             self.return_world();
             self.route_mod_output(host);
             self.apply_mod_block_writes();
@@ -3413,6 +3516,17 @@ mod run {
                     ..
                 } => {
                     let queue = &mut self.mods.signals;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push((dimension, pos, level));
+                    }
+                }
+                Output::ComparatorSignal {
+                    dimension,
+                    pos,
+                    level,
+                    ..
+                } => {
+                    let queue = &mut self.mods.comparator_signals;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((dimension, pos, level));
                     }

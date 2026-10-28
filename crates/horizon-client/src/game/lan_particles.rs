@@ -217,7 +217,12 @@ impl Game<'_> {
             )),
             T::DragonBreath | T::SculkCharge => Some(ParticleData::Scalar(options.scale)),
             T::Shriek => Some(ParticleData::Delay(options.scale as i32)),
-            T::Item | T::Trail | T::Vibration => return None,
+            // ItemParticleOption: the stack's item, one of it.
+            T::Item => Some(ParticleData::Item(horizon_protocol::item::Stack::new(
+                hub.registry_id("minecraft:item", options.item_id.as_deref()?)?,
+                1,
+            ))),
+            T::Trail | T::Vibration => return None,
             _ => None,
         };
         Some(Particle { id, data })
@@ -266,6 +271,16 @@ impl Game<'_> {
                 ..ParticleOptions::simple(ty)
             },
             Some(ParticleData::Delay(d)) => ParticleOptions::shriek(*d),
+            Some(ParticleData::Item(stack)) => {
+                let item = self
+                    .remote
+                    .as_ref()?
+                    .builtin
+                    .get("minecraft:item")?
+                    .name(stack.item)?
+                    .to_owned();
+                self.item_particle(&horizon_client::items::ItemStack::new(&item, 1))
+            }
             Some(ParticleData::Trail(target, color, duration)) => {
                 ParticleOptions::trail(*target, *color as u32 & 0xFF_FFFF, *duration)
             }

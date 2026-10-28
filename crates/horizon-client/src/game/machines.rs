@@ -242,7 +242,21 @@ impl Containers<'_> {
         (0..view.len()).all(|i| self.get(view, i).is_none())
     }
     /// `Container.canPlaceItem` (+ `canPlaceItemThroughFace` for furnaces).
+    /// A server mod's rule for a slot of its container (`containers.set-hopper-rule`).
+    fn hopper_rule(&self, view: &View, slot: usize) -> Option<horizon_client::world::HopperRule> {
+        if self.world.hopper_rules.is_empty() {
+            return None;
+        }
+        let (pos, i) = view.locate(slot)?;
+        *self.world.hopper_rules.get(&pos)?.get(i)?
+    }
     fn can_place(&self, view: &View, slot: usize, stack: &ItemStack) -> bool {
+        if let Some(rule) = self.hopper_rule(view, slot) {
+            let held = self.get(view, slot).map_or(0, |s| s.count);
+            if !rule.insert || held + stack.count > rule.max {
+                return false;
+            }
+        }
         if view.kind == Kind::Crafter {
             return match self.world.block_entities.get(&view.parts[0].0) {
                 Some(BlockEntity::Crafter(c)) => {
@@ -302,6 +316,9 @@ impl Containers<'_> {
     }
     /// `canTakeItemThroughFace` (furnaces and brewing stands restrict it).
     fn can_take(&self, view: &View, slot: usize, stack: &ItemStack, face: Direction) -> bool {
+        if self.hopper_rule(view, slot).is_some_and(|r| !r.extract) {
+            return false;
+        }
         if let Kind::Composter(level) = view.kind {
             // OutputContainer.canTakeItemThroughFace.
             return level == 8 && face == Direction::Down && &*stack.item == "minecraft:bone_meal";

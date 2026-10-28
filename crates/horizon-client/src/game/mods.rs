@@ -174,6 +174,10 @@ pub(super) struct ModsState {
     /// the tick's end.
     #[cfg(feature = "mods")]
     pub(super) signals: Vec<(String, [i32; 3], u8)>,
+    /// Capability `redstone`: what comparators read from mod blocks (none:
+    /// vanilla's), applied at the tick's end.
+    #[cfg(feature = "mods")]
+    pub(super) comparator_signals: Vec<(String, [i32; 3], Option<u8>)>,
     /// Pushes server mods asked for, for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) pushes: Vec<(horizon_mods::PushTarget, [f64; 3])>,
@@ -892,6 +896,7 @@ impl Game<'_> {
                 | Output::Take { .. }
                 | Output::Push { .. }
                 | Output::Signal { .. }
+                | Output::ComparatorSignal { .. }
                 | Output::Break { .. }
                 | Output::Peer { .. }
                 | Output::UseItem { .. }

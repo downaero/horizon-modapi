@@ -44,6 +44,8 @@ pub struct ParticleOptions {
     /// `ItemParticleOption`: the particle sprite of each layer of the item's
     /// model as resolved for the ground.
     pub item: Option<Vec<String>>,
+    /// `ItemParticleOption`'s item id, for the particle sent to players.
+    pub item_id: Option<String>,
 }
 impl ParticleOptions {
     pub fn simple(ty: ParticleType) -> Self {
@@ -55,6 +57,7 @@ impl ParticleOptions {
             to_color: [1.0, 0.0, 0.0],
             trail: None,
             item: None,
+            item_id: None,
         }
     }
     /// `ItemParticleOption`: the stack's layer particle sprites (`BreakingItemParticle`).

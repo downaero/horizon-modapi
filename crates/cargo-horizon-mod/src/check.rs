@@ -309,6 +309,10 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
                 format!("broke the block at {} {} {}", pos[0], pos[1], pos[2])
             }
             Output::Signal { level, .. } => format!("gave a redstone signal of {level}"),
+            Output::ComparatorSignal { level, .. } => match level {
+                Some(level) => format!("gave comparators a signal of {level}"),
+                None => "gave comparators vanilla's signal".to_string(),
+            },
             Output::Drop { item, count, .. } => format!("dropped {count} {item}"),
             Output::OpenScreen { .. } => "opened a screen".to_string(),
             Output::CloseScreen { .. } => "closed its screen".to_string(),

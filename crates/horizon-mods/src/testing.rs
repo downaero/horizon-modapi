@@ -338,10 +338,17 @@ impl TestGame {
 
     /// `player` right-clicks `state` at `pos` with an empty hand; whether
     /// a mod took the click.
-    pub fn use_block(&mut self, player: &ServerPlayer, pos: BlockPos, state: &str) -> bool {
+    /// `face` is the face clicked (0 down, 1 up, 2 north ... 5 east).
+    pub fn use_block(
+        &mut self,
+        player: &ServerPlayer,
+        pos: BlockPos,
+        face: Option<u8>,
+        state: &str,
+    ) -> bool {
         self.snapshot();
         self.mods
-            .block_used(player, "minecraft:overworld", pos, state)
+            .block_used(player, "minecraft:overworld", pos, face, state)
     }
 
     /// The scratch copy the mod runs from; its `storage` is beside it.
@@ -450,13 +457,15 @@ pub struct PowerSet {
     level: u8,
 }
 
-/// A block position.
+/// The block a player right-clicks with an empty hand, and the face they
+/// click (`down`, `up`, `north`, `south`, `west`, `east`; none: unknown).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PosSet {
+pub struct UseAt {
     x: i32,
     y: i32,
     z: i32,
+    face: Option<String>,
 }
 
 /// An item entity lying in the Overworld (capability `items`).
@@ -527,7 +536,7 @@ pub struct Step {
     /// Server mods: the player right-clicks the block there with an empty
     /// hand (`block-events.block-used`).
     #[serde(rename = "use")]
-    used: Option<PosSet>,
+    used: Option<UseAt>,
     /// Blocks of the Overworld before the rest of the step (capability
     /// `world`); every other block is air.
     #[serde(default)]
@@ -773,7 +782,18 @@ impl Step {
                 y: u.y,
                 z: u.z,
             };
-            game.use_block(p, pos, &state);
+            let faces = ["down", "up", "north", "south", "west", "east"];
+            let face = match &u.face {
+                Some(f) => Some(
+                    faces
+                        .iter()
+                        .position(|n| n == f)
+                        .ok_or_else(|| format!("face {f:?}: one of {}", faces.join(", ")))?
+                        as u8,
+                ),
+                None => None,
+            };
+            game.use_block(p, pos, face, &state);
         }
         if let Some(name) = &self.leave
             && !game.leave(name)
@@ -952,6 +972,15 @@ impl Step {
                         crate::EffectOp::LevelEvent { id, data } => {
                             format!("event {id} {data} at {} {} {}", pos[0], pos[1], pos[2])
                         }
+                        crate::EffectOp::Particles {
+                            particle,
+                            at,
+                            count,
+                            ..
+                        } => format!(
+                            "particles {particle} x{count} at {} {} {}",
+                            at[0], at[1], at[2]
+                        ),
                     }),
                     _ => None,
                 })

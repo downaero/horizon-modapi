@@ -744,6 +744,14 @@ pub enum EffectOp {
         id: i32,
         data: i32,
     },
+    /// `effects.particles`: as `/particle` writes them, at a point.
+    Particles {
+        particle: String,
+        at: [f64; 3],
+        delta: [f32; 3],
+        speed: f32,
+        count: u32,
+    },
 }
 
 /// One change to a mod's containers.
@@ -770,6 +778,14 @@ pub enum ContainerOp {
         pos: [i32; 3],
         slot: u32,
         allowed: Option<Vec<String>>,
+    },
+    /// `containers.set-hopper-rule`: what hoppers may do with a slot (none:
+    /// vanilla's rules): insert, extract, and the count they fill it to.
+    HopperRule {
+        dimension: String,
+        pos: [i32; 3],
+        slot: u32,
+        rule: Option<(bool, bool, u32)>,
     },
     /// `containers.set-name`.
     SetName {
@@ -885,6 +901,14 @@ pub enum Output {
         dimension: String,
         pos: [i32; 3],
         level: u8,
+    },
+    /// `redstone.set-comparator-signal`: what comparators read from a mod
+    /// block (none: vanilla's).
+    ComparatorSignal {
+        mod_id: String,
+        dimension: String,
+        pos: [i32; 3],
+        level: Option<u8>,
     },
     /// `world.break-block`: break as a player with `tool` would; drops into
     /// the inventory at `into`, or where the block stood.
@@ -1249,6 +1273,9 @@ struct State {
     /// The namespaces whose blocks are the mod's: its id and manifest
     /// `namespaces`.
     block_namespaces: Vec<String>,
+    /// The face of the click `block-used` is called for
+    /// (`block-entities.clicked-face`).
+    clicked_face: Option<u8>,
     /// Where [`Mods::tick_blocks`] resumes in `block_data`.
     block_cursor: usize,
     /// The entity types the mod registered, by id.
@@ -1546,6 +1573,7 @@ impl Mods {
             block_cursor: 0,
             entity_types: Default::default(),
             next_typed: 1,
+            clicked_face: None,
             block_namespaces: std::iter::once(m.id.clone())
                 .chain(m.namespaces.iter().cloned())
                 .collect(),
@@ -2213,6 +2241,7 @@ impl Mods {
         player: &ServerPlayer,
         dimension: &str,
         pos: BlockPos,
+        face: Option<u8>,
         state: &str,
     ) -> bool {
         let id = state.split('[').next().unwrap_or(state);
@@ -2225,15 +2254,21 @@ impl Mods {
         let mut handled = false;
         for i in owners {
             handled |= self
-                .call(i, FUEL_EVENT, |run| match &run.blocks {
-                    Some(b) => b.horizon_mods_block_events().call_block_used(
-                        &mut run.store,
-                        &player.id,
-                        dimension,
-                        block_pos(pos),
-                        state,
-                    ),
-                    None => Ok(false),
+                .call(i, FUEL_EVENT, |run| {
+                    // The face is known for this call only.
+                    run.store.data_mut().clicked_face = face.filter(|f| *f < 6);
+                    let used = match &run.blocks {
+                        Some(b) => b.horizon_mods_block_events().call_block_used(
+                            &mut run.store,
+                            &player.id,
+                            dimension,
+                            block_pos(pos),
+                            state,
+                        ),
+                        None => Ok(false),
+                    };
+                    run.store.data_mut().clicked_face = None;
+                    used
                 })
                 .unwrap_or(false);
         }
@@ -3228,6 +3263,20 @@ fn pose_of(p: structures::Pose) -> Result<crate::structure::Pose, String> {
     }
     .checked()
 }
+impl State {
+    /// Refuses a signal past the 1024 `redstone` takes a call.
+    fn signals_left(&self) -> Result<(), String> {
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Signal { .. } | Output::ComparatorSignal { .. }))
+            .count();
+        if queued >= 1024 {
+            return Err("at most 1024 signals a call".into());
+        }
+        Ok(())
+    }
+}
 impl structures::Host for State {
     fn create(
         &mut self,
@@ -3393,6 +3442,9 @@ impl State {
     }
 }
 impl block_entities::Host for State {
+    fn clicked_face(&mut self) -> Option<u8> {
+        self.clicked_face
+    }
     fn get(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<Vec<u8>> {
         self.block_data.get(&(dimension, [x, y, z])).cloned()
     }
@@ -3554,6 +3606,44 @@ impl effects::Host for State {
             data: data.clamp(0, 15),
         };
         self.effect(dimension, [x, y, z], effect)
+    }
+    fn particles(
+        &mut self,
+        dimension: String,
+        x: f64,
+        y: f64,
+        z: f64,
+        particle: String,
+        delta: (f32, f32, f32),
+        speed: f32,
+        count: u32,
+    ) -> Result<(), String> {
+        let plain = !particle.is_empty()
+            && particle.len() <= 256
+            && particle.chars().all(|c| c.is_ascii_graphic());
+        if !plain {
+            return Err(format!(
+                "{particle:?} is not a particle as /particle writes it"
+            ));
+        }
+        let at = [x, y, z];
+        let delta = [delta.0, delta.1, delta.2];
+        if !at.iter().all(|v| v.is_finite() && v.abs() < 3.0e7)
+            || !delta.iter().chain([&speed]).all(|v| v.is_finite())
+        {
+            return Err("a position, spread and speed that are numbers".into());
+        }
+        if count > 1000 {
+            return Err(format!("{count} particles: at most 1000"));
+        }
+        let effect = EffectOp::Particles {
+            particle,
+            at,
+            delta: delta.map(|d| d.clamp(-64.0, 64.0)),
+            speed: speed.clamp(0.0, 16.0),
+            count,
+        };
+        self.effect(dimension, at.map(|v| v.floor() as i32), effect)
     }
 }
 /// The package path `files` may read: under `data/` or `assets/`, no way out.
@@ -4636,15 +4726,28 @@ impl redstone::Host for State {
         if level > 15 {
             return Err(format!("signal {level}: 0 to 15"));
         }
-        let queued = self
-            .out
-            .iter()
-            .filter(|o| matches!(o, Output::Signal { .. }))
-            .count();
-        if queued >= 1024 {
-            return Err("at most 1024 signals a call".into());
-        }
+        self.signals_left()?;
         self.out.push(Output::Signal {
+            mod_id: self.id.clone(),
+            dimension,
+            pos: [x, y, z],
+            level,
+        });
+        Ok(())
+    }
+    fn set_comparator_signal(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        level: Option<u8>,
+    ) -> Result<(), String> {
+        if let Some(level) = level.filter(|l| *l > 15) {
+            return Err(format!("signal {level}: 0 to 15"));
+        }
+        self.signals_left()?;
+        self.out.push(Output::ComparatorSignal {
             mod_id: self.id.clone(),
             dimension,
             pos: [x, y, z],
@@ -4730,6 +4833,33 @@ impl containers::Host for State {
             pos: [x, y, z],
             slot,
             allowed,
+        };
+        if self.container_op(op) {
+            Ok(())
+        } else {
+            Err(format!("at most {CONTAINER_OPS_PER_CALL} changes a call"))
+        }
+    }
+    fn set_hopper_rule(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        slot: u32,
+        rule: Option<containers::HopperRule>,
+    ) -> Result<(), String> {
+        if slot >= CONTAINER_SLOTS {
+            return Err(format!("slot {slot}: 0 to {}", CONTAINER_SLOTS - 1));
+        }
+        if rule.as_ref().is_some_and(|r| !(1..=99).contains(&r.max)) {
+            return Err("max is 1 to 99".into());
+        }
+        let op = ContainerOp::HopperRule {
+            dimension,
+            pos: [x, y, z],
+            slot,
+            rule: rule.map(|r| (r.insert, r.extract, r.max)),
         };
         if self.container_op(op) {
             Ok(())

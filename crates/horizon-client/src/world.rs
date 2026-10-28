@@ -48,6 +48,20 @@ impl DirtySections {
         self.columns.values().map(|m| m.count_ones() as usize).sum()
     }
 }
+/// A server mod's rule for one slot of its container, for what hoppers and
+/// other containers move (WorldlyContainer's `canPlaceItemThroughFace` and
+/// `canTakeItemThroughFace`): players are held to `slot_rules` instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HopperRule {
+    /// Items may be put in.
+    pub insert: bool,
+    /// Items may be taken out.
+    pub extract: bool,
+    /// The most items a move fills the slot to (1 for a slot that takes an
+    /// item only while empty, as Create's depot does).
+    pub max: u32,
+}
+
 pub struct World {
     pub fast_lava: bool,
     pub chunks: crate::chunk_map::ChunkMap,
@@ -93,6 +107,13 @@ pub struct World {
     /// What a player may put in each slot of a container block, set by server
     /// mods: per slot, `None` for anything, else the item ids allowed.
     pub slot_rules: HashMap<(i32, i32, i32), Vec<Option<Vec<String>>>>,
+    /// What hoppers, droppers and other containers' moves may do with each
+    /// slot of a container block, set by server mods: per slot, `None` for
+    /// vanilla's rules.
+    pub hopper_rules: HashMap<(i32, i32, i32), Vec<Option<HopperRule>>>,
+    /// The signal comparators read from a server mod's block, set by the mod
+    /// in place of vanilla's (`redstone.set-comparator-signal`).
+    pub comparator_signals: HashMap<(i32, i32, i32), u8>,
     /// The sections whose light changed since the log was last drained, as
     /// a bit per section of each column, kept while `block_log` is
     /// (`ChunkHolder.sectionLightChanged`).
@@ -196,6 +217,8 @@ impl World {
             block_log: None,
             neighbor_log: None,
             slot_rules: HashMap::new(),
+            hopper_rules: HashMap::new(),
+            comparator_signals: HashMap::new(),
             light_log: None,
             moving_piston_fallback: Vec::new(),
             moving_pistons: Vec::new(),
@@ -275,6 +298,12 @@ impl World {
                 .state_changed((x, y, z), previous, state.0);
             if !self.slot_rules.is_empty() {
                 self.slot_rules.remove(&(x, y, z));
+            }
+            if !self.hopper_rules.is_empty() {
+                self.hopper_rules.remove(&(x, y, z));
+            }
+            if !self.comparator_signals.is_empty() {
+                self.comparator_signals.remove(&(x, y, z));
             }
             let watches = |id: u32| self.watched.get(id as usize).copied().unwrap_or(false);
             if watches(previous) || watches(state.0) {

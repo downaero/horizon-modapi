@@ -34,8 +34,7 @@ impl InteractionResult {
     }
 }
 
-/// Where a player's click hit the block: the face is known for clicks with
-/// an item, not for those with an empty hand.
+/// Where a player's click hit the block, and the face clicked.
 #[derive(Clone, Copy, Debug)]
 pub struct BlockHitResult {
     pub pos: BlockPos,
@@ -210,6 +209,9 @@ struct EntityType {
 struct Registry {
     blocks: Vec<(String, Rc<dyn Block>)>,
     entities: Vec<EntityType>,
+    /// `block-entities.clicked-face`, kept by `register`: a mod that
+    /// registers no block never imports `block-entities` for it.
+    clicked_face: Option<fn() -> Option<u8>>,
 }
 
 std::thread_local! {
@@ -225,6 +227,7 @@ pub fn register(block: &str, behaviour: impl Block) -> Result<(), String> {
             return Err(format!("{block} is registered already"));
         }
         r.blocks.push((block.to_owned(), Rc::new(behaviour)));
+        r.clicked_face = Some(block_entities::clicked_face);
         Ok(())
     })
 }
@@ -360,7 +363,10 @@ pub fn __used(player: &str, dimension: &str, pos: Pos, state: &str) -> bool {
     let pos = BlockPos::from(pos);
     let hit = BlockHitResult {
         pos,
-        direction: None,
+        direction: REGISTRY
+            .with(|r| r.borrow().clicked_face)
+            .and_then(|face| face())
+            .and_then(Direction::from_3d_data_value),
     };
     block
         .use_without_item(&state, &Level::new(dimension), pos, player, &hit)

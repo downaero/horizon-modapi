@@ -812,6 +812,10 @@ impl LevelAccess for GameLevel<'_> {
         state: BlockStateId,
         direction: Direction,
     ) -> i32 {
+        // A server mod's own reading (`redstone.set-comparator-signal`).
+        if let Some(signal) = self.world.comparator_signals.get(&(pos.x, pos.y, pos.z)) {
+            return i32::from(*signal);
+        }
         if let Some(s) = self.registry.state(state)
             && s.name == "minecraft:detector_rail"
         {
@@ -4263,7 +4267,16 @@ impl Game<'_> {
             // TRY_WITH_EMPTY_HAND: only the main hand's turn uses the block
             // itself (useWithoutItem).
             if !anchor_passed && self.hand == Hand::Main {
-                if self.mod_block_use(hit.pos) {
+                // The face as 0 down to 5 east, as `UseItemOn` sends it.
+                let clicked = match hit.face {
+                    [0, -1, 0] => 0,
+                    [0, 1, 0] => 1,
+                    [0, 0, -1] => 2,
+                    [0, 0, 1] => 3,
+                    [-1, 0, 0] => 4,
+                    _ => 5,
+                };
+                if self.mod_block_use(hit.pos, clicked) {
                     self.swing_arm();
                     return Ok(true);
                 }

@@ -302,7 +302,7 @@ A step's parts happen in this order:
 | `chat = "<Steve> hi"` | a chat line the player receives |
 | `command = "where north"` | the player types `/where north`; a command the mod doesn't own fails the step |
 | `break = { x = 1, y = 63, z = 0, state = "minecraft:stone" }`, `place = { ... }` | server mods: the player breaks or places that block |
-| `use = { x = 1, y = 64, z = 0 }` | server mods: the player right-clicks the block there with an empty hand |
+| `use = { x = 1, y = 64, z = 0, face = "up" }` | server mods: the player right-clicks the block there with an empty hand, on that face (`down`, `up`, `north`, `south`, `west`, `east`; left out: none) |
 | `leave = "Alex"` | server mods: that player leaves |
 
 A server mod starts with nobody on: `join = "Alex"` (after `reload` and `title-screen`) brings a
@@ -600,6 +600,9 @@ running mods changes. `block-used` runs when a player (the window's own or a
 LAN guest) right-clicks a block of a mod's namespace with an empty-handed
 use, not sneaking with full hands: the mod returns true to take the click,
 and the game then does nothing else with it. Vanilla blocks never reach it.
+During the call `block-entities.clicked-face()` (API level 42) is the face the
+player clicked, 0 down to 5 east, as `item-events` gives it (a depot that takes
+and gives items only from its top); the SDK puts it in `BlockHitResult::direction`.
 
 ### Capability `containers`
 
@@ -638,6 +641,13 @@ openers share the number, so a mod keeps such a block for signals only. It is
 not saved: the mod sets it again after a load. The gears example's
 `gears:gauge` gives 5 for each item lying on it.
 
+`redstone.set-comparator-signal(dimension, x, y, z, level)` (API level 42) is what a
+comparator reads from a block of the mod's (`getAnalogOutputSignal`: a depot's or a
+tank's fullness), 0 to 15, until the mod sets another; none gives back vanilla's (a
+container's fullness). The comparators beside it are told at the tick's end, as when a
+container changes. Comparators read only a block whose template has an analog output (a
+chest, barrel, hopper or composter). Not saved, and gone when the block changes.
+
 ### Pushing players and items
 
 `players.push(player, x, y, z)` and `items.push(id, x, y, z)` (API level 19)
@@ -669,6 +679,14 @@ run at the tick's end through the game's own level events, so LAN guests see
 and hear them as they do a vanilla block's; at most 64 a call, and only the
 dimension the world is simulating plays.
 
+`effects.particles(dimension, x, y, z, particle, delta, speed, count)` (API level 42)
+sends particles as `/particle` does, as the server, to the players within 32 blocks:
+`particle` as the command writes it, with no spaces (`minecraft:flame`,
+`minecraft:item{item:"minecraft:iron_ingot"}` for a press squeezing an ingot,
+`minecraft:block{block_state:"minecraft:stone"}`); `count` of them spread by `delta`
+(0: one moving by `speed` times `delta`). Item particles reach players' games over the
+network as vanilla's do (`ItemParticleOption`).
+
 ### Capability `items`
 
 **API level 13, experimental, server mods.** `items.drop(dimension, x, y, z,
@@ -690,6 +708,13 @@ none lifts the rule. It holds for clicks, drags and shift-clicks, local and
 guests'; hoppers and the mod itself are not held to it. Not saved: the mod sets
 its rules again after a load (the gears crate does at each open). A progress bar or
 a screen of its own is not part of this.
+
+`containers.set-hopper-rule(dimension, x, y, z, slot, rule)` (API level 42) is the rule
+for what moves (hoppers, droppers, other containers, and other mods' `transfer`) may do
+with a slot, as a WorldlyContainer's faces allow: `insert`, `extract`, and `max`, the most
+items a move fills it to (1: a slot that takes an item only while empty, as Create's depot
+does); none gives back vanilla's. Players are held to `set-slot-rule` instead. Not saved,
+and gone when the block changes.
 
 ### Turning parts (capability `block-entities`, `visuals`)
 
