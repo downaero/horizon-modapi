@@ -407,6 +407,28 @@ blocks and items by declaring them in `data/<id>/horizon/block/*.json` and
   "item": true }
 ```
 
+A block takes its template's shape unless it gives its own, in pixels with
+a block 16 across as NeoForge's `Block.box` takes them: `shape` is the
+outline players pick and see and, unless `collision_shape` says otherwise,
+what entities collide with (`[]`: nothing). Either is a list of boxes for
+every state, or boxes by state, keyed by properties as a state writes them;
+a state takes the key it matches with the most properties, and one no key
+matches keeps the template's shape:
+
+```json
+{ "template": "minecraft:iron_chain",
+  "shape": { "axis=x": [[0, 6, 6, 16, 10, 10]],
+             "axis=y": [[6, 0, 6, 10, 16, 10]],
+             "axis=z": [[6, 6, 0, 10, 10, 16]] } }
+```
+
+The boxes are joined as `Shapes.or` joins them, and the outline's edges are
+drawn as vanilla draws a shape's. Light, the faces a block hides on its
+neighbours and what it supports stay the template's: a template with the
+properties the shape is keyed by and that hides nothing (a chain, an end
+rod, iron bars) fits a small shape best. The gears example's `gears:shaft`
+is a chain with a thicker shape along its axis.
+
 The fence: files go in the mod's own namespaces (`assets/<id>/`,
 `data/<id>/`, and those its manifest lists), plus additions to vanilla tags
 (`data/minecraft/tags/`) and to the convention tags NeoForge and Fabric mods

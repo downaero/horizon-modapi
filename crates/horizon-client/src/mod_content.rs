@@ -15,7 +15,8 @@
 //! The loaders need no mod code, vanilla state ids never move, and with no
 //! content mod the root is the base root itself.
 use crate::{Result, blocks::MAP_COLORS};
-use horizon_mods::content::{Block, Content, Rarity};
+use horizon_core::geometry::{Aabb, Axis, ShapeOp, Vec3, VoxelShape};
+use horizon_mods::content::{Block, Content, Rarity, ShapeBox};
 use horizon_world::nbt::{self, JavaString, Limits, Tag};
 use serde::{Deserialize, Serialize, de};
 use std::{
@@ -229,6 +230,45 @@ struct NewBlock<'a> {
     rename: Rename,
     /// The template's item, if it has one.
     item: Option<String>,
+    /// Its own outline and collision shape for each of its states, in the
+    /// template's order; `None` keeps the template's.
+    outline: Vec<Option<VoxelShape>>,
+    collision: Vec<Option<VoxelShape>>,
+}
+
+/// A declared shape's boxes, in pixels, as one shape: `Shapes.or` of each
+/// `Block.box`.
+fn shape(boxes: &[ShapeBox]) -> Result<VoxelShape> {
+    let mut out = VoxelShape::empty();
+    for b in boxes {
+        let b = b.map(|v| v / 16.0);
+        let part = VoxelShape::from_box(Aabb::new(
+            Vec3::new(b[0], b[1], b[2]),
+            Vec3::new(b[3], b[4], b[5]),
+        ))
+        .map_err(|e| e.to_string())?;
+        out = out.join(&part, ShapeOp::OR).map_err(|e| e.to_string())?;
+    }
+    Ok(out)
+}
+
+/// A state's properties from its `facts.json` row,
+/// `Block{minecraft:iron_chain}[axis=y,waterlogged=false]`.
+fn state_properties(row: &J) -> Vec<(String, String)> {
+    let J::Arr(row) = row else {
+        return Vec::new();
+    };
+    let Some(J::Str(text)) = row.get(3) else {
+        return Vec::new();
+    };
+    let Some((_, rest)) = text.split_once('[') else {
+        return Vec::new();
+    };
+    rest.trim_end_matches(']')
+        .split(',')
+        .filter_map(|p| p.split_once('='))
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect()
 }
 /// An item being added (declared, or a block's).
 struct NewItem {
@@ -255,6 +295,10 @@ fn read_json(path: &Path) -> Result<J> {
 impl<'a> Plan<'a> {
     fn new(base: &Path, mods: &'a [ContentMod]) -> Result<Self> {
         let mut facts = read_json(&base.join("facts.json"))?;
+        let state_rows: Vec<J> = match facts.at("states") {
+            Some(J::Arr(states)) => states.clone(),
+            _ => Vec::new(),
+        };
         let names: Vec<String> = match facts.at("states") {
             Some(J::Arr(states)) => states
                 .iter()
@@ -307,10 +351,33 @@ impl<'a> Plan<'a> {
                     }
                     wanted_sounds.push(s.clone());
                 }
+                let mut outline = Vec::new();
+                let mut collision = Vec::new();
+                for id in rename.states.clone() {
+                    let props = state_properties(&state_rows[id as usize]);
+                    let props: Vec<(&str, &str)> = props
+                        .iter()
+                        .map(|(k, v)| (k.as_str(), v.as_str()))
+                        .collect();
+                    let of =
+                        |s: &Option<horizon_mods::content::Shape>| -> Result<Option<VoxelShape>> {
+                            match s.as_ref().and_then(|s| s.boxes(&props)) {
+                                Some(boxes) => Ok(Some(
+                                    shape(boxes).map_err(|e| format!("{}: shape: {e}", decl.id))?,
+                                )),
+                                None => Ok(None),
+                            }
+                        };
+                    let own = of(&decl.shape)?;
+                    collision.push(of(&decl.collision_shape)?.or_else(|| own.clone()));
+                    outline.push(own);
+                }
                 blocks.push(NewBlock {
                     decl,
                     rename,
                     item: None,
+                    outline,
+                    collision,
                 });
             }
         }
@@ -408,7 +475,7 @@ impl<'a> Plan<'a> {
                     if !b.decl.item {
                         row.set("item", J::Str("minecraft:air".into()));
                     }
-                    self.override_gameplay(b, &mut row);
+                    self.override_gameplay(b, i, &mut row);
                 }
                 list.push(row);
             }
@@ -416,8 +483,37 @@ impl<'a> Plan<'a> {
         Ok(())
     }
 
-    /// The declared properties, on a gameplay row.
-    fn override_gameplay(&self, b: &NewBlock, row: &mut J) {
+    /// The declared properties and shapes, on the gameplay row of the
+    /// block's `i`th state.
+    fn override_gameplay(&self, b: &NewBlock, i: usize, row: &mut J) {
+        let boxes = |list: Vec<[f64; 6]>| {
+            J::Arr(
+                list.into_iter()
+                    .map(|b| J::Arr(b.into_iter().map(J::f64).collect()))
+                    .collect(),
+            )
+        };
+        if let Some(s) = &b.outline[i] {
+            let parts = s.boxes().iter().map(|a| {
+                [
+                    a.min(Axis::X),
+                    a.min(Axis::Y),
+                    a.min(Axis::Z),
+                    a.max(Axis::X),
+                    a.max(Axis::Y),
+                    a.max(Axis::Z),
+                ]
+            });
+            row.set("outline", boxes(parts.collect()));
+            row.set("outline_edges", boxes(s.for_all_edges()));
+        }
+        if let Some(s) = &b.collision[i] {
+            // `Block.isShapeFullBlock`: nothing differs from a full block (NOT_SAME).
+            let full = !VoxelShape::block()
+                .join_is_not_empty(s, ShapeOp::XOR)
+                .unwrap_or(true);
+            row.set("full_collision", J::Bool(full));
+        }
         let p = &b.decl.properties;
         if let Some(v) = p.hardness {
             row.set("hardness", J::f64(v as f64));
@@ -600,11 +696,34 @@ impl<'a> Plan<'a> {
     }
 
     /// One NBT table: `states` lists, `cached_shapes` arrays and `blocks`
-    /// compounds, wherever they are.
-    fn nbt(&self, tag: &mut Tag) {
+    /// compounds, wherever they are. In a `collision` table, the blocks'
+    /// own collision shapes join its `shapes` and their states point at them.
+    fn nbt(&self, tag: &mut Tag, collision: bool) {
         let Tag::Compound(c) = tag else {
             return;
         };
+        // Each block's new shapes, and each of its states' index into the
+        // table's shapes when it has its own.
+        let mut added: Vec<Tag> = Vec::new();
+        let mut own: Vec<Vec<Option<i32>>> = Vec::new();
+        if collision && let Some(Tag::List(shapes)) = c.get(&JavaString::from("shapes")) {
+            let base = shapes.len();
+            for b in &self.blocks {
+                own.push(
+                    b.collision
+                        .iter()
+                        .map(|s| {
+                            let entry = horizon_world::collision::shape_entry(s.as_ref()?);
+                            let at = added.iter().position(|e| *e == entry).unwrap_or_else(|| {
+                                added.push(entry);
+                                added.len() - 1
+                            });
+                            Some((base + at) as i32)
+                        })
+                        .collect(),
+                );
+            }
+        }
         for (key, value) in c.iter_mut() {
             match (key.to_string_lossy().as_str(), value) {
                 ("states", Tag::List(list)) if list.len() == self.states => {
@@ -619,12 +738,15 @@ impl<'a> Plan<'a> {
                     }
                 }
                 ("cached_shapes", Tag::IntArray(a)) if a.len() == self.states => {
-                    for b in &self.blocks {
+                    for (n, b) in self.blocks.iter().enumerate() {
                         let r = &b.rename.states;
-                        let copy = a[r.start as usize..r.end as usize].to_vec();
-                        a.extend(copy);
+                        for (i, id) in r.clone().enumerate() {
+                            let index = own.get(n).and_then(|o| o[i]).unwrap_or(a[id as usize]);
+                            a.push(index);
+                        }
                     }
                 }
+                ("shapes", Tag::List(list)) if collision => list.extend(added.iter().cloned()),
                 ("blocks", Tag::Compound(map)) => {
                     for b in &self.blocks {
                         let Some(mut v) = map
@@ -641,7 +763,7 @@ impl<'a> Plan<'a> {
                         map.insert(b.decl.id.as_str().into(), v);
                     }
                 }
-                (_, inner @ Tag::Compound(_)) => self.nbt(inner),
+                (_, inner @ Tag::Compound(_)) => self.nbt(inner, false),
                 _ => {}
             }
         }
@@ -1036,7 +1158,7 @@ fn tables(base: &Path, plan: &Plan, overlay: &Overlay<'_>) -> Result<()> {
         } else {
             let (mut named, _) = nbt::read_named(&fs::read(&path)?, Limits::tables())
                 .map_err(|e| format!("{name}: {e}"))?;
-            plan.nbt(&mut named.tag);
+            plan.nbt(&mut named.tag, name.ends_with("cached-collision.nbt"));
             nbt::write_named(&named, Limits::tables()).map_err(|e| format!("{name}: {e}"))?
         };
         overlay.write(name, &bytes)

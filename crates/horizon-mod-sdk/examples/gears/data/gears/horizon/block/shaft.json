@@ -1,0 +1,7 @@
+{ "template": "minecraft:iron_chain",
+  "properties": { "hardness": 2.0, "sounds": "minecraft:iron_block" },
+  "shape": {
+    "axis=x": [[0, 6, 6, 16, 10, 10]],
+    "axis=y": [[6, 0, 6, 10, 16, 10]],
+    "axis=z": [[6, 6, 0, 10, 10, 16]] },
+  "item": true }

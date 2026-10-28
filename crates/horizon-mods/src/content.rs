@@ -75,6 +75,70 @@ pub struct BlockProperties {
     pub sounds: Option<String>,
 }
 
+/// One box of a shape in pixels, `[x0, y0, z0, x1, y1, z1]` with a block 16
+/// across, as NeoForge's `Block.box` takes them.
+pub type ShapeBox = [f64; 6];
+
+/// A block's shape: its boxes for every state, or by state, keyed by
+/// properties as a state writes them (`"axis=x"`, `"axis=y,powered=true"`).
+/// A state takes the boxes of the key it matches with the most properties;
+/// one no key matches keeps its template's shape.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum Shape {
+    All(Vec<ShapeBox>),
+    ByState(std::collections::BTreeMap<String, Vec<ShapeBox>>),
+}
+
+impl Shape {
+    /// The boxes for a state with these properties, `None` to keep the
+    /// template's shape.
+    pub fn boxes(&self, properties: &[(&str, &str)]) -> Option<&[ShapeBox]> {
+        match self {
+            Shape::All(boxes) => Some(boxes),
+            Shape::ByState(keys) => keys
+                .iter()
+                .filter_map(|(key, boxes)| {
+                    let conditions: Vec<(&str, &str)> =
+                        key.split(',').filter_map(|c| c.split_once('=')).collect();
+                    conditions
+                        .iter()
+                        .all(|c| properties.contains(c))
+                        .then_some((conditions.len(), boxes))
+                })
+                .max_by_key(|(n, _)| *n)
+                .map(|(_, boxes)| boxes.as_slice()),
+        }
+    }
+    fn check(&self) -> Result<(), String> {
+        let lists: Vec<&Vec<ShapeBox>> = match self {
+            Shape::All(boxes) => vec![boxes],
+            Shape::ByState(keys) => {
+                for key in keys.keys() {
+                    if key.split(',').any(|c| {
+                        c.split_once('=')
+                            .is_none_or(|(k, v)| k.is_empty() || v.is_empty())
+                    }) {
+                        return Err(format!("shape key {key:?} is not property=value[,...]"));
+                    }
+                }
+                keys.values().collect()
+            }
+        };
+        for b in lists.into_iter().flatten() {
+            let inside = b
+                .iter()
+                .all(|v| v.is_finite() && (-16.0..=32.0).contains(v));
+            if !inside || b[0] >= b[3] || b[1] >= b[4] || b[2] >= b[5] {
+                return Err(format!(
+                    "shape box {b:?}: from x0 y0 z0 to larger x1 y1 z1, in pixels from -16 to 32"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BlockFile {
@@ -83,6 +147,8 @@ struct BlockFile {
     properties: BlockProperties,
     #[serde(default = "yes")]
     item: bool,
+    shape: Option<Shape>,
+    collision_shape: Option<Shape>,
 }
 fn yes() -> bool {
     true
@@ -97,6 +163,11 @@ pub struct Block {
     /// The vanilla block it copies, `minecraft:<path>`.
     pub template: String,
     pub properties: BlockProperties,
+    /// The outline players pick and see, and its collision unless
+    /// `collision_shape` says otherwise (NeoForge's `getShape`).
+    pub shape: Option<Shape>,
+    /// What entities collide with (`getCollisionShape`); `[]` for nothing.
+    pub collision_shape: Option<Shape>,
     /// Also add a block item with the same id.
     pub item: bool,
 }
@@ -329,6 +400,8 @@ impl Content {
                 id: block,
                 template: file.template,
                 properties: file.properties,
+                shape: file.shape,
+                collision_shape: file.collision_shape,
                 item: file.item,
             });
         }
@@ -387,6 +460,9 @@ fn check_block(file: &BlockFile) -> Result<(), String> {
     }
     if p.sounds.as_deref().is_some_and(|s| !vanilla_id(s)) {
         return Err("sounds names a vanilla block (minecraft:...)".into());
+    }
+    for shape in [&file.shape, &file.collision_shape].into_iter().flatten() {
+        shape.check()?;
     }
     Ok(())
 }
@@ -477,6 +553,8 @@ capabilities = ["registries"]
                     sounds: Some("minecraft:amethyst_block".into()),
                     ..BlockProperties::default()
                 },
+                shape: None,
+                collision_shape: None,
                 item: true,
             }]
         );
@@ -631,6 +709,34 @@ capabilities = ["registries"]
             "assets\\ruby\\a",
         ] {
             assert!(check_path(bad).is_err(), "{bad}");
+        }
+    }
+    #[test]
+    fn a_shape_by_state_takes_its_most_specific_key() {
+        let shape: Shape = serde_json::from_str(
+            r#"{"axis=x": [[0, 6, 6, 16, 10, 10]], "axis=x,powered=true": [[0, 0, 0, 16, 16, 16]]}"#,
+        )
+        .unwrap();
+        shape.check().unwrap();
+        let of = |props: &[(&str, &str)]| shape.boxes(props).map(|b| b[0]);
+        assert_eq!(
+            of(&[("axis", "x"), ("powered", "false")]),
+            Some([0.0, 6.0, 6.0, 16.0, 10.0, 10.0])
+        );
+        assert_eq!(
+            of(&[("axis", "x"), ("powered", "true")]),
+            Some([0.0, 0.0, 0.0, 16.0, 16.0, 16.0])
+        );
+        assert_eq!(of(&[("axis", "y"), ("powered", "true")]), None);
+        let all: Shape = serde_json::from_str("[[6, 0, 6, 10, 16, 10]]").unwrap();
+        assert_eq!(all.boxes(&[]).map(<[_]>::len), Some(1));
+        for bad in [
+            r#"[[6, 0, 6, 6, 16, 10]]"#,
+            r#"[[0, 0, 0, 16, 40, 16]]"#,
+            r#"{"axis": []}"#,
+        ] {
+            let shape: Shape = serde_json::from_str(bad).unwrap();
+            assert!(shape.check().is_err(), "{bad}");
         }
     }
 }

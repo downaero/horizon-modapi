@@ -13,6 +13,46 @@ use crate::{
 use horizon_core::geometry::{Axis, VoxelShape};
 use std::{collections::HashMap, io};
 
+/// A shape as one entry of a collision table's `shapes`, the format
+/// [`CachedCollisionRegistry::from_table`] reads: for shapes a table did not
+/// have (a mod block's own), never one of the canonical identities.
+pub fn shape_entry(shape: &VoxelShape) -> Tag {
+    let coords = |axis: Axis| {
+        Tag::LongArray(
+            shape
+                .coordinates(axis)
+                .iter()
+                .map(|v| v.to_bits() as i64)
+                .collect(),
+        )
+    };
+    let [sx, sy, sz] = shape.sizes().map(|s| s as i32);
+    let mut occupied = Vec::with_capacity((sx * sy * sz) as usize);
+    for x in 0..sx {
+        for y in 0..sy {
+            for z in 0..sz {
+                occupied.push(u8::from(shape.is_full(x, y, z)));
+            }
+        }
+    }
+    let axes = shape.cube_coordinate_axes();
+    let (min, max) = shape.discrete_bounds();
+    let mut entry = crate::nbt::Compound::new();
+    entry.insert("x".into(), coords(Axis::X));
+    entry.insert("y".into(), coords(Axis::Y));
+    entry.insert("z".into(), coords(Axis::Z));
+    entry.insert("occupied".into(), Tag::ByteArray(occupied));
+    entry.insert("cube".into(), Tag::Byte(i8::from(shape.is_cube())));
+    entry.insert(
+        "cube_axes".into(),
+        Tag::Byte((0..3).map(|i| i8::from(axes[i]) << i).sum()),
+    );
+    entry.insert("discrete_min".into(), Tag::IntArray(min.to_vec()));
+    entry.insert("discrete_max".into(), Tag::IntArray(max.to_vec()));
+    entry.insert("canonical".into(), Tag::Byte(0));
+    Tag::Compound(entry)
+}
+
 #[derive(PartialEq, Eq, Hash)]
 struct GridKey {
     coords: [Vec<u64>; 3],

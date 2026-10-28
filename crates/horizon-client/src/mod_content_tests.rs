@@ -281,6 +281,85 @@ fn content_root_loads_with_every_table() {
     fs::remove_dir_all(&scratch).unwrap();
 }
 
+/// A block's own shape, by its `axis`, reaches the outline players pick and
+/// the collision tables both the game and the world read.
+#[test]
+#[ignore = "full content root: CI and pr_ready run it"]
+fn a_declared_shape_reaches_outline_and_collision() {
+    let Some(base) = prepared() else {
+        return;
+    };
+    let scratch = std::env::temp_dir().join(format!("horizon-mod-shape-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let m = folder_mod(
+        &scratch.join("shafts"),
+        &[
+            ("horizon-mod.toml", &manifest("shafts", "")),
+            (
+                "data/shafts/horizon/block/shaft.json",
+                r#"{"template": "minecraft:iron_chain", "shape": {
+                    "axis=x": [[0, 6, 6, 16, 10, 10]],
+                    "axis=y": [[6, 0, 6, 10, 16, 10]],
+                    "axis=z": [[6, 6, 0, 10, 10, 16], [0, 0, 0, 16, 2, 16]]},
+                    "collision_shape": {"axis=y": []}}"#,
+            ),
+        ],
+    );
+    let root = resource_root(&base, std::slice::from_ref(&m), &scratch.join("cache")).unwrap();
+    let assets = Assets::load(&root).unwrap();
+    let registry = assets.registry;
+    let facts = BlockFacts::load(&root, registry).unwrap();
+    let tag = |file: &str| {
+        nbt::read_named(&fs::read(root.join(file)).unwrap(), Limits::tables())
+            .unwrap()
+            .0
+            .tag
+    };
+    let (game, world) = (
+        tag("cached-collision.nbt"),
+        tag("worldgen/blocks/cached-collision.nbt"),
+    );
+    let tables = [
+        horizon_world::collision::CachedCollisionRegistry::from_nbt(&game, registry).unwrap(),
+        horizon_world::collision::CachedCollisionRegistry::from_nbt(&world, registry).unwrap(),
+    ];
+    let state = |axis: &str| {
+        (0..registry.len() as u32)
+            .map(BlockStateId)
+            .find(|&s| {
+                let st = registry.state(s).unwrap();
+                st.name == "shafts:shaft"
+                    && st.properties.iter().any(|(k, v)| k == "axis" && v == axis)
+            })
+            .unwrap()
+    };
+    let x = facts.get(state("x"));
+    assert_eq!(&*x.outline, [[0.0, 0.375, 0.375, 1.0, 0.625, 0.625]]);
+    assert_eq!(x.outline_edges.len(), 12);
+    assert!(!x.full_collision);
+    // Two boxes: their union's outline, its edges merged where they meet.
+    let z = facts.get(state("z"));
+    assert_eq!(z.outline.len(), 2);
+    assert!(z.outline_edges.len() > 12);
+    for table in &tables {
+        let bounds = |axis: &str| table.cached_shape(state(axis)).unwrap().unwrap().bounds();
+        let b = bounds("x").unwrap();
+        assert_eq!(
+            [
+                b.min(Axis::X),
+                b.min(Axis::Y),
+                b.max(Axis::X),
+                b.max(Axis::Y)
+            ],
+            [0.0, 0.375, 1.0, 0.625]
+        );
+        // `collision_shape` overrides the outline: nothing to collide with.
+        assert_eq!(bounds("y"), None);
+    }
+    crate::collisions::load(&root, registry).unwrap();
+    fs::remove_dir_all(&scratch).unwrap();
+}
+
 #[test]
 fn refuses_unknown_templates_and_vanilla_ids() {
     let Some(base) = prepared() else {

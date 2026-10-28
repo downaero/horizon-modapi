@@ -310,6 +310,62 @@ impl VoxelShape {
             index(self.sizes, x as usize, y as usize, z as usize),
         )
     }
+    /// `VoxelShape.forAllEdges`: the outline's edges as `[x0, y0, z0, x1, y1,
+    /// z1]`, neighbouring cells' edges merged, those along z first, then y,
+    /// then x (`DiscreteVoxelShape.forAllAxisEdges` for each `AxisCycle`).
+    pub fn for_all_edges(&self) -> Vec<[f64; 6]> {
+        let mut out = Vec::new();
+        // Each pass walks (a, b, c), c along the edges, as x, y and z.
+        let passes: [fn(i32, i32, i32) -> [i32; 3]; 3] = [
+            |a, b, c| [a, b, c],
+            |a, b, c| [b, c, a],
+            |a, b, c| [c, a, b],
+        ];
+        for to_xyz in passes {
+            let size = |i: i32| -> i32 {
+                let probe = to_xyz(i32::from(i == 0), i32::from(i == 1), i32::from(i == 2));
+                let axis = probe.iter().position(|v| *v == 1).expect("one axis");
+                self.sizes[axis] as i32
+            };
+            let (sa, sb, sc) = (size(0), size(1), size(2));
+            let full = |a, b, c| {
+                let [x, y, z] = to_xyz(a, b, c);
+                self.is_full(x, y, z)
+            };
+            let point = |a, b, c| {
+                let p = to_xyz(a, b, c);
+                [0, 1, 2].map(|i| self.coords[i][p[i] as usize])
+            };
+            for a in 0..=sa {
+                for b in 0..=sb {
+                    let mut start = -1;
+                    for c in 0..=sc {
+                        let mut count = 0;
+                        let mut odd = 0;
+                        for da in 0..=1 {
+                            for db in 0..=1 {
+                                if full(a + da - 1, b + db - 1, c) {
+                                    count += 1;
+                                    odd ^= da ^ db;
+                                }
+                            }
+                        }
+                        if count == 1 || count == 3 || (count == 2 && odd & 1 == 0) {
+                            if start == -1 {
+                                start = c;
+                            }
+                        } else if start != -1 {
+                            let [x0, y0, z0] = point(a, b, start);
+                            let [x1, y1, z1] = point(a, b, c);
+                            out.push([x0, y0, z0, x1, y1, z1]);
+                            start = -1;
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
     pub fn find_index(&self, axis: Axis, value: f64) -> i32 {
         let i = axis as usize;
         if self.cube {
@@ -520,6 +576,23 @@ fn clear_strip(bits: &mut [u64], sizes: [usize; 3], x: usize, y: usize, min: usi
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn edges_of_a_cube_and_a_merged_step() {
+        let cube = VoxelShape::block().for_all_edges();
+        assert_eq!(cube.len(), 12);
+        // Along z, then y, then x, as vanilla walks them.
+        assert_eq!(cube[0], [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(cube[4], [0.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+        assert_eq!(cube[8], [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+        // Two halves side by side are one box: no edge between them.
+        let half = |x0, x1| {
+            VoxelShape::from_box(Aabb::new(Vec3::new(x0, 0.0, 0.0), Vec3::new(x1, 1.0, 1.0)))
+                .unwrap()
+        };
+        let joined = half(0.0, 0.5).join(&half(0.5, 1.0), ShapeOp::OR).unwrap();
+        assert_eq!(joined.for_all_edges().len(), 12);
+        assert!(VoxelShape::empty().for_all_edges().is_empty());
+    }
     #[test]
     fn stop_at_obstacle_and_reuse_boxes() {
         let shape = VoxelShape::block();
