@@ -207,6 +207,9 @@ impl Game<'_> {
                 yaw,
                 pitch,
                 solid: false,
+                target: None,
+                target_rotation: None,
+                previous_rotation: (0.0, 0.0),
             }),
             "minecraft:trident" => {
                 let mut t = super::trident::ThrownTrident::remote(id, at, yaw, pitch);
@@ -349,7 +352,8 @@ impl Game<'_> {
                 // one is a server mod's solid block.
                 match (index, value) {
                     (8, Value::Pos(p)) => f.start_pos = BlockPos::new(p[0], p[1], p[2]),
-                    (4, Value::Bool(silent)) => f.solid = *silent,
+                    (4, Value::Bool(silent)) => f.mod_owned = *silent,
+                    (7, Value::Int(frozen)) => f.solid = *frozen > 0,
                     // Entity.DATA_NO_GRAVITY: it hangs where the server puts it.
                     (5, Value::Bool(no_gravity)) => f.no_gravity = *no_gravity,
                     _ => {}
@@ -444,7 +448,24 @@ impl Game<'_> {
         // itself between the server's updates (every 20 ticks), then waits
         // where it lands for the server to place it and remove it.
         let mut falling = std::mem::take(&mut self.falling);
+        // A server mod's blocks take the place the server last gave them, and
+        // the player standing on a solid one goes with it (once a tick).
+        let mut rode = false;
         for f in &mut falling {
+            if f.mod_owned {
+                f.previous = f.position;
+                f.previous_rotation = (f.yaw, f.pitch);
+                if let Some(to) = f.target.take() {
+                    if f.solid && !rode {
+                        rode = self.ride_mod_block(f.position, to);
+                    }
+                    f.position = to;
+                }
+                if let Some((yaw, pitch)) = f.target_rotation.take() {
+                    (f.yaw, f.pitch) = (yaw, pitch);
+                }
+                continue;
+            }
             if let Ok(FallStep::Landed(_)) = self.fall_step(f, false) {
                 // Block.updateEntityMovementAfterFallOn, then the air drag.
                 f.velocity = Vec3::new(f.velocity.x * 0.98, 0.0, f.velocity.z * 0.98);
@@ -576,9 +597,40 @@ impl Game<'_> {
         }
     }
 
+    /// The player standing on a server mod's solid block at `from` goes with
+    /// it to `to`, feet on its new top: whether they did.
+    fn ride_mod_block(&mut self, from: Vec3, to: Vec3) -> bool {
+        let Some(p) = self.player.as_mut() else {
+            return false;
+        };
+        // Already carried there by another of the same structure's blocks.
+        if from != to && (p.position.y - (to.y + 1.0)).abs() < 1e-9 {
+            return true;
+        }
+        let on = (p.position.x - from.x).abs() < 0.8
+            && (p.position.z - from.z).abs() < 0.8
+            && (p.position.y - (from.y + 1.0)).abs() < 0.3;
+        if on {
+            p.position = p.position.add_vector(to.subtract(from));
+            p.position.y = to.y + 1.0;
+        }
+        on
+    }
+
     pub(super) fn remove_remote_projectile(&mut self, id: u32) {
         self.fangs.list.retain(|f| f.id != id);
         self.tnts.retain(|t| t.id != id);
+        // A server mod's block that leaves with a move still pending makes
+        // that move first, so whoever stands on it ends where it ends (the
+        // blocks it turns into stand there).
+        let last = self
+            .falling
+            .iter()
+            .find(|f| f.id == id && f.mod_owned && f.solid)
+            .and_then(|f| f.target.map(|to| (f.position, to)));
+        if let Some((from, to)) = last {
+            self.ride_mod_block(from, to);
+        }
         self.falling.retain(|f| f.id != id);
         self.creatures.projectiles.retain(|p| p.id != id);
         self.tridents.retain(|t| t.id != id);

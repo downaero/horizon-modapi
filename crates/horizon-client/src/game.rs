@@ -1153,6 +1153,12 @@ struct FallingBlock {
     /// Solid for players as a boat is (a server mod's block, sent as a
     /// silent falling block with no gravity).
     solid: bool,
+    /// On a client, a server mod's block moves to where the server last put
+    /// it at its next tick, so frames go smoothly from the one to the other.
+    target: Option<Vec3>,
+    target_rotation: Option<(f32, f32)>,
+    /// Yaw and pitch at the last tick, for frames in between.
+    previous_rotation: (f32, f32),
 }
 /// The data loaded once at startup and never changed: blocks, items,
 /// recipes, biomes, mobs, collision and motion. Read-only and `Send + Sync`,
@@ -3496,6 +3502,9 @@ impl Game<'_> {
                         yaw: 0.0,
                         pitch: 0.0,
                         solid: false,
+                        target: None,
+                        target_rotation: None,
+                        previous_rotation: (0.0, 0.0),
                     });
                 }
                 LevelEvent::Player { pos, effect, .. } => match effect {
@@ -3745,6 +3754,7 @@ impl Game<'_> {
         for mut f in falling {
             if f.mod_owned {
                 f.previous = f.position;
+                f.previous_rotation = (f.yaw, f.pitch);
                 kept.push(f);
                 continue;
             }
@@ -8194,12 +8204,18 @@ impl Game<'_> {
             );
             let packed = (u32::from(light >> 4) * 16) | ((u32::from(light & 15) * 16) << 8);
             let start = out.len();
-            // A mod's block turns about its centre: pitch about x, then yaw.
-            let transform = if f.yaw != 0.0 || f.pitch != 0.0 {
+            // A mod's block turns about its centre: pitch about x, then yaw,
+            // each the shorter way from its last tick's.
+            let turn = |from: f32, to: f32| from + (to - from + 540.0).rem_euclid(360.0) - 180.0;
+            let yaw = f.previous_rotation.0
+                + (turn(f.previous_rotation.0, f.yaw) - f.previous_rotation.0) * alpha as f32;
+            let pitch = f.previous_rotation.1
+                + (turn(f.previous_rotation.1, f.pitch) - f.previous_rotation.1) * alpha as f32;
+            let transform = if yaw != 0.0 || pitch != 0.0 {
                 let centre = glam::Vec3::splat(0.5);
                 glam::Mat4::from_translation(o + centre)
-                    * glam::Mat4::from_rotation_y(-f.yaw.to_radians())
-                    * glam::Mat4::from_rotation_x(f.pitch.to_radians())
+                    * glam::Mat4::from_rotation_y(-yaw.to_radians())
+                    * glam::Mat4::from_rotation_x(pitch.to_radians())
                     * glam::Mat4::from_translation(-centre)
             } else {
                 glam::Mat4::from_translation(o)

@@ -367,9 +367,14 @@ impl Game<'_> {
                 e.needs_sync = true;
                 e.precise = true;
             }
-            // Entity.DATA_SILENT: a server mod's solid block.
-            if f.solid {
+            // Entity.DATA_SILENT marks a server mod's block for Horizon's
+            // clients, and DATA_TICKS_FROZEN at 1 one that is solid (a falling
+            // block shows neither).
+            if f.mod_owned {
                 e.meta.push((4, serializer::BOOLEAN, Value::Bool(true)));
+            }
+            if f.solid {
+                e.meta.push((7, serializer::INT, Value::Int(1)));
             }
             let start = [f.start_pos.x, f.start_pos.y, f.start_pos.z];
             if start != [0; 3] {

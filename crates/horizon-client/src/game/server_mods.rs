@@ -1043,6 +1043,11 @@ mod run {
             use horizon_core::geometry::Vec3;
             // Solid blocks that moved: where each stood and by how much.
             let mut carried: Vec<(Vec3, Vec3)> = Vec::new();
+            let doomed = std::mem::take(&mut self.mods.doomed_blocks);
+            if !doomed.is_empty() {
+                self.falling
+                    .retain(|f| !(f.mod_owned && doomed.contains(&f.id)));
+            }
             for (mod_id, op) in std::mem::take(&mut self.mods.entity_ops) {
                 match op {
                     horizon_mods::EntityOp::Spawn {
@@ -1108,6 +1113,9 @@ mod run {
                             yaw: 0.0,
                             pitch: 0.0,
                             solid: false,
+                            target: None,
+                            target_rotation: None,
+                            previous_rotation: (0.0, 0.0),
                         });
                         self.mods
                             .mod_entities
@@ -1181,7 +1189,10 @@ mod run {
                     horizon_mods::EntityOp::Remove { handle } => {
                         if let Some(id) = self.mods.mod_entities.remove(&(mod_id, handle)) {
                             self.armor_stands.retain(|a| a.id != id);
-                            self.falling.retain(|f| !(f.mod_owned && f.id == id));
+                            // A block goes next tick, after its last move is sent.
+                            if self.falling.iter().any(|f| f.mod_owned && f.id == id) {
+                                self.mods.doomed_blocks.push(id);
+                            }
                         }
                     }
                 }
@@ -1197,7 +1208,6 @@ mod run {
             &mut self,
             carried: &[(horizon_core::geometry::Vec3, horizon_core::geometry::Vec3)],
         ) {
-            use horizon_core::geometry::Vec3;
             if carried.is_empty() {
                 return;
             }
@@ -1217,17 +1227,8 @@ mod run {
             {
                 p.position = p.position.add_vector(*d);
             }
-            let Some(mut host) = self.lan.take() else {
-                return;
-            };
-            for i in 0..host.hub.guests.len() {
-                let feet = host.hub.guests[i].position;
-                if let Some((_, d)) = on(feet) {
-                    let to = Vec3::new(feet[0], feet[1], feet[2]).add_vector(*d);
-                    host.hub.teleport_keeping_motion(i, [to.x, to.y, to.z]);
-                }
-            }
-            self.lan = Some(host);
+            // A guest's own client carries them (it moves the block too), as
+            // their client moves them anyway: a teleport here would fight it.
         }
 
         /// A player broke (or placed) `state` at `pos`: the player acting now.

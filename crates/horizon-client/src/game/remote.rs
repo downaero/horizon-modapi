@@ -1498,6 +1498,14 @@ impl Game<'_> {
                 return;
             }
             if let Some(f) = self.falling.iter_mut().find(|f| f.id == id as u32) {
+                // A server mod's block goes there at the next tick, smoothly.
+                if f.mod_owned {
+                    f.target = Some(at);
+                    if rotation.is_some() {
+                        f.target_rotation = rotation;
+                    }
+                    return;
+                }
                 f.position = at;
                 if let Some((yaw, pitch)) = rotation {
                     (f.yaw, f.pitch) = (yaw, pitch);

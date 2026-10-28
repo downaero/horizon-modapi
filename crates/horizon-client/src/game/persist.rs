@@ -229,6 +229,9 @@ impl Game<'_> {
                                 yaw: 0.0,
                                 pitch: 0.0,
                                 solid: false,
+                                target: None,
+                                target_rotation: None,
+                                previous_rotation: (0.0, 0.0),
                             });
                         }
                     }

@@ -77,6 +77,10 @@ pub(super) struct ModsState {
     /// Item entities server mods took, by id, for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) takes: Vec<u32>,
+    /// Server mods' block entities removed last tick, gone this one: their
+    /// last move reaches the clients first.
+    #[cfg(feature = "mods")]
+    pub(super) doomed_blocks: Vec<u32>,
     /// Redstone signals server mods set (dimension, position, level), for
     /// the tick's end.
     #[cfg(feature = "mods")]
