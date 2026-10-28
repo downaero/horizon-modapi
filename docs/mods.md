@@ -319,7 +319,12 @@ checked:
 | `panel = ["..."]`, `corner = "top-left"` | its HUD panel's lines (`[]`: no panel) and corner |
 | `told = ["Alex: Welcome!"]`, `broadcast = ["..."]` | server mods: every `players.tell` (as `name: text`) and `players.broadcast`, in order |
 | `blocks = [{ x = 2, y = 64, z = 0, state = "minecraft:glowstone" }]` | server mods with `world`: those blocks of the Overworld after the step, the mod's `set-blocks` made (the script checks a state's shape; the game checks its name) |
+| `drops = ["minecraft:iron_nugget x9 at 5.5 65 5.5"]`, `taken = [7]` | server mods with `items`: every `items.drop` and the ids `items.take` removed, in order |
+| `effects = ["sound minecraft:block.anvil.use at 5 64 5", "event 2000 1 at 5 65 5"]` | server mods with `effects`: every sound and level event, in order |
+| `names = ["Gear Crate at 5 64 5"]` | server mods with `containers`: every `set-name` (`-` for none) |
 | `stopped = "panic"` | the mod was turned off, for a reason holding this text; without it, a mod that traps, panics or overruns fails the test |
+
+A step may also set what the mod reads: `power = [{ x, y, z, level }]` (the redstone signal at those positions from then on, capability `redstone`) and `items = [{ id, item, count, x, y, z }]` (item entities lying in the Overworld, capability `items`; the ones `take` removes are gone for later steps).
 
 Unknown keys are errors, so a typo never passes silently. The same runner is
 `horizon_mods::testing` for Rust code that drives a mod (`TestGame`,

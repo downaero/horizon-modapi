@@ -33,15 +33,36 @@ pub struct TestGame {
     /// changed; every other block, and the other dimensions, are air. Every
     /// biome is the dimension's plainest: plains, nether wastes, the end.
     pub world: std::collections::BTreeMap<(i32, i32, i32), String>,
+    /// The redstone signal the last step set, by position.
+    pub power: std::collections::BTreeMap<(i32, i32, i32), u8>,
+    /// The item entities lying in the Overworld; `take` removes them.
+    pub items: Vec<crate::DroppedStack>,
 }
 
-/// The world a script's mod reads: [`TestGame::world`], copied for a step.
-struct ScriptWorld(std::collections::BTreeMap<(i32, i32, i32), String>);
+/// The world a script's mod reads: [`TestGame::world`], the signals and item
+/// entities a step set, copied for the step.
+struct ScriptWorld {
+    blocks: std::collections::BTreeMap<(i32, i32, i32), String>,
+    power: std::collections::BTreeMap<(i32, i32, i32), u8>,
+    dropped: Vec<crate::DroppedStack>,
+}
 
 impl crate::WorldView for ScriptWorld {
+    fn power(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<u8> {
+        (dimension == "minecraft:overworld")
+            .then(|| self.power.get(&(x, y, z)).copied())
+            .flatten()
+    }
+    fn dropped(&self, dimension: &str) -> Vec<crate::DroppedStack> {
+        if dimension == "minecraft:overworld" {
+            self.dropped.clone()
+        } else {
+            Vec::new()
+        }
+    }
     fn block(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<String> {
         let here = (dimension == "minecraft:overworld")
-            .then(|| self.0.get(&(x, y, z)).cloned())
+            .then(|| self.blocks.get(&(x, y, z)).cloned())
             .flatten();
         Some(here.unwrap_or_else(|| "minecraft:air".into()))
     }
@@ -120,6 +141,8 @@ impl TestGame {
             names: Vec::new(),
             tick: 0,
             world: Default::default(),
+            power: Default::default(),
+            items: Vec::new(),
         };
         copy_mod(hmod, &copy)?;
         game.start()?;
@@ -168,6 +191,7 @@ impl TestGame {
             self.snapshot();
             self.mods.tick(self.tick);
             self.mods.server_tick(self.tick);
+            self.mods.tick_blocks();
         }
     }
     /// `n` frames, 1/60 s apart.
@@ -343,6 +367,33 @@ impl From<Mode> for GameMode {
     }
 }
 
+/// A redstone signal reaching a block (capability `redstone`).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PowerSet {
+    x: i32,
+    y: i32,
+    z: i32,
+    level: u8,
+}
+
+/// An item entity lying in the Overworld (capability `items`).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ItemSet {
+    id: u32,
+    item: String,
+    #[serde(default = "one")]
+    count: u32,
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+fn one() -> u32 {
+    1
+}
+
 /// A block a player breaks or places.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -395,6 +446,11 @@ pub struct Step {
     /// `world`); every other block is air.
     #[serde(default)]
     blocks: Vec<BlockSet>,
+    /// The redstone signal at those positions from now on (capability
+    /// `redstone`); a position left out has none.
+    power: Option<Vec<PowerSet>>,
+    /// The item entities lying about from now on (capability `items`).
+    items: Option<Vec<ItemSet>>,
     #[serde(default)]
     expect: Expect,
 }
@@ -420,6 +476,16 @@ pub struct Expect {
     /// Blocks of the Overworld after the step, the mod's changes made
     /// (capability `world`).
     blocks: Option<Vec<BlockSet>>,
+    /// Capability `items`: every `drop` as `"item xN at x y z"` and the ids
+    /// of the entities `take` removed, in order.
+    drops: Option<Vec<String>>,
+    taken: Option<Vec<u32>>,
+    /// Capability `effects`: every sound as `"sound event at x y z"` and
+    /// level event as `"event id data at x y z"`, in order.
+    effects: Option<Vec<String>>,
+    /// Capability `containers`: every `set-name` as `"name at x y z"` (`-` for
+    /// none), in order.
+    names: Option<Vec<String>>,
     /// The mod is turned off during this step, for a reason holding this text.
     /// Without it, a mod that stops fails the test.
     stopped: Option<String>,
@@ -527,8 +593,25 @@ impl Step {
         for b in &self.blocks {
             game.world.insert((b.x, b.y, b.z), b.state.clone());
         }
-        game.mods
-            .lend_world(Box::new(ScriptWorld(game.world.clone())));
+        if let Some(power) = &self.power {
+            game.power = power.iter().map(|p| ((p.x, p.y, p.z), p.level)).collect();
+        }
+        if let Some(items) = &self.items {
+            game.items = items
+                .iter()
+                .map(|i| crate::DroppedStack {
+                    id: i.id,
+                    item: i.item.clone(),
+                    count: i.count,
+                    pos: [i.x, i.y, i.z],
+                })
+                .collect();
+        }
+        game.mods.lend_world(Box::new(ScriptWorld {
+            blocks: game.world.clone(),
+            power: game.power.clone(),
+            dropped: game.items.clone(),
+        }));
         if let Some(name) = &self.join {
             game.join(name);
         }
@@ -606,6 +689,14 @@ impl Step {
                 }
             }
         }
+        let taken: Vec<u32> = out
+            .iter()
+            .filter_map(|o| match o {
+                Output::Take { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        game.items.retain(|i| !taken.contains(&i.id));
         let stopped = out.iter().find_map(|o| match o {
             Output::Stopped { reason, .. } => Some(reason.as_str()),
             _ => None,
@@ -700,6 +791,60 @@ impl Step {
                     ));
                 }
             }
+        }
+        if let Some(want) = &e.drops {
+            let got: Vec<String> = out
+                .iter()
+                .filter_map(|o| match o {
+                    Output::Drop {
+                        pos, item, count, ..
+                    } => Some(format!(
+                        "{item} x{count} at {} {} {}",
+                        pos[0], pos[1], pos[2]
+                    )),
+                    _ => None,
+                })
+                .collect();
+            same("drops", want, &got)?;
+        }
+        if let Some(want) = &e.taken {
+            same("taken", want, &taken)?;
+        }
+        if let Some(want) = &e.effects {
+            let got: Vec<String> = out
+                .iter()
+                .filter_map(|o| match o {
+                    Output::Effect { pos, effect, .. } => Some(match effect {
+                        crate::EffectOp::Sound { event, .. } => {
+                            format!("sound {event} at {} {} {}", pos[0], pos[1], pos[2])
+                        }
+                        crate::EffectOp::LevelEvent { id, data } => {
+                            format!("event {id} {data} at {} {} {}", pos[0], pos[1], pos[2])
+                        }
+                    }),
+                    _ => None,
+                })
+                .collect();
+            same("effects", want, &got)?;
+        }
+        if let Some(want) = &e.names {
+            let got: Vec<String> = out
+                .iter()
+                .filter_map(|o| match o {
+                    Output::Container {
+                        op: crate::ContainerOp::SetName { pos, name, .. },
+                        ..
+                    } => Some(format!(
+                        "{} at {} {} {}",
+                        name.as_deref().unwrap_or("-"),
+                        pos[0],
+                        pos[1],
+                        pos[2]
+                    )),
+                    _ => None,
+                })
+                .collect();
+            same("names", want, &got)?;
         }
         if let Some(want) = &e.corner {
             let got = game.panel().map(|p| corner_name(p.corner).to_string());

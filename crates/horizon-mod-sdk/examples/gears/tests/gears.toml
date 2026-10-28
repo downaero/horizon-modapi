@@ -1,0 +1,37 @@
+# gears:counter swallows iron ingots beside it, stops while powered, and
+# chimes and drops a nugget each minute (items, redstone, effects).
+
+[[step]]
+join = "Alex"
+blocks = [{ x = 5, y = 64, z = 5, state = "gears:counter" }]
+place = { x = 5, y = 64, z = 5, state = "gears:counter" }
+
+# An ingot lying next to it is carried in within a second.
+[[step]]
+items = [
+    { id = 7, item = "minecraft:iron_ingot", x = 5.5, y = 64.5, z = 5.5 },
+    { id = 8, item = "minecraft:dirt", x = 5.5, y = 64.5, z = 5.5 },
+    { id = 9, item = "minecraft:iron_ingot", x = 40.5, y = 64.5, z = 5.5 },
+]
+ticks = 20
+expect.taken = [7]
+expect.drops = ["minecraft:iron_nugget x9 at 5.5 65 5.5"]
+
+# A redstone signal stops it.
+[[step]]
+power = [{ x = 5, y = 64, z = 5, level = 3 }]
+items = [{ id = 10, item = "minecraft:iron_ingot", x = 5.5, y = 64.5, z = 5.5 }]
+ticks = 40
+expect.taken = []
+expect.drops = []
+
+# Without it, a minute of running: the anvil chimes and smoke rises.
+[[step]]
+power = []
+items = []
+ticks = 1180
+expect.effects = [
+    "sound minecraft:block.anvil.use at 5 64 5",
+    "event 2000 1 at 5 65 5",
+]
+expect.drops = ["minecraft:iron_nugget x1 at 5.5 65 5.5"]

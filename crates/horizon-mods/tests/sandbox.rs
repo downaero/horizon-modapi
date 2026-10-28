@@ -49,6 +49,8 @@ fn mods_dir() -> &'static Path {
                 "-p",
                 "beacons",
                 "-p",
+                "gears",
+                "-p",
                 "horizon-mods-test-guest",
                 "-p",
                 "horizon-mods-test-ui-guest",
@@ -73,6 +75,7 @@ fn mods_dir() -> &'static Path {
             ("predator_missile", example("predator-missile")),
             ("welcome", example("welcome")),
             ("beacons", example("beacons")),
+            ("gears", example("gears")),
             ("horizon_mods_test_guest", GUEST_MANIFEST.to_string()),
             ("horizon_mods_test_ui_guest", UI_MANIFEST.to_string()),
         ];
@@ -890,6 +893,7 @@ fn the_examples_test_scripts_pass() {
         ("coords-hud", "coords_hud"),
         ("welcome", "welcome"),
         ("beacons", "beacons"),
+        ("gears", "gears"),
     ];
     for (example, hmod) in examples_and_files {
         for entry in std::fs::read_dir(examples.join(example).join("tests")).unwrap() {
@@ -902,7 +906,7 @@ fn the_examples_test_scripts_pass() {
             ran += 1;
         }
     }
-    assert_eq!(ran, 5);
+    assert_eq!(ran, 6);
 }
 
 /// Capability `world` without a world lent (the registry's trial run):
