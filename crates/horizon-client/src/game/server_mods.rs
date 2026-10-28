@@ -39,6 +39,14 @@ impl Game<'_> {
     pub(super) fn mod_block_use(&mut self, _pos: [i32; 3]) -> bool {
         false
     }
+    pub(super) fn mod_block_use_by_guest(
+        &mut self,
+        _host: &mut LanHost,
+        _conn: u32,
+        _pos: [i32; 3],
+    ) -> bool {
+        false
+    }
     pub(super) fn guest_mod_net(
         &mut self,
         _host: &LanHost,
@@ -991,11 +999,6 @@ mod run {
             if !self.hears_players() {
                 return false;
             }
-            let state = self.world.block(pos[0], pos[1], pos[2]);
-            let state = self.state_string(state);
-            if state.starts_with("minecraft:") {
-                return false;
-            }
             let players = self.server_players(None);
             let id = match self.lan_acting {
                 None => self.player_uuid_string(),
@@ -1007,6 +1010,47 @@ mod run {
                     }
                 }
             };
+            self.mod_block_used_by(None, players, &id, pos)
+        }
+
+        /// A guest's empty-handed click on the block at `pos`, offered to the
+        /// server mods before the guest's turn runs: the host is not in
+        /// `self.lan` while a guest's packet is handled, so it is passed in.
+        /// A sneaking guest uses nothing, as the main-hand use of vanilla.
+        pub(in crate::game) fn mod_block_use_by_guest(
+            &mut self,
+            host: &mut LanHost,
+            conn: u32,
+            pos: [i32; 3],
+        ) -> bool {
+            if !self.hears_players() {
+                return false;
+            }
+            let Some(g) = host.hub.guests.iter().find(|g| g.conn == conn) else {
+                return false;
+            };
+            if g.sneaking {
+                return false;
+            }
+            let id = uuid_string(g.uuid);
+            let players = self.server_players(Some(host));
+            self.mod_block_used_by(Some(host), players, &id, pos)
+        }
+
+        /// Offers the click of the player `id` on the block at `pos` to the
+        /// server mods.
+        fn mod_block_used_by(
+            &mut self,
+            host: Option<&mut LanHost>,
+            players: Vec<ServerPlayer>,
+            id: &str,
+            pos: [i32; 3],
+        ) -> bool {
+            let state = self.world.block(pos[0], pos[1], pos[2]);
+            let state = self.state_string(state);
+            if state.starts_with("minecraft:") {
+                return false;
+            }
             let Some(me) = players.iter().find(|p| p.id == id).cloned() else {
                 return false;
             };
@@ -1021,7 +1065,7 @@ mod run {
             };
             let used = self.mods.mods.block_used(&me, dimension, pos, &state);
             self.return_world();
-            self.show_mod_output();
+            self.route_mod_output(host);
             self.apply_mod_block_writes();
             used
         }

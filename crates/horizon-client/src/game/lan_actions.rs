@@ -896,14 +896,14 @@ impl Game<'_> {
         // ServerPlayer.openMenu closes the menu that was open.
         self.guest_container_closed(host, conn);
         self.lan_station_closed(host, conn, None);
-        host.hub.open_container(
-            conn,
-            menu,
-            horizon_protocol::text::translatable(title, &[]),
-            pos,
-            slots,
-            items,
-        );
+        // BaseContainerBlockEntity.getDisplayName: the custom name, else the
+        // default title.
+        let title = match self.world.block_names.get(&pos) {
+            Some(name) => horizon_protocol::text::literal(name),
+            None => horizon_protocol::text::translatable(title, &[]),
+        };
+        host.hub
+            .open_container(conn, menu, title, pos, slots, items);
         true
     }
 
@@ -1182,6 +1182,9 @@ impl Game<'_> {
                 // placed; the player is told and the blocks below go back.
                 if self.under_spawn_protection(host, gi, p.pos) {
                     self.spawn_protection_message(host, conn, p.pos);
+                } else if hand == Hand::Main && self.mod_block_use_by_guest(host, conn, p.pos) {
+                    // A server mod took the click (capability `block-entities`).
+                    self.lan_swing_back(host, conn, Some(true));
                 } else {
                     let logged = self.world.block_log.as_ref().map_or(0, Vec::len);
                     let heard = self.audio.capture.as_ref().map_or(0, Vec::len);
