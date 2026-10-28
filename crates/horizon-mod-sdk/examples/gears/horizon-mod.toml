@@ -1,0 +1,9 @@
+id = "gears"
+name = "Gears"
+version = "0.1.0"
+description = "Adds a counter block that keeps the seconds it has stood in the world's save, ticked by the server (capability block-entities)."
+authors = ["Horizon"]
+api = "0.3"
+side = "server"
+capabilities = ["block-entities", "registries", "players"]
+experimental = ["block-entities"]

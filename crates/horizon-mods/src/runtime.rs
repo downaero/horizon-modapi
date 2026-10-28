@@ -33,6 +33,16 @@ mod server_bindings {
         },
     });
 }
+/// Capability `block-entities`' world beyond `horizon-server-mod`: a second
+/// world, so server mods built before it (no `block-events` export) still
+/// instantiate and simply hear nothing of blocks.
+mod block_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "block-host",
+    });
+}
+use block_bindings::{BlockHost, horizon::mods::block_entities};
 /// Capability `ui`'s world beyond `horizon-mod` (docs/mods.md): a second
 /// world, so mods built before it (no `ui-events` export) still instantiate
 /// as `horizon-mod` and simply hear nothing of their widgets.
@@ -112,6 +122,12 @@ const FUEL_FRAME: u64 = 10_000_000;
 const FUEL_EVENT: u64 = 100_000_000;
 /// Blocks a mod may set per `world.set-blocks` call.
 pub const BLOCKS_PER_CALL: usize = 4096;
+/// Bytes a mod may keep at one block position (`block-entities.set`), and
+/// positions it may keep them at.
+pub const BLOCK_DATA_BYTES: usize = 64 << 10;
+pub const BLOCK_DATA_POSITIONS: usize = 1 << 16;
+/// Positions [`Mods::tick_blocks`] ticks per mod per server tick.
+pub const BLOCK_TICKS_PER_TICK: usize = 4096;
 /// Chat lines a mod may show per call, HUD lines and their length.
 const CHAT_PER_CALL: usize = 8;
 /// `command.run-quiet` lines one call of a mod may queue (a quiet payload's
@@ -241,6 +257,14 @@ pub enum Output {
     /// `recipes.place`: the recipe book's click on this display id, all of
     /// it when `all`.
     PlaceRecipe { book_id: i32, all: bool },
+    /// `block-entities.set` (`data` some) or `remove` (none): the game saves
+    /// the bytes with the chunk holding `pos`, for the mod `mod_id`.
+    BlockData {
+        mod_id: String,
+        dimension: String,
+        pos: [i32; 3],
+        data: Option<Vec<u8>>,
+    },
     /// `recipes.give`: a stack for a creative player.
     Give {
         item: String,
@@ -318,6 +342,11 @@ struct Running {
     raycasts: bool,
     /// It imports capability `recipes`.
     reads_recipes: bool,
+    /// A server mod's `block-events` export, none for one built before
+    /// capability `block-entities`.
+    blocks: Option<BlockHost>,
+    /// The blocks (ids without properties) it asked the game to tick.
+    ticking: Vec<String>,
 }
 
 /// A running mod's exports and the hooks its `init` asked for.
@@ -427,6 +456,29 @@ struct State {
     storage_budget: u64,
     limits: StoreLimits,
     world: WorldSlot,
+    /// Capability `block-entities`: the bytes the mod keeps at block
+    /// positions, by dimension and position; the game loads them back with
+    /// [`Mods::load_block_data`].
+    block_data: std::collections::HashMap<(String, [i32; 3]), Vec<u8>>,
+    /// The namespaces whose blocks are the mod's: its id and manifest
+    /// `namespaces`.
+    block_namespaces: Vec<String>,
+    /// Where [`Mods::tick_blocks`] resumes in `block_data`.
+    block_cursor: usize,
+}
+
+fn block_pos(p: BlockPos) -> block_bindings::exports::horizon::mods::block_events::Pos {
+    block_bindings::exports::horizon::mods::block_events::Pos {
+        x: p.x,
+        y: p.y,
+        z: p.z,
+    }
+}
+
+/// Whether block `id` (`mymod:gear`) is in a namespace the mod owns.
+fn owns_block(m: &Manifest, id: &str) -> bool {
+    id.split_once(':')
+        .is_some_and(|(ns, _)| ns == m.id || m.namespaces.iter().any(|n| n == ns))
 }
 
 /// The installed mods and the engine running them. `Mods::default()` is
@@ -453,9 +505,10 @@ impl Mods {
     pub fn wants_world(&self) -> bool {
         self.entries.iter().any(|e| {
             e.status == Status::Running
-                && e.manifest
-                    .as_ref()
-                    .is_some_and(|m| m.capabilities.contains(&crate::Capability::World))
+                && e.manifest.as_ref().is_some_and(|m| {
+                    m.capabilities.contains(&crate::Capability::World)
+                        || m.capabilities.contains(&crate::Capability::BlockEntities)
+                })
         })
     }
     /// Lends the game's world to capability `world` for the calls until
@@ -541,6 +594,8 @@ impl Mods {
             players::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             mod_world::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
+            BlockHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
@@ -628,6 +683,11 @@ impl Mods {
                 .instances(16)
                 .build(),
             world,
+            block_data: Default::default(),
+            block_cursor: 0,
+            block_namespaces: std::iter::once(m.id.clone())
+                .chain(m.namespaces.iter().cloned())
+                .collect(),
         };
         let mut store = Store::new(engine, state);
         store.limiter(|s| &mut s.limits);
@@ -635,12 +695,31 @@ impl Mods {
         let instance = linker
             .instantiate(&mut store, &component)
             .map_err(|e| reason(&e))?;
+        let mut blocks = None;
+        let mut ticking = Vec::new();
         let (mut hooks, ui) = if server {
             let exports = HorizonServerMod::new(&mut store, &instance).map_err(|e| reason(&e))?;
             let r = exports
                 .horizon_mods_server_events()
                 .call_init(&mut store)
                 .map_err(|e| reason(&e))??;
+            // `block-events` is a mod built since `block-entities`; older
+            // server mods have no export and hear nothing of blocks.
+            if let Ok(b) = BlockHost::new(&mut store, &instance) {
+                store.set_fuel(FUEL_INIT).map_err(|e| e.to_string())?;
+                ticking = b
+                    .horizon_mods_block_events()
+                    .call_ticking_blocks(&mut store)
+                    .map_err(|e| reason(&e))?;
+                ticking.retain(|id| {
+                    let owned = owns_block(m, id);
+                    if !owned {
+                        log::warn!("Horizon: mod {} cannot tick {id}: not its block", m.id);
+                    }
+                    owned
+                });
+                blocks = Some(b);
+            }
             (Hooks::Server(exports, r), None)
         } else {
             let exports = HorizonMod::new(&mut store, &instance).map_err(|e| reason(&e))?;
@@ -684,6 +763,8 @@ impl Mods {
             hooks,
             raycasts: functions.iter().any(|f| f == "game.raycast"),
             reads_recipes: functions.iter().any(|f| f.starts_with("recipes.")),
+            blocks,
+            ticking,
         }))
     }
 
@@ -858,6 +939,168 @@ impl Mods {
     /// A server tick.
     pub fn server_tick(&mut self, tick: u64) {
         self.each_server(FUEL_TICK, |h| h.tick, |m, s| m.call_tick(s, tick));
+    }
+    /// The blocks (ids without properties) running server mods ask the
+    /// game to tick: the game calls [`Mods::block_tick`] for loaded
+    /// instances of them.
+    pub fn ticking_blocks(&self) -> impl Iterator<Item = &str> {
+        self.entries
+            .iter()
+            .filter_map(|e| e.run.as_ref())
+            .flat_map(|r| r.ticking.iter().map(String::as_str))
+    }
+    /// Ticks the positions where a mod keeps data (`block-entities.set`)
+    /// whose chunk is loaded in the lent world: `block-tick` for each that
+    /// is still a block the mod ticks, at most [`BLOCK_TICKS_PER_TICK`] per
+    /// mod (the rest next tick). Data under any other block is forgotten.
+    pub fn tick_blocks(&mut self) {
+        let world = self.world.clone();
+        for i in self.block_owners(|r| !r.ticking.is_empty()) {
+            let mut due = Vec::new();
+            let mut gone = Vec::new();
+            {
+                let Ok(view) = world.lock() else { return };
+                let Some(view) = view.as_ref() else { return };
+                let run = self.entries[i].run.as_mut().expect("owner is running");
+                let n = run.store.data().block_data.len();
+                if n == 0 {
+                    continue;
+                }
+                let start = run.store.data().block_cursor % n;
+                let keys: Vec<_> = {
+                    let data = &run.store.data().block_data;
+                    data.keys()
+                        .skip(start)
+                        .chain(data.keys())
+                        .take(n.min(BLOCK_TICKS_PER_TICK))
+                        .cloned()
+                        .collect()
+                };
+                run.store.data_mut().block_cursor = start + keys.len();
+                for (dimension, [x, y, z]) in keys {
+                    let Some(state) = view.block(&dimension, x, y, z) else {
+                        continue;
+                    };
+                    let id = state.split('[').next().unwrap_or(&state);
+                    if run.ticking.iter().any(|t| t == id) {
+                        due.push((dimension, BlockPos { x, y, z }, state));
+                    } else {
+                        gone.push((dimension, [x, y, z]));
+                    }
+                }
+            }
+            if !gone.is_empty() {
+                let data = self.entries[i]
+                    .run
+                    .as_mut()
+                    .expect("owner is running")
+                    .store
+                    .data_mut();
+                for (dimension, pos) in gone {
+                    if data.block_data.remove(&(dimension.clone(), pos)).is_some() {
+                        data.out.push(Output::BlockData {
+                            mod_id: data.id.clone(),
+                            dimension,
+                            pos,
+                            data: None,
+                        });
+                    }
+                }
+                self.out.append(&mut data.out);
+            }
+            for (dimension, pos, state) in due {
+                self.call(i, FUEL_EVENT, |run| match &run.blocks {
+                    Some(b) => b.horizon_mods_block_events().call_block_tick(
+                        &mut run.store,
+                        &dimension,
+                        block_pos(pos),
+                        &state,
+                    ),
+                    None => Ok(()),
+                });
+                if self.entries[i].run.is_none() {
+                    break;
+                }
+            }
+        }
+    }
+    /// A loaded instance of a block some mod ticks, at `pos` in
+    /// `dimension`, in `state` (`mymod:gear[axis=y]`).
+    pub fn block_tick(&mut self, dimension: &str, pos: BlockPos, state: &str) {
+        let id = state.split('[').next().unwrap_or(state);
+        for i in self.block_owners(|r| r.ticking.iter().any(|t| t == id)) {
+            self.call(i, FUEL_EVENT, |run| match &run.blocks {
+                Some(b) => b.horizon_mods_block_events().call_block_tick(
+                    &mut run.store,
+                    dimension,
+                    block_pos(pos),
+                    state,
+                ),
+                None => Ok(()),
+            });
+        }
+    }
+    /// `player` used the block at `pos` with an empty hand: true when the
+    /// mod that owns it handled that.
+    pub fn block_used(
+        &mut self,
+        player: &ServerPlayer,
+        dimension: &str,
+        pos: BlockPos,
+        state: &str,
+    ) -> bool {
+        let id = state.split('[').next().unwrap_or(state);
+        let owners = self.block_owners(|r| {
+            r.store.data().block_namespaces.iter().any(|n| {
+                id.strip_prefix(n.as_str())
+                    .is_some_and(|r| r.starts_with(':'))
+            })
+        });
+        let mut handled = false;
+        for i in owners {
+            handled |= self
+                .call(i, FUEL_EVENT, |run| match &run.blocks {
+                    Some(b) => b.horizon_mods_block_events().call_block_used(
+                        &mut run.store,
+                        &player.id,
+                        dimension,
+                        block_pos(pos),
+                        state,
+                    ),
+                    None => Ok(false),
+                })
+                .unwrap_or(false);
+        }
+        handled
+    }
+    /// Gives a mod back the bytes the game saved at a block position
+    /// (`Output::BlockData` when they were set), as a chunk loads.
+    pub fn load_block_data(&mut self, mod_id: &str, dimension: &str, pos: [i32; 3], data: Vec<u8>) {
+        if data.len() > BLOCK_DATA_BYTES {
+            return;
+        }
+        if let Some(run) = self
+            .entries
+            .iter_mut()
+            .filter_map(|e| e.run.as_mut())
+            .find(|r| r.store.data().id == mod_id)
+        {
+            let map = &mut run.store.data_mut().block_data;
+            if map.len() < BLOCK_DATA_POSITIONS {
+                map.insert((dimension.to_owned(), pos), data);
+            }
+        }
+    }
+    /// The running server mods with a `block-events` export that `wants`.
+    fn block_owners(&self, wants: impl Fn(&Running) -> bool) -> Vec<usize> {
+        (0..self.entries.len())
+            .filter(|&i| {
+                self.entries[i]
+                    .run
+                    .as_ref()
+                    .is_some_and(|r| r.blocks.is_some() && wants(r))
+            })
+            .collect()
     }
     /// `player` joined the server (they are in the snapshot's players).
     pub fn player_joined(&mut self, player: &ServerPlayer) {
@@ -1591,6 +1834,66 @@ impl mod_world::Host for State {
             });
         }
         Ok(())
+    }
+}
+impl block_entities::Host for State {
+    fn get(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<Vec<u8>> {
+        self.block_data.get(&(dimension, [x, y, z])).cloned()
+    }
+    fn set(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        data: Vec<u8>,
+    ) -> Result<(), String> {
+        if data.len() > BLOCK_DATA_BYTES {
+            return Err(format!(
+                "{} bytes: at most {BLOCK_DATA_BYTES} per position",
+                data.len()
+            ));
+        }
+        let key = (dimension.clone(), [x, y, z]);
+        if self.block_data.len() >= BLOCK_DATA_POSITIONS && !self.block_data.contains_key(&key) {
+            return Err(format!("at most {BLOCK_DATA_POSITIONS} positions"));
+        }
+        if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref()) {
+            if !view.has_dimension(&dimension) {
+                return Err(format!("no dimension {dimension}"));
+            }
+            // Only where one of the mod's own blocks stands.
+            let owned = view.block(&dimension, x, y, z).is_some_and(|s| {
+                let id = s.split('[').next().unwrap_or(&s);
+                id.split_once(':')
+                    .is_some_and(|(ns, _)| self.block_namespaces.iter().any(|n| n == ns))
+            });
+            if !owned {
+                return Err(format!("({x}, {y}, {z}) is not a block of this mod"));
+            }
+        }
+        self.block_data.insert(key, data.clone());
+        self.out.push(Output::BlockData {
+            mod_id: self.id.clone(),
+            dimension,
+            pos: [x, y, z],
+            data: Some(data),
+        });
+        Ok(())
+    }
+    fn remove(&mut self, dimension: String, x: i32, y: i32, z: i32) {
+        if self
+            .block_data
+            .remove(&(dimension.clone(), [x, y, z]))
+            .is_some()
+        {
+            self.out.push(Output::BlockData {
+                mod_id: self.id.clone(),
+                dimension,
+                pos: [x, y, z],
+                data: None,
+            });
+        }
     }
 }
 impl players::Host for State {

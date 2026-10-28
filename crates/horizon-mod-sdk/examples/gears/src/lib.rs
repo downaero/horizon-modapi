@@ -1,0 +1,64 @@
+//! Gears: a server mod with its own block. `gears:counter` keeps the seconds
+//! it has stood as four bytes at its position (capability `block-entities`);
+//! the server ticks it and saves the bytes with the world.
+use horizon_mod_sdk::{
+    export_server_mod,
+    server::{BlockPos, Player, Pos, Registration, ServerMod, block_entities, players},
+};
+
+const COUNTER: &str = "gears:counter";
+const DIMENSION: &str = "minecraft:overworld";
+
+struct Gears {
+    /// Ticks seen by each counter since its last write.
+    ticks: Vec<([i32; 3], u32)>,
+}
+
+impl ServerMod for Gears {
+    fn init() -> Result<(Self, Registration), String> {
+        Ok((Self { ticks: Vec::new() }, Registration::new().on_blocks()))
+    }
+
+    fn block_placed(&mut self, _player: &Player, pos: BlockPos, state: &str) {
+        if state.starts_with(COUNTER) {
+            let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &0u32.to_le_bytes());
+        }
+    }
+
+    fn ticking_blocks(&self) -> Vec<String> {
+        vec![COUNTER.into()]
+    }
+
+    fn block_tick(&mut self, dimension: &str, pos: Pos, _state: &str) {
+        let at = [pos.x, pos.y, pos.z];
+        let seen = match self.ticks.iter_mut().find(|(p, _)| *p == at) {
+            Some((_, n)) => n,
+            None => {
+                self.ticks.push((at, 0));
+                &mut self.ticks.last_mut().expect("just pushed").1
+            }
+        };
+        *seen += 1;
+        if *seen < 20 {
+            return;
+        }
+        *seen = 0;
+        let seconds = block_entities::get(dimension, pos.x, pos.y, pos.z)
+            .and_then(|d| <[u8; 4]>::try_from(d).ok())
+            .map_or(0, u32::from_le_bytes);
+        let _ = block_entities::set(dimension, pos.x, pos.y, pos.z, &(seconds + 1).to_le_bytes());
+    }
+
+    fn block_used(&mut self, player: &str, dimension: &str, pos: Pos, state: &str) -> bool {
+        if !state.starts_with(COUNTER) {
+            return false;
+        }
+        let seconds = block_entities::get(dimension, pos.x, pos.y, pos.z)
+            .and_then(|d| <[u8; 4]>::try_from(d).ok())
+            .map_or(0, u32::from_le_bytes);
+        players::tell(player, &format!("This counter has run for {seconds} s"));
+        true
+    }
+}
+
+export_server_mod!(Gears);

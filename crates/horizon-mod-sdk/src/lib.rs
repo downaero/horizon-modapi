@@ -184,9 +184,9 @@ macro_rules! export_mod {
 pub mod server {
     wit_bindgen::generate!({
         path: "wit",
-        world: "horizon-server-mod",
+        world: "horizon-block-mod",
         pub_export_macro: true,
-        export_macro_name: "__export_horizon_server_mod",
+        export_macro_name: "__export_horizon_block_mod",
         default_bindings_module: "horizon_mod_sdk::server",
         with: {
             "horizon:mods/log@0.1.0": crate::log,
@@ -194,10 +194,14 @@ pub mod server {
         },
     });
 
+    pub use exports::horizon::mods::block_events::{Guest as __BlockGuest, Pos};
     pub use exports::horizon::mods::server_events::{
         Argument, ArgumentKind, ArgumentValue, BlockPos, Guest as __Guest, Registration,
         ServerCommand,
     };
+    /// Capability `block-entities`: bytes kept at the positions of the
+    /// mod's own blocks.
+    pub use horizon::mods::block_entities;
     pub use horizon::mods::players::{self, GameMode, Player};
     pub use horizon::mods::world::{self, BlockChange};
 
@@ -228,6 +232,19 @@ pub mod server {
         /// When [`Registration::blocks`] is set: `state` is what was there.
         fn block_broken(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
         fn block_placed(&mut self, _player: &Player, _pos: BlockPos, _state: &str) {}
+        /// The blocks (`mymod:gear`, no properties) whose loaded instances
+        /// the server ticks with [`ServerMod::block_tick`]; asked once after
+        /// `init`. Only the mod's own namespaces count.
+        fn ticking_blocks(&self) -> Vec<String> {
+            Vec::new()
+        }
+        /// An instance of a ticking block, each server tick.
+        fn block_tick(&mut self, _dimension: &str, _pos: Pos, _state: &str) {}
+        /// A player (by id) used a block of the mod's with an empty hand;
+        /// true when handled.
+        fn block_used(&mut self, _player: &str, _dimension: &str, _pos: Pos, _state: &str) -> bool {
+            false
+        }
     }
 
     impl Registration {
@@ -438,8 +455,32 @@ macro_rules! export_server_mod {
                     with(|m| m.block_placed(&player, pos, &state))
                 }
             }
+            impl $crate::server::__BlockGuest for Export {
+                fn ticking_blocks() -> Vec<String> {
+                    let mut out = Vec::new();
+                    STATE.with(|s| {
+                        if let Some(m) = s.borrow().as_ref() {
+                            out = m.ticking_blocks()
+                        }
+                    });
+                    out
+                }
+                fn block_tick(dimension: String, pos: $crate::server::Pos, state: String) {
+                    with(|m| m.block_tick(&dimension, pos, &state))
+                }
+                fn block_used(
+                    player: String,
+                    dimension: String,
+                    pos: $crate::server::Pos,
+                    state: String,
+                ) -> bool {
+                    let mut out = false;
+                    with(|m| out = m.block_used(&player, &dimension, pos, &state));
+                    out
+                }
+            }
             #[cfg(target_arch = "wasm32")]
-            $crate::server::__export_horizon_server_mod!(Export);
+            $crate::server::__export_horizon_block_mod!(Export);
             #[cfg(not(target_arch = "wasm32"))]
             let _ = <Export as $crate::server::__Guest>::init;
         };

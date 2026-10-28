@@ -783,6 +783,44 @@ interface server-events {
     block-placed: func(player: player, pos: block-pos, state: string);
 }
 
+/// Capability `block-entities`, server mods only (manifest `api = "0.3"`,
+/// experimental): bytes a mod keeps at block positions, for blocks it owns
+/// (a gear's speed, a machine's progress). The game saves them with the
+/// world's chunks and hands them back after a restart.
+interface block-entities {
+    /// The bytes last stored at a position, none when there are none.
+    get: func(dimension: string, x: s32, y: s32, z: s32) -> option<list<u8>>;
+    /// Stores bytes at a position (at most 64 KiB; 65,536 positions per
+    /// mod), replacing any there. The game forgets them when the block is
+    /// broken or replaced by something that is not one of the mod's.
+    set: func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>;
+    /// Forgets the bytes at a position.
+    remove: func(dimension: string, x: s32, y: s32, z: s32);
+}
+
+/// What the server calls in a mod's blocks, beside `server-events` (a mod
+/// built without this export hears nothing of them).
+interface block-events {
+    record pos {
+        x: s32,
+        y: s32,
+        z: s32,
+    }
+    /// The blocks (`mymod:gear`, ids without properties) whose instances
+    /// the game ticks, asked once after `init`.
+    ticking-blocks: func() -> list<string>;
+    /// A position where the mod keeps data (`block-entities.set`) and a
+    /// ticking block stands in a loaded chunk, once per server tick (at
+    /// most 4096 positions per tick, the rest next tick), in `dimension`;
+    /// `state` is the block's state as `minecraft:oak_log[axis=y]`. Data
+    /// under any other block is forgotten.
+    block-tick: func(dimension: string, pos: pos, state: string);
+    /// The player with this id (`players.online`) used (right-clicked) a
+    /// block of the mod's with an empty hand, in `dimension`; true when the
+    /// mod handled it (the game then does nothing else).
+    block-used: func(player: string, dimension: string, pos: pos, state: string) -> bool;
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -803,6 +841,21 @@ world horizon-server-mod {
     import players;
     import %world;
     export server-events;
+}
+
+/// A server mod with blocks (capability `block-entities`): the SDK builds
+/// every server mod against this world. Mods built for `horizon-server-mod`
+/// alone (no `block-events` export) still load and hear nothing of blocks.
+world horizon-block-mod {
+    include horizon-server-mod;
+    import block-entities;
+    export block-events;
+}
+
+/// The game's side of `horizon-block-mod` beyond `horizon-server-mod`.
+world block-host {
+    import block-entities;
+    export block-events;
 }
 
 /// A mod with widgets (capability `ui`): the SDK builds every mod against

@@ -88,6 +88,7 @@ folder, loads no runtime and plays exactly like vanilla 26.3.
 | `hud` | `hud` | `set-panel(corner, lines)`, `clear()`: up to 16 lines of 256 characters |
 | `storage` | `storage` | `get(key)`, `set(key, value)`, `delete(key)`: a per-mod folder of up to 64 files, 4 MiB total, at most 1 MiB written per call |
 | `command` | `command` | `run(line)`: a vanilla command run as the player, with the player's permissions, after the hook returns (8 per call); mods' own commands are not run. `run-quiet(lines)`: up to 256 a call, the same rights, nothing in the chat (single player and Horizon's servers run them 64 a tick and log one line a batch; elsewhere they go as chat commands and their feedback shows) |
+| `block-entities` | `block-entities` | server mods: `get`, `set`, `remove` of bytes at the positions of the mod's own blocks, and the `block-tick` and `block-used` hooks ([below](#server-mods-api-03-experimental)). **Experimental:** `experimental = ["block-entities"]` |
 | `ui` | `ui` | `open-screen`, `close-screen`, `set-settings`: a screen the mod owns and a page in Options > Mods, of text, button, item and list widgets the game lays out and draws with its own menus' code; `browser.set-items`, `browser.poll`: a recipe viewer's panel of items right of the inventory and container screens (not the creative one), which the game pages and draws with its own slots and search box, and the mod hears its clicks, its searches and the mod's own keys (`input.register-key`) pressed over any item on the screen; `browser.set-recipes`: recipes in the panel's place (crafting grids, cooking, stonecutting, smithing and brewing layouts, their slots cycling through their stacks, a note and an action button each), paged by the game, with clicks on their slots, action buttons, page turns and a back button. **Experimental:** the manifest needs `experimental = ["ui"]` |
 | `render` | `render` | `set-hud(shapes)`: up to 1024 fills, four-cornered shapes, GUI sprites, items and text, kept on the HUD (over the hotbar, under chat and screens, hidden with F1) until replaced; `set-corner(corner, w, h, shapes)`: a box the game places in a corner, stacked with its overlays and other panels, as `hud`'s panels are; `text-width(text)`; `frame-stats()`: the game's FPS, min and 1% low; `gui-size()`; `shake(strength, seconds)`: the view turns, the player doesn't, scaled by Distortion Effects; `set-zoom(zoom)`: the field of view divided by up to 10, eased or at once, with slower turning, while playing and not through a spyglass (the strongest of several mods' zooms counts); `set-minimap(minimap)`: a map of the world around the player in a corner, as a map item colours it (the floor underground and under roofs), square or round, turning with the player or north up, with the player's arrow; the game keeps its tiles within its own frame budget (one map at a time, the first loaded mod's); `set-far-terrain(far-terrain)`: the world past the render distance as distant terrain, out to 64 to 1024 chunks, built by the game's own workers (the player's LOD Distance, when on, wins; the first loaded mod's). The game's own HUD renderer draws them: a mod never supplies shader code. **Experimental:** `experimental = ["render"]` |
 | `input` | `input` | `claim-items(ids)`: the use button on those items is the mod's (`use-start`, `use-stop` with the ticks held; the game doesn't place, eat or swing); `register-key(name, label, key)`: up to 16 keys (`key.keyboard.r`), heard while playing as `key-down` / `key-up` (the game's own mapping on that key still runs; a screen opening lets held keys up), mouse buttons as `key.mouse.4`. The player rebinds them on the mod's page in Options > Mods, where the game lists them first as Key Binds rows (click, then press a key or mouse button; Esc binds none), even for a mod without `ui`; the choice is kept in `horizon-mods.txt` (`key.<mod>.<name>:key.keyboard.z`) and wins over `register-key`'s default; `claim-wheel(on)`: the wheel's steps become `wheel` events and the hotbar doesn't move (the one input a mod takes from the game; a mod's keys never do); `held()`; `mapping(name)`: a movement or click mapping's key label and whether it is held; `clicks-per-second()`; `poll()` returns the events, at most 256 kept. **Experimental:** `experimental = ["input"]` |
@@ -533,6 +534,33 @@ that code. Changes for a dimension whose level isn't ticking wait for it
 (in-frame single player ticks only the player's), up to 65,536 blocks; a
 change in a chunk that isn't loaded when it is made is skipped, as `/setblock`
 refuses one.
+
+**Capability `block-entities` (API level 8, experimental).** The base for
+ports of mods with machines, such as Create: bytes a mod keeps at the
+positions of its own blocks, and a tick and a use hook for them.
+`block-entities.get/set/remove(dimension, x, y, z, ...)` hold up to 64 KiB at
+a position and 65,536 positions per mod; `set` is refused where the block
+standing there is not in one of the mod's namespaces (its id and the manifest's
+`namespaces`). The mod's `block-events` export (the SDK exports it for every
+server mod, with `ServerMod::ticking_blocks`, `block_tick` and `block_used`)
+lists the blocks it wants ticked, once after `init`; the game then calls
+`block-tick(dimension, pos, state)` every server tick for each position
+where the mod keeps data, if its chunk is loaded and a ticking block still
+stands there (otherwise the data is dropped), at most 4096 positions per mod
+per tick. A server mod built before this export still loads and hears
+nothing of blocks. A server mod may also carry its own blocks: capability
+`registries` is allowed beside `api = "0.3"`, with `data/<id>/horizon/block/`
+as for content mods; the example is
+[`gears`](../crates/horizon-mod-sdk/examples/gears/src/lib.rs).
+
+The game keeps the bytes in the world's folder, in
+`horizon-mod-data/<mod id>.blocks` (written every 10 seconds when changed
+and when the world saves), outside the vanilla save, so no chunk format
+changes. They are handed back to the mod when a world opens or the set of
+running mods changes. `block-used` runs when a player (the window's own or a
+LAN guest) right-clicks a block of a mod's namespace with an empty-handed
+use, not sneaking with full hands: the mod returns true to take the click,
+and the game then does nothing else with it. Vanilla blocks never reach it.
 
 **Where they run.** The game that simulates the world starts the server mods
 that are on, and only that one:

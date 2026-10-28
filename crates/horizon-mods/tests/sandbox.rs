@@ -255,8 +255,10 @@ experimental = ["ui", "render", "input", "recipes"]
         needed(imports(&wasm).unwrap().iter().map(String::as_str)).0
     };
     assert_eq!(level("coords_hud.hmod"), 0);
-    // The UI guest draws far terrain (`render.set-far-terrain`).
-    assert_eq!(level("horizon_mods_test_ui_guest.hmod"), LEVEL);
+    // The UI guest draws far terrain (`render.set-far-terrain`, level 7);
+    // level 8 is the server mods' `block-entities`.
+    assert_eq!(level("horizon_mods_test_ui_guest.hmod"), 7);
+    assert!(LEVEL >= 8);
 }
 
 #[test]

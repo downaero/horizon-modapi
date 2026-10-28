@@ -19,6 +19,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
 | `players` | [`players`](#players) | see who is on the server and message them |
 | `world` | [`world`](#world) | read and change the world's blocks |
 | `recipes` | [`recipes`](#recipes) | read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items |
+| `block-entities` | [`block-entities`](#block-entities) | keep data at the positions of its own blocks and tick them |
 
 ## World `horizon-mod`
 
@@ -33,6 +34,20 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 - Imports (what the game offers): `log`, `storage`, `players`, `world`
 - Exports (what the mod provides): `server-events`
+
+## World `horizon-block-mod`
+
+A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
+
+- Imports (what the game offers): `block-entities`, `log`, `storage`, `players`, `world`
+- Exports (what the mod provides): `block-events`, `server-events`
+
+## World `block-host`
+
+The game's side of `horizon-block-mod` beyond `horizon-server-mod`.
+
+- Imports (what the game offers): `block-entities`
+- Exports (what the mod provides): `block-events`
 
 ## World `horizon-ui-mod`
 
@@ -768,3 +783,35 @@ An argument's value, parsed as its kind says.
 | `command` | `func(player: player, name: string, args: string, values: list<tuple<string, argument-value>>) -> result<option<string>, string>` | `/name args` typed by `player`: ok(some(text)) is their feedback, err(text) their error in red. `values` holds each argument given, by name, in order (an optional one left out isn't there); a line that doesn't parse never reaches the mod: the player gets vanilla's error. |
 | `block-broken` | `func(player: player, pos: block-pos, state: string)` | A player broke the block at `pos` in their dimension: `state` is what was there, as `minecraft:oak_log[axis=y]`. |
 | `block-placed` | `func(player: player, pos: block-pos, state: string)` | A player placed `state` at `pos` in their dimension. |
+
+## `block-entities`
+
+Access: capability `block-entities`.
+
+Capability `block-entities`, server mods only (manifest `api = "0.3"`, experimental): bytes a mod keeps at block positions, for blocks it owns (a gear's speed, a machine's progress). The game saves them with the world's chunks and hands them back after a restart.
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `get` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<u8>>` | The bytes last stored at a position, none when there are none. |
+| `set` | `func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>` | Stores bytes at a position (at most 64 KiB; 65,536 positions per mod), replacing any there. The game forgets them when the block is broken or replaced by something that is not one of the mod's. |
+| `remove` | `func(dimension: string, x: s32, y: s32, z: s32)` | Forgets the bytes at a position. |
+
+## `block-events`
+
+Access: exported by the mod: the game calls it.
+
+What the server calls in a mod's blocks, beside `server-events` (a mod built without this export hears nothing of them).
+
+### record `pos`
+
+| Field | Type | |
+| --- | --- | --- |
+| `x` | `s32` |  |
+| `y` | `s32` |  |
+| `z` | `s32` |  |
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `ticking-blocks` | `func() -> list<string>` | The blocks (`mymod:gear`, ids without properties) whose instances the game ticks, asked once after `init`. |
+| `block-tick` | `func(dimension: string, pos: pos, state: string)` | A position where the mod keeps data (`block-entities.set`) and a ticking block stands in a loaded chunk, once per server tick (at most 4096 positions per tick, the rest next tick), in `dimension`; `state` is the block's state as `minecraft:oak_log[axis=y]`. Data under any other block is forgotten. |
+| `block-used` | `func(player: string, dimension: string, pos: pos, state: string) -> bool` | The player with this id (`players.online`) used (right-clicked) a block of the mod's with an empty hand, in `dimension`; true when the mod handled it (the game then does nothing else). |
