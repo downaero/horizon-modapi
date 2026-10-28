@@ -689,6 +689,24 @@ interface %world {
     /// in order after this call returns, before that dimension's next tick;
     /// one in a chunk not loaded then is skipped. At most 4096 per call.
     set-blocks: func(dimension: string, blocks: list<block-change>) -> result<_, string>;
+
+    /// One block of a scanned region, its state an index into the palette.
+    record scanned-block {
+        x: s32,
+        y: s32,
+        z: s32,
+        state: u32,
+    }
+    /// The solid part of a region: every non-air block in loaded chunks, and
+    /// the states they use once each.
+    record region {
+        palette: list<string>,
+        blocks: list<scanned-block>,
+    }
+    /// Reads every block from (min-x, min-y, min-z) to (max-x, max-y, max-z),
+    /// both ends included, as of this call; air and blocks in chunks not
+    /// loaded are left out. At most 32768 positions in the box.
+    scan: func(dimension: string, min-x: s32, min-y: s32, min-z: s32, max-x: s32, max-y: s32, max-z: s32) -> result<region, string>;
 }
 
 /// What the server calls in a server mod (manifest `api = "0.3"`,

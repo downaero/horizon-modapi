@@ -122,7 +122,7 @@ pub use server_bindings::{
         Argument, ArgumentKind, ArgumentValue, BlockPos, ServerCommand,
     },
     horizon::mods::players::{GameMode, Player as ServerPlayer},
-    horizon::mods::world::BlockChange,
+    horizon::mods::world::{BlockChange, Region, ScannedBlock},
 };
 type ClientEvents = bindings::exports::horizon::mods::events::Guest;
 type ServerEvents = server_bindings::exports::horizon::mods::server_events::Guest;
@@ -178,6 +178,8 @@ const FUEL_FRAME: u64 = 10_000_000;
 const FUEL_EVENT: u64 = 100_000_000;
 /// Blocks a mod may set per `world.set-blocks` call.
 pub const BLOCKS_PER_CALL: usize = 4096;
+/// Positions in the box of one `world.scan` call.
+const SCAN_POSITIONS: i64 = 32768;
 /// Bytes a mod may keep at one block position (`block-entities.set`), and
 /// positions it may keep them at.
 pub const BLOCK_DATA_BYTES: usize = 64 << 10;
@@ -2064,6 +2066,64 @@ impl mod_world::Host for State {
     fn get_biome(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<String> {
         let view = self.world.lock().ok()?;
         view.as_ref()?.biome(&dimension, x, y, z)
+    }
+    fn scan(
+        &mut self,
+        dimension: String,
+        min_x: i32,
+        min_y: i32,
+        min_z: i32,
+        max_x: i32,
+        max_y: i32,
+        max_z: i32,
+    ) -> Result<Region, String> {
+        let side = |lo: i32, hi: i32| (i64::from(hi) - i64::from(lo) + 1).max(0);
+        let volume = side(min_x, max_x) * side(min_y, max_y) * side(min_z, max_z);
+        if volume == 0 {
+            return Err("the box is empty: a maximum below a minimum".into());
+        }
+        if volume > SCAN_POSITIONS {
+            return Err(format!("{volume} positions: at most {SCAN_POSITIONS}"));
+        }
+        let mut palette: Vec<String> = Vec::new();
+        let mut blocks = Vec::new();
+        let guard = self.world.lock().map_err(|_| "no world".to_string())?;
+        let Some(view) = guard.as_ref() else {
+            return Ok(Region { palette, blocks });
+        };
+        if !view.has_dimension(&dimension) {
+            return Err(format!("no dimension {dimension}"));
+        }
+        for x in min_x..=max_x {
+            for y in min_y..=max_y {
+                for z in min_z..=max_z {
+                    let Some(state) = view.block(&dimension, x, y, z) else {
+                        continue;
+                    };
+                    let id = state.split('[').next().unwrap_or(&state);
+                    if matches!(
+                        id,
+                        "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"
+                    ) {
+                        continue;
+                    }
+                    let state = match palette.iter().position(|p| *p == state) {
+                        Some(i) => i,
+                        None => {
+                            palette.push(state);
+                            palette.len() - 1
+                        }
+                    };
+                    blocks.push(ScannedBlock {
+                        x,
+                        y,
+                        z,
+                        state: state as u32,
+                    });
+                }
+            }
+        }
+        Ok(Region { palette, blocks })
     }
     fn set_blocks(&mut self, dimension: String, blocks: Vec<BlockChange>) -> Result<(), String> {
         if blocks.len() > BLOCKS_PER_CALL {

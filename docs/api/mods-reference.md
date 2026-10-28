@@ -751,11 +751,32 @@ Capability `world`, server mods only (manifest `api = "0.3"`, experimental): the
 | `z` | `s32` |  |
 | `state` | `string` | `minecraft:oak_log[axis=y]`; properties left out take the block's defaults, `minecraft:stone` alone is the default state. |
 
+### record `scanned-block`
+
+One block of a scanned region, its state an index into the palette.
+
+| Field | Type | |
+| --- | --- | --- |
+| `x` | `s32` |  |
+| `y` | `s32` |  |
+| `z` | `s32` |  |
+| `state` | `u32` |  |
+
+### record `region`
+
+The solid part of a region: every non-air block in loaded chunks, and the states they use once each.
+
+| Field | Type | |
+| --- | --- | --- |
+| `palette` | `list<string>` |  |
+| `blocks` | `list<scanned-block>` |  |
+
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `get-block` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The block state at a position in a dimension (`minecraft:overworld`, ...), as `minecraft:oak_log[axis=y]`, as of this call: none where the server has no chunk loaded there. |
 | `get-biome` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The biome at a position (`minecraft:plains`, ...), as the server stores it (one per 4 x 4 x 4 cell): none where no chunk is loaded. |
 | `set-blocks` | `func(dimension: string, blocks: list<block-change>) -> result<_, string>` | Sets blocks as `/setblock` does: the old block entity removed, neighbours and shapes updated, light, and every player told. Every state is checked now (an error queues nothing); the changes are made in order after this call returns, before that dimension's next tick; one in a chunk not loaded then is skipped. At most 4096 per call. |
+| `scan` | `func(dimension: string, min-x: s32, min-y: s32, min-z: s32, max-x: s32, max-y: s32, max-z: s32) -> result<region, string>` | Reads every block from (min-x, min-y, min-z) to (max-x, max-y, max-z), both ends included, as of this call; air and blocks in chunks not loaded are left out. At most 32768 positions in the box. |
 
 ## `server-events`
 
