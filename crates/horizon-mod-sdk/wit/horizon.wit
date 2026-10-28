@@ -693,14 +693,23 @@ interface %world {
     /// in order after this call returns, before that dimension's next tick;
     /// one in a chunk not loaded then is skipped. At most 4096 per call.
     set-blocks: func(dimension: string, blocks: list<block-change>) -> result<_, string>;
-    /// Breaks a block as a player with `tool` (an item id, enchantments
-    /// left out; none for a bare hand) would, after the call: its loot
-    /// table's drops, its break particles and sound, and air in its place.
-    /// The drops go into the inventory at `into` (as `transfer` puts items
-    /// in), what does not fit and all of them without one dropping where the
-    /// block stood. A drill or a saw. At most 256 a call; unbreakable blocks
-    /// (bedrock) are refused.
-    break-block: func(dimension: string, x: s32, y: s32, z: s32, tool: option<string>, into: option<tuple<s32, s32, s32>>) -> result<_, string>;
+    /// Uses an item on a block as a player would, after the call (a
+    /// deployer): the block's own answer to it first (a lever pulled, a door
+    /// opened, a note block tuned), and when it has none and the item is a
+    /// block's, that block placed against `face` (0 down, 1 up, 2 north,
+    /// 3 south, 4 west, 5 east) where there is air. Items' own uses (bone
+    /// meal, flint and steel, buckets) are not run yet. At most 256 a call.
+    use-item: func(dimension: string, x: s32, y: s32, z: s32, face: u8, item: string) -> result<_, string>;
+    /// Breaks a block as a player holding `tool` (an item id; none for a
+    /// bare hand) enchanted with `enchantments` (`minecraft:fortune`, 3 /
+    /// `minecraft:silk_touch`, 1) would, after the call: its break particles
+    /// and sound, a container's contents spilled, air in its place, and its
+    /// loot table's drops when the tool is right for it (a pickaxe for
+    /// stone). The drops go into the inventory at `into` (as `transfer` puts
+    /// items in), what does not fit and all of them without one dropping
+    /// where the block stood. A drill or a saw. At most 256 a call;
+    /// unbreakable blocks (bedrock) are left.
+    break-block: func(dimension: string, x: s32, y: s32, z: s32, tool: option<string>, enchantments: list<tuple<string, u32>>, into: option<tuple<s32, s32, s32>>) -> result<_, string>;
 
     /// One block of a scanned region, its state an index into the palette.
     record scanned-block {
@@ -1170,6 +1179,24 @@ interface item-events {
     item-used: func(player: string, item: string, sneaking: bool, target: option<block-target>) -> bool;
 }
 
+/// Messages between server mods: one mod's API for others (an addon asking
+/// a tech mod for a machine's speed, a mod telling another its block
+/// changed). Every server mod has it, with no capability.
+interface peers {
+    /// Sends `data` (at most 64 KiB) to the running server mod with this
+    /// id; it hears it as `peer-events.message` at the start of the next
+    /// server tick. At most 64 messages a call.
+    send: func(mod: string, data: list<u8>) -> result<_, string>;
+    /// Whether a server mod with this id runs now.
+    running: func(mod: string) -> bool;
+}
+
+/// What the server calls in a server mod a peer wrote to.
+interface peer-events {
+    /// A message from the server mod `from` (its id).
+    message: func(%from: string, data: list<u8>);
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -1211,6 +1238,14 @@ world horizon-block-mod {
     import attachments;
     import transfer;
     export item-events;
+    import peers;
+    export peer-events;
+}
+
+/// The game's side of `peers` and `peer-events`.
+world peers-host {
+    import peers;
+    export peer-events;
 }
 
 /// The game's side of `item-events`.

@@ -700,12 +700,27 @@ air, before anything vanilla does with it. It goes to the mods whose namespace t
 block is in, so a mod's wrench works on any block and a mod's machine hears any item used on it;
 true takes the click. The gears example shows a gears block's state when a stick is used on it.
 
-`world.break-block(dimension, x, y, z, tool, into)` (API level 29) breaks a block as a player with
-`tool` would, after the call: its loot table's drops, its break particles and sound, air in its
-place. The drops go into the inventory at `into`, and what does not fit, or all without one, drops
-where the block stood. Bedrock and other unbreakable blocks are left. The gears example's
-`gears:drill` mines the block under it once a second into the inventory above it. A tool's
-enchantments are not taken into account yet, and a container broken this way loses what it held.
+`world.break-block(dimension, x, y, z, tool, enchantments, into)` (API level 29) breaks a block as
+a player holding `tool` with those enchantments (fortune, silk touch) would, after the call: its
+break particles and sound, a container's contents spilled, air in its place, and its loot table's
+drops when the tool is right for it. The drops go into the inventory at `into`, and what does not
+fit, or all without one, drops where the block stood. Bedrock and other unbreakable blocks are
+left. The gears example's `gears:drill` mines the block under it once a second into the inventory
+above it.
+
+`world.use-item(dimension, x, y, z, face, item)` (API level 31) uses an item on a block as a player
+facing that face would, after the call, as a deployer does: the block's own answer to the item (a
+lever pulled, a door opened, a note block tuned), and when it has none, a block item's block placed
+against the face where there is air. Items' own uses (bone meal, flint and steel, buckets) are not
+run yet. The gears example's `gears:deployer` uses cobblestone on the block above it when used.
+
+### Messages between mods
+
+Every server mod, with no capability, can write to another running server mod (API level 30):
+`peers.send(mod, data)` (at most 64 KiB, 64 a call) reaches its `ServerMod::peer_message(from,
+data)` at the start of the next server tick, and `peers.running(mod)` says whether it runs. That is
+how one mod offers others an API: a request, then an answer back the next tick. The gears deployer
+writes to itself and says so in chat.
 
 ### Capability `transfer`: items, fluids and energy between blocks
 

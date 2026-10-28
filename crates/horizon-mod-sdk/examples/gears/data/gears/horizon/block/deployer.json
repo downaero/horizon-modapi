@@ -1,0 +1,3 @@
+{ "template": "minecraft:smooth_stone",
+  "properties": { "hardness": 2.0, "sounds": "minecraft:stone" },
+  "item": true }

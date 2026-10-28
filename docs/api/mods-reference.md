@@ -46,8 +46,15 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `log`, `storage`, `players`, `world`
-- Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `item-events`, `server-events`
+- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `log`, `storage`, `players`, `world`
+- Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `item-events`, `peer-events`, `server-events`
+
+## World `peers-host`
+
+The game's side of `peers` and `peer-events`.
+
+- Imports (what the game offers): `peers`
+- Exports (what the mod provides): `peer-events`
 
 ## World `item-host`
 
@@ -813,7 +820,8 @@ The solid part of a region: every non-air block in loaded chunks, and the states
 | `get-block` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The block state at a position in a dimension (`minecraft:overworld`, ...), as `minecraft:oak_log[axis=y]`, as of this call: none where the server has no chunk loaded there. |
 | `get-biome` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The biome at a position (`minecraft:plains`, ...), as the server stores it (one per 4 x 4 x 4 cell): none where no chunk is loaded. |
 | `set-blocks` | `func(dimension: string, blocks: list<block-change>) -> result<_, string>` | Sets blocks as `/setblock` does: the old block entity removed, neighbours and shapes updated, light, and every player told. Every state is checked now (an error queues nothing); the changes are made in order after this call returns, before that dimension's next tick; one in a chunk not loaded then is skipped. At most 4096 per call. |
-| `break-block` | `func(dimension: string, x: s32, y: s32, z: s32, tool: option<string>, into: option<tuple<s32, s32, s32>>) -> result<_, string>` | Breaks a block as a player with `tool` (an item id, enchantments left out; none for a bare hand) would, after the call: its loot table's drops, its break particles and sound, and air in its place. The drops go into the inventory at `into` (as `transfer` puts items in), what does not fit and all of them without one dropping where the block stood. A drill or a saw. At most 256 a call; unbreakable blocks (bedrock) are refused. |
+| `use-item` | `func(dimension: string, x: s32, y: s32, z: s32, face: u8, item: string) -> result<_, string>` | Uses an item on a block as a player would, after the call (a deployer): the block's own answer to it first (a lever pulled, a door opened, a note block tuned), and when it has none and the item is a block's, that block placed against `face` (0 down, 1 up, 2 north, 3 south, 4 west, 5 east) where there is air. Items' own uses (bone meal, flint and steel, buckets) are not run yet. At most 256 a call. |
+| `break-block` | `func(dimension: string, x: s32, y: s32, z: s32, tool: option<string>, enchantments: list<tuple<string, u32>>, into: option<tuple<s32, s32, s32>>) -> result<_, string>` | Breaks a block as a player holding `tool` (an item id; none for a bare hand) enchanted with `enchantments` (`minecraft:fortune`, 3 / `minecraft:silk_touch`, 1) would, after the call: its break particles and sound, a container's contents spilled, air in its place, and its loot table's drops when the tool is right for it (a pickaxe for stone). The drops go into the inventory at `into` (as `transfer` puts items in), what does not fit and all of them without one dropping where the block stood. A drill or a saw. At most 256 a call; unbreakable blocks (bedrock) are left. |
 | `scan` | `func(dimension: string, min-x: s32, min-y: s32, min-z: s32, max-x: s32, max-y: s32, max-z: s32) -> result<region, string>` | Reads every block from (min-x, min-y, min-z) to (max-x, max-y, max-z), both ends included, as of this call; air and blocks in chunks not loaded are left out. At most 32768 positions in the box. |
 
 ## `server-events`
@@ -1183,3 +1191,24 @@ The block a player clicked with the item.
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `item-used` | `func(player: string, item: string, sneaking: bool, target: option<block-target>) -> bool` | A player right-clicked with `item` in the main hand, on a block or in the air, sneaking or not. Offered first to the mods whose namespace the item or the block is in, before anything vanilla does with it: true takes the click (a wrench turning a block, a filter set on a machine), and nothing else happens. |
+
+## `peers`
+
+Access: not granted by any capability.
+
+Messages between server mods: one mod's API for others (an addon asking a tech mod for a machine's speed, a mod telling another its block changed). Every server mod has it, with no capability.
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `send` | `func(mod: string, data: list<u8>) -> result<_, string>` | Sends `data` (at most 64 KiB) to the running server mod with this id; it hears it as `peer-events.message` at the start of the next server tick. At most 64 messages a call. |
+| `running` | `func(mod: string) -> bool` | Whether a server mod with this id runs now. |
+
+## `peer-events`
+
+Access: exported by the mod: the game calls it.
+
+What the server calls in a server mod a peer wrote to.
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `message` | `func(from: string, data: list<u8>)` | A message from the server mod `from` (its id). |

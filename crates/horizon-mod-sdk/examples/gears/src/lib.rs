@@ -7,7 +7,8 @@ use horizon_mod_sdk::{
     export_server_mod,
     server::{
         BlockPos, BlockTarget, Player, Pos, Registration, ServerMod, attachments, block_entities,
-        containers, effects, entities, files, items, net, players, redstone, transfer, world,
+        containers, effects, entities, files, items, net, peers, players, redstone, transfer,
+        world,
     },
 };
 
@@ -18,6 +19,7 @@ const GAUGE: &str = "gears:gauge";
 const LIFT: &str = "gears:lift";
 const MILL: &str = "gears:mill";
 const DRILL: &str = "gears:drill";
+const DEPLOYER: &str = "gears:deployer";
 /// Ticks a lift takes to raise its load three blocks.
 const LIFT_TICKS: u32 = 60;
 const DIMENSION: &str = "minecraft:overworld";
@@ -127,6 +129,14 @@ impl ServerMod for Gears {
         }
     }
 
+    /// A message from a server mod (here, from itself).
+    fn peer_message(&mut self, from: &str, data: &[u8]) {
+        players::broadcast(&format!(
+            "heard {} from {from}",
+            String::from_utf8_lossy(data)
+        ));
+    }
+
     /// A stick used on one of the mod's blocks shows its state and takes
     /// the click (`item_used`).
     fn item_used(
@@ -188,6 +198,7 @@ impl ServerMod for Gears {
                     pos.y - 1,
                     pos.z,
                     Some("minecraft:iron_pickaxe"),
+                    &[],
                     Some((pos.x, pos.y + 1, pos.z)),
                 );
             }
@@ -349,6 +360,21 @@ impl ServerMod for Gears {
     }
 
     fn block_used(&mut self, player: &str, dimension: &str, pos: Pos, state: &str) -> bool {
+        if state.starts_with(DEPLOYER) {
+            // Uses cobblestone on the block above as a player would
+            // (`world.use-item`): a lever there flips, else cobblestone goes
+            // on top. It tells itself through `peers`, heard next tick.
+            let _ = world::use_item(
+                dimension,
+                pos.x,
+                pos.y + 1,
+                pos.z,
+                1,
+                "minecraft:cobblestone",
+            );
+            let _ = peers::send("gears", b"deployed");
+            return true;
+        }
         if state.starts_with(MILL) {
             // The wheel above (one block across x, 3 x 3 in y and z) turns,
             // or is set down again as blocks.

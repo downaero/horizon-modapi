@@ -77,10 +77,23 @@ pub(super) struct ModsState {
     /// Item entities server mods took, by id, for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) takes: Vec<u32>,
+    /// Messages between server mods (from, to, data), for the next tick.
+    #[cfg(feature = "mods")]
+    pub(super) peer_messages: Vec<(String, String, Vec<u8>)>,
+    /// Items server mods use on blocks (dimension, position, face, item).
+    #[cfg(feature = "mods")]
+    pub(super) item_uses: Vec<(String, [i32; 3], u8, String)>,
     /// Blocks server mods break (dimension, position, tool, inventory the
     /// drops go into), for the tick's end.
     #[cfg(feature = "mods")]
-    pub(super) breaks: Vec<(String, [i32; 3], Option<String>, Option<[i32; 3]>)>,
+    #[allow(clippy::type_complexity)]
+    pub(super) breaks: Vec<(
+        String,
+        [i32; 3],
+        Option<String>,
+        Vec<(String, u32)>,
+        Option<[i32; 3]>,
+    )>,
     /// Server mods' block entities removed last tick, gone this one: their
     /// last move reaches the clients first.
     #[cfg(feature = "mods")]
@@ -773,6 +786,8 @@ impl Game<'_> {
                 | Output::Push { .. }
                 | Output::Signal { .. }
                 | Output::Break { .. }
+                | Output::Peer { .. }
+                | Output::UseItem { .. }
                 | Output::Effect { .. }
                 | Output::Container { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);

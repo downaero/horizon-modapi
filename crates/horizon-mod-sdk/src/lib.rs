@@ -210,6 +210,7 @@ pub mod server {
     pub use exports::horizon::mods::block_events::{Guest as __BlockGuest, Pos};
     pub use exports::horizon::mods::item_events::{BlockTarget, Guest as __ItemGuest};
     pub use exports::horizon::mods::neighbor_events::Guest as __NeighborGuest;
+    pub use exports::horizon::mods::peer_events::Guest as __PeerGuest;
     pub use exports::horizon::mods::server_events::{
         Argument, ArgumentKind, ArgumentValue, BlockPos, Guest as __Guest, Registration,
         ServerCommand,
@@ -232,6 +233,8 @@ pub mod server {
     pub use horizon::mods::items;
     /// Capability `net`: messages to and from the mod's client half.
     pub use horizon::mods::net;
+    /// Messages to other server mods.
+    pub use horizon::mods::peers;
     pub use horizon::mods::players::{self, GameMode, Player};
     /// Capability `redstone`: the signal reaching the mod's blocks.
     pub use horizon::mods::redstone;
@@ -272,6 +275,8 @@ pub mod server {
         fn ticking_blocks(&self) -> Vec<String> {
             Vec::new()
         }
+        /// A message from another server mod (`peers::send`), by its id.
+        fn peer_message(&mut self, _from: &str, _data: &[u8]) {}
         /// A player used `item` (on `target`, or in the air): true takes the
         /// click before anything vanilla does with it.
         fn item_used(
@@ -536,6 +541,11 @@ macro_rules! export_server_mod {
                     let mut out = false;
                     with(|m| out = m.block_used(&player, &dimension, pos, &state));
                     out
+                }
+            }
+            impl $crate::server::__PeerGuest for Export {
+                fn message(from: String, data: Vec<u8>) {
+                    with(|m| m.peer_message(&from, &data))
                 }
             }
             impl $crate::server::__ItemGuest for Export {

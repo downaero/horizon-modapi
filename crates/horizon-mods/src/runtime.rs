@@ -199,6 +199,16 @@ mod item_event_bindings {
     });
 }
 use item_event_bindings::ItemHost;
+mod peer_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "peers-host",
+    });
+}
+use peer_bindings::{PeersHost, horizon::mods::peers};
+/// Largest message between mods, and most a call sends.
+const PEER_BYTES: usize = 64 << 10;
+const PEER_PER_CALL: usize = 64;
 pub use item_event_bindings::exports::horizon::mods::item_events::BlockTarget;
 use net_bindings::{NetHost, horizon::mods::net};
 use server_net_bindings::ServerNetHost;
@@ -611,7 +621,22 @@ pub enum Output {
         dimension: String,
         pos: [i32; 3],
         tool: Option<String>,
+        enchantments: Vec<(String, u32)>,
         into: Option<[i32; 3]>,
+    },
+    /// `world.use-item`: an item used on a block as a player would.
+    UseItem {
+        mod_id: String,
+        dimension: String,
+        pos: [i32; 3],
+        face: u8,
+        item: String,
+    },
+    /// `peers.send`: a message from one server mod to another.
+    Peer {
+        from: String,
+        to: String,
+        data: Vec<u8>,
     },
     /// `items.take`: remove this item entity.
     Take { mod_id: String, id: u32 },
@@ -767,6 +792,8 @@ struct Running {
     neighbor: Option<NeighborHost>,
     /// A server mod's `item-events` export.
     item: Option<ItemHost>,
+    /// A server mod's `peer-events` export.
+    peer: Option<PeersHost>,
 }
 
 /// A running mod's exports and the hooks its `init` asked for.
@@ -871,6 +898,8 @@ struct State {
     data_dir: PathBuf,
     /// Capability `transfer`'s tanks and batteries, shared by every mod.
     storage: StorageSlot,
+    /// The ids of the running server mods, for `peers.running`.
+    peers: Arc<Mutex<Vec<String>>>,
     /// Capability-free `attachments`: (target and key, chunk position) to bytes.
     attachments: std::collections::HashMap<(String, [i32; 3]), Vec<u8>>,
     /// The mod's own `.hmod` or folder, for `files`.
@@ -926,6 +955,8 @@ pub struct Mods {
     world: WorldSlot,
     /// Capability `transfer`'s tanks and batteries, every mod's.
     storage: StorageSlot,
+    /// The ids of the running server mods, shared with every store.
+    peers: Arc<Mutex<Vec<String>>>,
     /// Moves on whenever a mod starts or stops: the game resends the server
     /// mods' commands to players when it changes.
     generation: u64,
@@ -1062,6 +1093,8 @@ impl Mods {
                 .map_err(|e| e.to_string())?;
             TransferHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
+            PeersHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
             EffectsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
@@ -1110,6 +1143,7 @@ impl Mods {
         let snapshot = self.snapshot.clone();
         let world = self.world.clone();
         let storage = self.storage.clone();
+        let peers = self.peers.clone();
         let (engine, linker) = self.engine()?;
         let component =
             Component::new(engine, wasm).map_err(|e| format!("not a component: {e}"))?;
@@ -1148,6 +1182,7 @@ impl Mods {
             package_path: path.to_owned(),
             attachments: Default::default(),
             storage,
+            peers,
             storage_budget: STORAGE_WRITE_BUDGET,
             limits: StoreLimitsBuilder::new()
                 .memory_size(MEMORY)
@@ -1182,6 +1217,11 @@ impl Mods {
         };
         let item = if server {
             ItemHost::new(&mut store, &instance).ok()
+        } else {
+            None
+        };
+        let peer = if server {
+            PeersHost::new(&mut store, &instance).ok()
         } else {
             None
         };
@@ -1259,6 +1299,7 @@ impl Mods {
             server_net,
             neighbor,
             item,
+            peer,
         }))
     }
 
@@ -1432,6 +1473,11 @@ impl Mods {
 
     /// A server tick.
     pub fn server_tick(&mut self, tick: u64) {
+        // The running server mods, for `peers.running`.
+        let ids = self.running_server_ids();
+        if let Ok(mut peers) = self.peers.lock() {
+            *peers = ids;
+        }
         self.each_server(FUEL_TICK, |h| h.tick, |m, s| m.call_tick(s, tick));
     }
     /// The blocks (ids without properties) running server mods ask the
@@ -1594,6 +1640,34 @@ impl Mods {
                 None => Ok(()),
             });
         }
+    }
+    /// A message from server mod `from` to server mod `to`: true when one by
+    /// that id runs and heard it.
+    pub fn peer_message(&mut self, to: &str, from: &str, data: &[u8]) -> bool {
+        let Some(i) = (0..self.entries.len()).find(|&i| {
+            self.entries[i]
+                .run
+                .as_ref()
+                .is_some_and(|r| r.peer.is_some() && r.store.data().id == to)
+        }) else {
+            return false;
+        };
+        self.call(i, FUEL_EVENT, |run| match &run.peer {
+            Some(h) => h
+                .horizon_mods_peer_events()
+                .call_message(&mut run.store, from, data),
+            None => Ok(()),
+        });
+        true
+    }
+    /// The ids of the server mods running now, for `peers.running`.
+    fn running_server_ids(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter_map(|e| e.run.as_ref())
+            .filter(|r| r.store.data().server)
+            .map(|r| r.store.data().id.clone())
+            .collect()
     }
     /// `player` used `item` on `target` (or in the air): true when a mod whose
     /// namespace the item or the block is in took the click.
@@ -2517,6 +2591,38 @@ impl mod_world::Host for State {
         }
         Ok(Region { palette, blocks })
     }
+    fn use_item(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        face: u8,
+        item: String,
+    ) -> Result<(), String> {
+        if face > 5 {
+            return Err(format!("face {face}: 0 to 5"));
+        }
+        if item.is_empty() || item.len() > 128 {
+            return Err("an item id of 1 to 128 characters".into());
+        }
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::UseItem { .. }))
+            .count();
+        if queued >= 256 {
+            return Err("at most 256 uses a call".into());
+        }
+        self.out.push(Output::UseItem {
+            mod_id: self.id.clone(),
+            dimension,
+            pos: [x, y, z],
+            face,
+            item,
+        });
+        Ok(())
+    }
     fn break_block(
         &mut self,
         dimension: String,
@@ -2524,10 +2630,14 @@ impl mod_world::Host for State {
         y: i32,
         z: i32,
         tool: Option<String>,
+        enchantments: Vec<(String, u32)>,
         into: Option<(i32, i32, i32)>,
     ) -> Result<(), String> {
         if tool.as_ref().is_some_and(|t| t.is_empty() || t.len() > 128) {
             return Err("a tool id of at most 128 characters".into());
+        }
+        if enchantments.len() > 32 || enchantments.iter().any(|(e, l)| e.len() > 128 || *l > 255) {
+            return Err("at most 32 enchantments, levels up to 255".into());
         }
         let queued = self
             .out
@@ -2547,6 +2657,7 @@ impl mod_world::Host for State {
             dimension,
             pos: [x, y, z],
             tool,
+            enchantments,
             into: into.map(|(a, b, c)| [a, b, c]),
         });
         Ok(())
@@ -2848,6 +2959,33 @@ impl State {
             owner: self.id.clone(),
             ..Storage::default()
         }))
+    }
+}
+impl peers::Host for State {
+    fn send(&mut self, to: String, data: Vec<u8>) -> Result<(), String> {
+        if data.len() > PEER_BYTES {
+            return Err(format!("{} bytes: at most {PEER_BYTES}", data.len()));
+        }
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Peer { .. }))
+            .count();
+        if queued >= PEER_PER_CALL {
+            return Err(format!("at most {PEER_PER_CALL} messages a call"));
+        }
+        if to.is_empty() || to.len() > 64 {
+            return Err("a mod id of 1 to 64 characters".into());
+        }
+        self.out.push(Output::Peer {
+            from: self.id.clone(),
+            to,
+            data,
+        });
+        Ok(())
+    }
+    fn running(&mut self, id: String) -> bool {
+        self.peers.lock().is_ok_and(|p| p.iter().any(|m| *m == id))
     }
 }
 impl transfer::Host for State {

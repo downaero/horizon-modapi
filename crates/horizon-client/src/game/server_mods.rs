@@ -638,6 +638,9 @@ mod run {
                 let changed: Vec<[i32; 3]> = changed.into_iter().map(|p| [p.0, p.1, p.2]).collect();
                 self.mods.mods.neighbors_changed(self.dim.id(), &changed);
             }
+            for (from, to, data) in std::mem::take(&mut self.mods.peer_messages) {
+                self.mods.mods.peer_message(&to, &from, &data);
+            }
             self.mods.mods.server_tick(self.ticks);
             self.mods.mods.tick_blocks();
             self.return_world();
@@ -649,6 +652,7 @@ mod run {
             self.apply_mod_takes();
             self.apply_mod_pushes();
             self.apply_mod_breaks();
+            self.apply_mod_item_uses();
             self.apply_mod_signals();
             self.apply_mod_drops();
             self.apply_mod_effects();
@@ -1111,32 +1115,59 @@ mod run {
             if breaks.is_empty() {
                 return;
             }
-            let registry = self.pack.assets.registry;
-            let Ok(air) = crate::game::render_control::parse_state(registry, "minecraft:air")
-            else {
-                return;
-            };
-            for (dimension, p, tool, into) in breaks {
+            for (dimension, p, tool, enchantments, into) in breaks {
                 if dimension != self.dim.id() {
                     continue;
                 }
                 let state = self.world.block(p[0], p[1], p[2]);
-                let facts = self.res.facts();
-                if facts.is_air(state) || facts.get(state).hardness < 0.0 {
+                let facts = self.res.facts().get(state).clone();
+                if self.res.facts().is_air(state) || facts.hardness < 0.0 {
                     continue;
                 }
-                let tool = tool.map(|t| ItemStack::new(t.as_str(), 1));
-                let drops = self.block_loot_at(p, state, tool.as_ref());
-                self.level_events
-                    .push(horizon_world::level::LevelEvent::LevelEvent {
-                        id: 2001,
-                        pos: horizon_core::position::BlockPos::new(p[0], p[1], p[2]),
-                        data: state.0 as i32,
-                    });
-                if let Err(e) = self.place_state(p, air, false) {
-                    log::debug!("Horizon: a server mod's break at {p:?}: {e:?}");
+                let tool = tool.map(|t| {
+                    let mut stack = ItemStack::new(t.as_str(), 1);
+                    if !enchantments.is_empty() {
+                        stack.data_mut().enchantments = enchantments
+                            .iter()
+                            .map(|(e, l)| (std::sync::Arc::from(e.as_str()), *l))
+                            .collect();
+                    }
+                    stack
+                });
+                // As a player breaks it (ServerPlayerGameMode.destroyBlock):
+                // the block entity kept for what the drops copy from it, then
+                // the vanilla removal, which spills a container and plays
+                // the destroy event; drops only for the right tool.
+                let key = (p[0], p[1], p[2]);
+                if let Some(entity) = self.world.block_entities.get(&key).cloned() {
+                    let name = self.world.block_names.get(&key).cloned();
+                    self.pending.record(p, &entity, &facts.name, name);
+                }
+                let removed = self.with_level(|b, level, ticks| {
+                    b.player_destroy_block(
+                        level,
+                        ticks,
+                        horizon_core::position::BlockPos::new(p[0], p[1], p[2]),
+                        false,
+                    )
+                });
+                if !removed {
                     continue;
                 }
+                let harvest = !facts.requires_tool
+                    || self
+                        .res
+                        .items()
+                        .correct_for_drops(tool.as_ref(), &facts.name);
+                let drops = if harvest {
+                    self.block_loot_at(p, state, tool.as_ref())
+                } else {
+                    Vec::new()
+                };
+                let drops: Vec<ItemStack> = drops
+                    .into_iter()
+                    .filter(|d| &*d.item != "minecraft:air")
+                    .collect();
                 let items = self.res.items();
                 let max = |s: &ItemStack| items.get(&s.item).map_or(64, |i| i.max_stack).max(1);
                 let maxes: Vec<u32> = drops.iter().map(max).collect();
@@ -1185,6 +1216,93 @@ mod run {
             }
             if let Err(e) = self.process_level_events() {
                 log::debug!("Horizon: a server mod's breaks: {e:?}");
+            }
+        }
+
+        /// Uses the items server mods asked to on blocks, as a player facing
+        /// the face would: the block's own answer (`use_item_on`), else a
+        /// block item placed against the face where there is air.
+        pub(in crate::game) fn apply_mod_item_uses(&mut self) {
+            use horizon_world::level::PlayerContext;
+            let uses = std::mem::take(&mut self.mods.item_uses);
+            for (dimension, p, face, item) in uses {
+                if dimension != self.dim.id() {
+                    continue;
+                }
+                let (direction, normal, look) = match face {
+                    0 => (
+                        horizon_core::geometry::Direction::Down,
+                        [0, -1, 0],
+                        (0.0, -90.0),
+                    ),
+                    1 => (
+                        horizon_core::geometry::Direction::Up,
+                        [0, 1, 0],
+                        (0.0, 90.0),
+                    ),
+                    2 => (
+                        horizon_core::geometry::Direction::North,
+                        [0, 0, -1],
+                        (0.0, 0.0),
+                    ),
+                    3 => (
+                        horizon_core::geometry::Direction::South,
+                        [0, 0, 1],
+                        (180.0, 0.0),
+                    ),
+                    4 => (
+                        horizon_core::geometry::Direction::West,
+                        [-1, 0, 0],
+                        (270.0, 0.0),
+                    ),
+                    _ => (
+                        horizon_core::geometry::Direction::East,
+                        [1, 0, 0],
+                        (90.0, 0.0),
+                    ),
+                };
+                let at = horizon_core::geometry::Vec3::new(
+                    f64::from(p[0]) + 0.5 + f64::from(normal[0]) * 0.5,
+                    f64::from(p[1]) + 0.5 + f64::from(normal[1]) * 0.5,
+                    f64::from(p[2]) + 0.5 + f64::from(normal[2]) * 0.5,
+                );
+                // A player facing the face from in front of it.
+                let player = PlayerContext {
+                    yaw: look.0,
+                    pitch: look.1,
+                    may_build: true,
+                    can_eat: false,
+                    game_master: false,
+                };
+                let result = self.with_level(|b, level, ticks| {
+                    b.use_item_on(
+                        level,
+                        ticks,
+                        horizon_core::position::BlockPos::new(p[0], p[1], p[2]),
+                        direction,
+                        at,
+                        player,
+                        Some(item.as_str()),
+                    )
+                });
+                if result.consumes_action() {
+                    continue;
+                }
+                let Some(state) = self.res.items().get(item.as_str()).and_then(|i| i.block) else {
+                    continue;
+                };
+                let to = [p[0] + normal[0], p[1] + normal[1], p[2] + normal[2]];
+                if self
+                    .res
+                    .facts()
+                    .is_air(self.world.block(to[0], to[1], to[2]))
+                    && let Err(e) = self.place_state(to, state, false)
+                {
+                    log::debug!("Horizon: a server mod's {item} at {to:?}: {e:?}");
+                }
+            }
+            if let Err(e) = self.process_level_events() {
+                log::debug!("Horizon: a server mod's item uses: {e:?}");
             }
         }
 
@@ -1910,16 +2028,35 @@ mod run {
                         queue.push((dimension, pos, effect));
                     }
                 }
+                Output::UseItem {
+                    dimension,
+                    pos,
+                    face,
+                    item,
+                    ..
+                } => {
+                    let queue = &mut self.mods.item_uses;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push((dimension, pos, face, item));
+                    }
+                }
+                Output::Peer { from, to, data } => {
+                    let queue = &mut self.mods.peer_messages;
+                    if queue.len() < MAX_QUEUED_NET {
+                        queue.push((from, to, data));
+                    }
+                }
                 Output::Break {
                     dimension,
                     pos,
                     tool,
+                    enchantments,
                     into,
                     ..
                 } => {
                     let queue = &mut self.mods.breaks;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
-                        queue.push((dimension, pos, tool, into));
+                        queue.push((dimension, pos, tool, enchantments, into));
                     }
                 }
                 Output::Signal {
