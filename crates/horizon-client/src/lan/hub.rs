@@ -225,6 +225,11 @@ pub struct Hub {
     /// server mod's synced block data): each player gets them right after
     /// the chunk, keyed by who set them and the position.
     chunk_payloads: ChunkPayloads,
+    /// Packets for a whole level, by dimension (a server mod's structures):
+    /// each player gets them before the first chunks of that level, keyed by
+    /// who set them and a slot.
+    level_payloads:
+        std::collections::HashMap<String, std::collections::BTreeMap<(String, u8), Vec<u8>>>,
     /// Server mods' commands, a root in the commands report's format, sent
     /// after vanilla's; the key the game last set them for.
     mod_commands: (serde_json::Value, Option<u64>),
@@ -399,6 +404,32 @@ impl Hub {
             mod_commands: (serde_json::Value::Null, None),
             teams: Vec::new(),
             chunk_payloads: Default::default(),
+            level_payloads: Default::default(),
+        }
+    }
+
+    /// Keeps `packet` (none: forgets it) for every player who reaches
+    /// `dimension`'s chunks from now on, before the first of them, after
+    /// the other kept packets of lower key and slot.
+    pub fn set_level_payload(&mut self, dimension: &str, key: &str, slot: u8, packet: Option<&C>) {
+        let kept = self.level_payloads.entry(dimension.to_owned()).or_default();
+        match packet {
+            Some(p) => {
+                kept.insert((key.to_owned(), slot), p.encode());
+            }
+            None => {
+                kept.remove(&(key.to_owned(), slot));
+            }
+        }
+    }
+    /// Sends `packet` to every player in `dimension` whose game has that
+    /// level's chunks already (those who don't get the kept packets first).
+    pub fn send_level(&self, dimension: &str, packet: &C) {
+        let body = packet.encode();
+        for g in &self.guests {
+            if g.placed && g.dimension == dimension && !g.sent_chunks.is_empty() {
+                g.sender.send(body.clone());
+            }
         }
     }
 
@@ -432,13 +463,16 @@ impl Hub {
             }
         }
     }
-    /// How many packets [`Hub::set_chunk_payload`] keeps.
-    pub fn chunk_payload_count(&self) -> usize {
-        self.chunk_payloads
+    /// How many packets [`Hub::set_chunk_payload`] and
+    /// [`Hub::set_level_payload`] keep.
+    pub fn payload_count(&self) -> usize {
+        let chunks: usize = self
+            .chunk_payloads
             .values()
             .flat_map(|c| c.values())
             .map(|a| a.len())
-            .sum()
+            .sum();
+        chunks + self.level_payloads.values().map(|l| l.len()).sum::<usize>()
     }
 
     pub fn guest(&self, conn: u32) -> Option<&Guest> {
@@ -1454,6 +1488,17 @@ impl Hub {
             .collect();
         for (i, taken, batch) in batches {
             let g = &mut self.guests[i];
+            // A player's first chunks of this level: its kept packets first.
+            if g.sent_chunks.is_empty() {
+                for body in self
+                    .level_payloads
+                    .get(&self.config.dimension)
+                    .into_iter()
+                    .flatten()
+                {
+                    g.sender.send(body.1.clone());
+                }
+            }
             let size = batch.len();
             g.batch_quota -= size as f32;
             g.send(&C::ChunkBatchStart(horizon_protocol::packets::Empty));

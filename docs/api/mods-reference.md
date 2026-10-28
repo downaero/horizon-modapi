@@ -49,7 +49,7 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `visuals`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `console`, `stacks`, `recipe-manager`, `entity-data`, `entity-types`, `log`, `storage`, `players`, `world`
+- Imports (what the game offers): `block-entities`, `visuals`, `structures`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `console`, `stacks`, `recipe-manager`, `entity-data`, `entity-types`, `log`, `storage`, `players`, `world`
 - Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `item-events`, `peer-events`, `menu-events`, `entity-events`, `server-events`
 
 ## World `entity-types-host`
@@ -162,6 +162,13 @@ The game's side of `horizon-block-mod` beyond `horizon-server-mod`.
 The game's side of `visuals` (imports only).
 
 - Imports (what the game offers): `visuals`
+- Exports (what the mod provides): 
+
+## World `structures-host`
+
+The game's side of `structures` (imports only).
+
+- Imports (what the game offers): `structures`
 - Exports (what the mod provides): 
 
 ## World `net-host`
@@ -979,6 +986,38 @@ Capability `block-entities`, server mods only (manifest `api = "0.3"`, experimen
 | `set` | `func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>` | Stores bytes at a position (at most 64 KiB; 65,536 positions per mod), replacing any there. The game forgets them when the block is broken or replaced by something that is not one of the mod's. |
 | `remove` | `func(dimension: string, x: s32, y: s32, z: s32)` | Forgets the bytes at a position. |
 | `set-synced` | `func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>` | `set`, and the bytes also go to every player whose game has the chunk, now, whenever they change and when the chunk reaches a player later: what the mod's client half reads with `block-data` (NeoForge's update tag). A later `set` at the position keeps them on the server only; `remove` takes them from the players' games too. Saved with the world as `set`'s are. |
+
+## `structures`
+
+Access: not granted by any capability.
+
+Capability `entities`, server mods (`experimental = ["entities"]`): structures, blocks taken out of the grid as one object that moves and turns as a whole, as Create's contraptions and Aeronautics' ships. Players' games draw each as one model, between its poses of the last two ticks. The game saves them with the world; one still there when the world loads is put back into the grid where it stood, so no block is lost.
+
+### record `structure-block`
+
+| Field | Type | |
+| --- | --- | --- |
+| `x` | `s32` | Its place in the structure (0, 0, 0 is the structure's corner). |
+| `y` | `s32` |  |
+| `z` | `s32` |  |
+| `state` | `string` | `minecraft:oak_planks`, `mymod:shaft[axis=x]`. |
+
+### record `pose`
+
+Where a structure is: the world position of its (0, 0, 0) corner, and its turn about that corner as a quaternion (x, y, z, w), made unit by the game.
+
+| Field | Type | |
+| --- | --- | --- |
+| `x` | `f64` |  |
+| `y` | `f64` |  |
+| `z` | `f64` |  |
+| `rotation` | `tuple<f32, f32, f32, f32>` |  |
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `create` | `func(dimension: string, blocks: list<structure-block>, at: pose) -> result<u32, string>` | Makes a structure of these blocks (at most 4096) at `pose` in a dimension, after the call: its id, the mod's own (at most 64 at once). The blocks are only drawn; taking them out of the world is `world.set-blocks`, as the SDK's `Structure::assemble` does. |
+| `set-pose` | `func(id: u32, at: pose) -> bool` | Moves and turns one, after the call; players' games see it go there over the next tick. False for an id the mod does not hold. |
+| `remove` | `func(id: u32) -> bool` | Takes one away, after the call (its blocks with it: putting them back is `world.set-blocks`). |
 
 ## `visuals`
 

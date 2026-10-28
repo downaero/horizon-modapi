@@ -8256,6 +8256,7 @@ impl Game<'_> {
         self.mark_entity(out.len(), "");
         // Server mods' turning parts (capability `visuals`).
         self.mod_visual_geometry(camera, alpha, &mut out);
+        self.mod_structure_geometry(camera, alpha, &mut out);
         self.moving_piston_geometry(camera, alpha, &mut out);
         self.mark_entity(out.len(), "minecraft:tnt");
         self.tnt_geometry(camera, alpha, &mut out);

@@ -199,6 +199,9 @@ pub mod level;
 pub mod network;
 /// What a server mod does to players through capability `console`.
 pub mod player_ops;
+/// Moving structures as one object: blocks taken out of the world, moved
+/// and turned as a whole, put back.
+pub mod structure;
 
 pub mod server {
     wit_bindgen::generate!({
@@ -258,6 +261,8 @@ pub mod server {
     pub use horizon::mods::redstone;
     /// Capability `stacks`: names, enchantments and the mod's own data on items.
     pub use horizon::mods::stacks;
+    /// Capability `entities`: blocks moved and turned as one object.
+    pub use horizon::mods::structures;
     /// Capability `transfer`: items, fluids and energy between blocks.
     pub use horizon::mods::transfer;
     /// Capability `block-entities`: model parts players' games turn at the

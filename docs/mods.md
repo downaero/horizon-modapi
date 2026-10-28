@@ -728,6 +728,20 @@ reaches clients as a silent falling block with no gravity. `Contraption::set_rot
 turns a whole structure about the centre of its box and `set_solid` makes it walkable: the gears
 example's `gears:mill` spins the 1 x 3 x 3 wheel above it, and its lift carries players.
 
+**Structures (API level 40).** `structures.create(dimension, blocks, pose)` makes up to 4096
+blocks one object (64 per mod), `set-pose(id, pose)` moves and turns it and `remove(id)` takes it
+away. A pose is the world position of the structure's (0, 0, 0) corner and a quaternion it turns by
+about that corner, any angle. Players' games get its blocks once, before the first chunks of its
+level (`horizon:structure`), build its model once, and then draw it moved and turned between its
+last two poses, so a structure costs one small packet a tick while it moves and none while it
+stands. The game saves structures with the world; one still out of the grid when the world loads is
+put back where it stood, turned to the nearest quarter turns about the middle of its blocks, so each
+block gets a place of its own and none is lost. `horizon_mod_sdk::structure::Structure` has
+`Contraption`'s methods on top (`assemble`, `move_by`, `set_rotation`, `disassemble`, which puts the
+blocks back turned to the nearest quarter turns): the gears example's mill turns its wheel as one.
+Players do not stand on structures or collide with them yet, and their blocks do nothing while they
+move; that comes next ([Roadmap](#roadmap)).
+
 `horizon_mod_sdk::network` walks networks of connected blocks in the mod's own code:
 `propagate(sources, limit, link)` carries a value (a shaft's speed, reversed by a gear, doubled
 by a cog) from each source to each member and marks a conflict where two disagree;

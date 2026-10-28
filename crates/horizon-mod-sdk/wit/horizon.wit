@@ -855,6 +855,43 @@ interface block-entities {
     set-synced: func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>;
 }
 
+/// Capability `entities`, server mods (`experimental = ["entities"]`):
+/// structures, blocks taken out of the grid as one object that moves and
+/// turns as a whole, as Create's contraptions and Aeronautics' ships. Players'
+/// games draw each as one model, between its poses of the last two ticks.
+/// The game saves them with the world; one still there when the world
+/// loads is put back into the grid where it stood, so no block is lost.
+interface structures {
+    record structure-block {
+        /// Its place in the structure (0, 0, 0 is the structure's corner).
+        x: s32,
+        y: s32,
+        z: s32,
+        /// `minecraft:oak_planks`, `mymod:shaft[axis=x]`.
+        state: string,
+    }
+    /// Where a structure is: the world position of its (0, 0, 0) corner,
+    /// and its turn about that corner as a quaternion (x, y, z, w), made
+    /// unit by the game.
+    record pose {
+        x: f64,
+        y: f64,
+        z: f64,
+        rotation: tuple<f32, f32, f32, f32>,
+    }
+    /// Makes a structure of these blocks (at most 4096) at `pose` in a
+    /// dimension, after the call: its id, the mod's own (at most 64 at
+    /// once). The blocks are only drawn; taking them out of the world is
+    /// `world.set-blocks`, as the SDK's `Structure::assemble` does.
+    create: func(dimension: string, blocks: list<structure-block>, at: pose) -> result<u32, string>;
+    /// Moves and turns one, after the call; players' games see it go
+    /// there over the next tick. False for an id the mod does not hold.
+    set-pose: func(id: u32, at: pose) -> bool;
+    /// Takes one away, after the call (its blocks with it: putting them back
+    /// is `world.set-blocks`).
+    remove: func(id: u32) -> bool;
+}
+
 /// Capability `block-entities`, server mods: model parts drawn at the mod's
 /// own blocks, each turning at a constant speed, as Flywheel's instances
 /// draw Create's shafts and cogs. The server sends a position's parts to the
@@ -1592,6 +1629,7 @@ world horizon-block-mod {
     include horizon-server-mod;
     import block-entities;
     import visuals;
+    import structures;
     export block-events;
     import net;
     export server-net-events;
@@ -1698,6 +1736,11 @@ world block-host {
 /// The game's side of `visuals` (imports only).
 world visuals-host {
     import visuals;
+}
+
+/// The game's side of `structures` (imports only).
+world structures-host {
+    import structures;
 }
 
 /// The game's side of capability `net` for client mods (it adds the `net`

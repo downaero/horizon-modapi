@@ -15,6 +15,7 @@ use horizon_mod_sdk::{
         containers, effects, entity_types, items, menus, net, peers, players, recipe_manager,
         redstone, stacks, transfer, visuals, world,
     },
+    structure::Structure,
 };
 
 const COUNTER: &str = "gears:counter";
@@ -240,7 +241,7 @@ struct Gears {
     /// The players who opened a crate's screen, fed its progress bar.
     viewers: Vec<String>,
     /// Each mill turning: its position, its wheel and the wheel's turn.
-    mills: Vec<([i32; 3], Contraption, f32)>,
+    mills: Vec<([i32; 3], Structure, f32)>,
 }
 
 /// The gear over a counter: an iron trapdoor's model a tenth of a block above
@@ -786,7 +787,8 @@ impl ServerMod for Gears {
             }
             let min = [pos.x, pos.y + 1, pos.z - 1];
             let max = [pos.x, pos.y + 3, pos.z + 1];
-            match Contraption::assemble(dimension, min, max) {
+            // One structure: players' games draw the wheel as one model.
+            match Structure::assemble(dimension, min, max) {
                 Ok(wheel) if !wheel.is_empty() => self.mills.push((at, wheel, 0.0)),
                 Ok(_) => {}
                 Err(e) => {

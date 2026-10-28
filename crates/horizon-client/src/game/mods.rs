@@ -47,6 +47,28 @@ pub(super) struct ClientVisual {
     )>,
 }
 
+/// A server mod's structure as the server keeps it.
+#[cfg(feature = "mods")]
+pub(super) struct ServerStructure {
+    pub(super) dimension: String,
+    pub(super) blocks: Vec<horizon_mods::structure::StructureBlock>,
+    pub(super) pose: horizon_mods::structure::Pose,
+}
+
+/// A structure as this window draws it: its blocks' model in its own
+/// space, built once, and its last two poses.
+#[cfg(feature = "mods")]
+pub(super) struct ClientStructure {
+    pub(super) mesh: Vec<horizon_client::mesher::Vertex>,
+    /// The middle of its blocks, in its own space (where its light is read).
+    pub(super) centre: [f64; 3],
+    pub(super) previous: horizon_mods::structure::Pose,
+    pub(super) pose: horizon_mods::structure::Pose,
+    /// The game time `pose` came at: drawn from `previous` to `pose` during
+    /// that tick, at `pose` after.
+    pub(super) at: i64,
+}
+
 #[derive(Default)]
 pub(super) struct ModsState {
     #[cfg(feature = "mods")]
@@ -207,6 +229,14 @@ pub(super) struct ModsState {
     /// its own world (in-frame) what its server mods set.
     #[cfg(feature = "mods")]
     pub(super) client_visuals: std::collections::HashMap<(String, [i32; 3]), ClientVisual>,
+    /// Server mods' structures (capability `entities`), by mod id and id:
+    /// saved with the world, put back into the grid when it loads.
+    #[cfg(feature = "mods")]
+    pub(super) structures: std::collections::BTreeMap<(String, u32), ServerStructure>,
+    /// The structures this window draws, by mod id and id, in the player's
+    /// dimension: what its server sent, or its own world's (in-frame).
+    #[cfg(feature = "mods")]
+    pub(super) client_structures: std::collections::HashMap<(String, u32), ClientStructure>,
     /// `block_data` changed since it was written.
     #[cfg(feature = "mods")]
     pub(super) block_data_dirty: bool,
@@ -856,6 +886,7 @@ impl Game<'_> {
                 | Output::SetBlocks { .. }
                 | Output::BlockData { .. }
                 | Output::Visual { .. }
+                | Output::Structure { .. }
                 | Output::Entity { .. }
                 | Output::Drop { .. }
                 | Output::Take { .. }

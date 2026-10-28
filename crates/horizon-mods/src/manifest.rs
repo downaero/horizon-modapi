@@ -274,8 +274,8 @@ impl Capability {
         ) {
             return Ok(None);
         }
-        // A mod's own entity types are part of capability `entities`.
-        if interface == "entity-types" {
+        // A mod's own entity types and structures are part of capability `entities`.
+        if interface == "entity-types" || interface == "structures" {
             return Ok(Some(Capability::Entities));
         }
         // Parts drawn at a mod's blocks are part of capability `block-entities`.

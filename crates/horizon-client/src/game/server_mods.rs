@@ -67,6 +67,14 @@ impl Game<'_> {
     pub(super) fn remote_mod_net(&mut self, _channel: &str, _data: Vec<u8>) {}
     pub(super) fn remote_mod_block_data(&mut self, _data: &[u8]) {}
     pub(super) fn remote_mod_visual(&mut self, _data: &[u8]) {}
+    pub(super) fn remote_mod_structure(&mut self, _data: &[u8]) {}
+    pub(super) fn mod_structure_geometry(
+        &self,
+        _camera: glam::DVec3,
+        _alpha: f64,
+        _out: &mut Vec<horizon_client::mesher::Vertex>,
+    ) {
+    }
     pub(super) fn mod_visual_geometry(
         &self,
         _camera: glam::DVec3,
@@ -124,6 +132,16 @@ pub(super) const VISUAL_CHANNEL: &str = "horizon:block_visual";
 /// (`horizon_mods::visual::encode`) rather than block data.
 #[cfg_attr(not(feature = "mods"), allow(dead_code))]
 pub(super) const VISUAL_MARK: char = '\u{3}';
+
+/// The channel server mods' structures travel on, as
+/// `horizon_mods::structure::Payload` writes them (capability `entities`).
+#[cfg_attr(not(feature = "mods"), allow(dead_code))]
+pub(super) const STRUCTURE_CHANNEL: &str = "horizon:structure";
+
+/// Marks a `.blocks` file entry that holds a structure (its create
+/// payload) rather than block data.
+#[cfg_attr(not(feature = "mods"), allow(dead_code))]
+pub(super) const STRUCTURE_MARK: char = '\u{4}';
 
 /// Marks a synced entry's dimension in a `.blocks` file.
 #[cfg_attr(not(feature = "mods"), allow(dead_code))]
@@ -1030,6 +1048,8 @@ mod run {
                 self.mods.block_synced.clear();
                 self.mods.visuals.clear();
                 self.mods.client_visuals.clear();
+                self.mods.structures.clear();
+                self.mods.client_structures.clear();
                 self.mods.block_data_dirty = false;
                 if !key.0.as_os_str().is_empty()
                     && let Ok(dir) = std::fs::read_dir(key.0.join(super::BLOCK_DATA_DIR))
@@ -1044,6 +1064,26 @@ mod run {
                             continue;
                         };
                         for (dimension, pos, data) in super::decode_block_data(&bytes) {
+                            // A structure left when the world was saved goes back
+                            // into the grid where it stood.
+                            if let Some(d) = dimension.strip_prefix(super::STRUCTURE_MARK) {
+                                use horizon_mods::structure::{Payload, settle};
+                                if let Some(Payload::Create { blocks, pose, .. }) =
+                                    Payload::decode(&data)
+                                {
+                                    for (at, state) in settle(&blocks, &pose) {
+                                        let change = horizon_mods::BlockChange {
+                                            x: at[0],
+                                            y: at[1],
+                                            z: at[2],
+                                            state,
+                                        };
+                                        self.mods.block_writes.push((d.to_owned(), change));
+                                    }
+                                    self.mods.block_data_dirty = true;
+                                }
+                                continue;
+                            }
                             if let Some(d) = dimension.strip_prefix(super::VISUAL_MARK) {
                                 if let Some((_, _, start, parts)) =
                                     horizon_mods::visual::decode(&data)
@@ -1140,6 +1180,77 @@ mod run {
             }
         }
 
+        /// Keeps a mod's structure as it was made, moved or taken away, and
+        /// sends that to the players in its level (and to those who reach
+        /// the level later, before its chunks); this window draws it itself
+        /// in its own world.
+        fn store_mod_structure(
+            &mut self,
+            dimension: Option<String>,
+            payload: horizon_mods::structure::Payload,
+            host: Option<&mut LanHost>,
+        ) {
+            use horizon_mods::structure::Payload;
+            let (key, slot, keep) = match &payload {
+                Payload::Create {
+                    mod_id,
+                    id,
+                    blocks,
+                    pose,
+                } => {
+                    let Some(dimension) = dimension else { return };
+                    let s = crate::game::mods::ServerStructure {
+                        dimension,
+                        blocks: blocks.clone(),
+                        pose: *pose,
+                    };
+                    self.mods.structures.insert((mod_id.clone(), *id), s);
+                    ((mod_id.clone(), *id), 0, true)
+                }
+                Payload::Pose { mod_id, id, pose } => {
+                    let Some(s) = self.mods.structures.get_mut(&(mod_id.clone(), *id)) else {
+                        return;
+                    };
+                    s.pose = *pose;
+                    ((mod_id.clone(), *id), 1, true)
+                }
+                Payload::Remove { mod_id, id } => ((mod_id.clone(), *id), 0, false),
+            };
+            let Some(dimension) = self.mods.structures.get(&key).map(|s| s.dimension.clone())
+            else {
+                return;
+            };
+            if !keep {
+                self.mods.structures.remove(&key);
+            }
+            self.mods.block_data_dirty = true;
+            let bytes = payload.encode();
+            if self.options.execution_role.is_client()
+                && self.remote.is_none()
+                && dimension == self.dim.id()
+            {
+                self.remote_mod_structure(&bytes);
+            }
+            let hub = match host {
+                Some(h) => Some(h),
+                None => self.lan.as_mut(),
+            };
+            let Some(hub) = hub else { return };
+            let packet = C::CustomPayload(CustomPayload {
+                channel: super::STRUCTURE_CHANNEL.into(),
+                data: bytes,
+            });
+            let id = format!("{}{}{}", key.0, super::STRUCTURE_MARK, key.1);
+            if keep {
+                hub.hub
+                    .set_level_payload(&dimension, &id, slot, Some(&packet));
+            } else {
+                hub.hub.set_level_payload(&dimension, &id, 0, None);
+                hub.hub.set_level_payload(&dimension, &id, 1, None);
+            }
+            hub.hub.send_level(&dimension, &packet);
+        }
+
         fn send_mod_visual(
             &mut self,
             host: Option<&mut LanHost>,
@@ -1191,9 +1302,30 @@ mod run {
             let fresh = self
                 .lan
                 .as_ref()
-                .is_some_and(|h| h.hub.chunk_payload_count() == 0);
-            if !fresh || (self.mods.block_synced.is_empty() && self.mods.visuals.is_empty()) {
+                .is_some_and(|h| h.hub.payload_count() == 0);
+            if !fresh
+                || (self.mods.block_synced.is_empty()
+                    && self.mods.visuals.is_empty()
+                    && self.mods.structures.is_empty())
+            {
                 return;
+            }
+            let structures: Vec<_> = self
+                .mods
+                .structures
+                .iter()
+                .map(|((mod_id, id), s)| {
+                    let payload = horizon_mods::structure::Payload::Create {
+                        mod_id: mod_id.clone(),
+                        id: *id,
+                        blocks: s.blocks.clone(),
+                        pose: s.pose,
+                    };
+                    (s.dimension.clone(), payload)
+                })
+                .collect();
+            for (dimension, payload) in structures {
+                self.store_mod_structure(Some(dimension), payload, None);
             }
             let synced: Vec<_> = self.mods.block_synced.iter().cloned().collect();
             for key in synced {
@@ -1247,6 +1379,26 @@ mod run {
                 ids.entry(id)
                     .or_default()
                     .push((dimension.clone(), *pos, bytes));
+            }
+            let structures: Vec<(&str, String, Vec<u8>)> = self
+                .mods
+                .structures
+                .iter()
+                .map(|((mod_id, id), s)| {
+                    let payload = horizon_mods::structure::Payload::Create {
+                        mod_id: mod_id.clone(),
+                        id: *id,
+                        blocks: s.blocks.clone(),
+                        pose: s.pose,
+                    };
+                    let dimension = format!("{}{}", super::STRUCTURE_MARK, s.dimension);
+                    (mod_id.as_str(), dimension, payload.encode())
+                })
+                .collect();
+            for (id, dimension, bytes) in &structures {
+                ids.entry(id)
+                    .or_default()
+                    .push((dimension.clone(), [0; 3], bytes));
             }
             let result = (|| -> std::io::Result<()> {
                 if !ids.is_empty() {
@@ -2888,6 +3040,109 @@ mod run {
             }
         }
 
+        /// A server mod's structure made, moved or taken away, from the
+        /// server this window plays on (or its own world's, in-frame).
+        pub(in crate::game) fn remote_mod_structure(&mut self, data: &[u8]) {
+            use horizon_mods::structure::Payload;
+            let Some(payload) = Payload::decode(data) else {
+                return;
+            };
+            match payload {
+                Payload::Create {
+                    mod_id,
+                    id,
+                    blocks,
+                    pose,
+                } => {
+                    let registry = self.pack.assets.registry;
+                    let mut mesh = Vec::new();
+                    let mut sum = [0.0f64; 3];
+                    for b in &blocks {
+                        for i in 0..3 {
+                            sum[i] += f64::from(b.pos[i]) + 0.5;
+                        }
+                        let Ok(state) =
+                            crate::game::render_control::parse_state(registry, &b.state)
+                        else {
+                            continue;
+                        };
+                        let at = glam::Vec3::new(b.pos[0] as f32, b.pos[1] as f32, b.pos[2] as f32);
+                        let seed = horizon_core::random::position_seed(
+                            horizon_core::position::BlockPos::new(b.pos[0], b.pos[1], b.pos[2]),
+                        );
+                        self.block_model_vertices(
+                            state,
+                            seed,
+                            glam::Mat4::from_translation(at),
+                            0,
+                            false,
+                            &mut mesh,
+                        );
+                    }
+                    let n = blocks.len().max(1) as f64;
+                    let structure = crate::game::mods::ClientStructure {
+                        mesh,
+                        centre: sum.map(|v| v / n),
+                        previous: pose,
+                        pose,
+                        at: self.world.game_time,
+                    };
+                    self.mods.client_structures.insert((mod_id, id), structure);
+                }
+                Payload::Pose { mod_id, id, pose } => {
+                    let now = self.world.game_time;
+                    if let Some(s) = self.mods.client_structures.get_mut(&(mod_id, id)) {
+                        s.previous = s.pose;
+                        s.pose = pose;
+                        s.at = now;
+                    }
+                }
+                Payload::Remove { mod_id, id } => {
+                    self.mods.client_structures.remove(&(mod_id, id));
+                }
+            }
+        }
+
+        /// Draws server mods' structures, each its one model moved and
+        /// turned from its last tick's pose towards this tick's.
+        pub(in crate::game) fn mod_structure_geometry(
+            &self,
+            camera: glam::DVec3,
+            alpha: f64,
+            out: &mut Vec<horizon_client::mesher::Vertex>,
+        ) {
+            use glam::{DVec3, Mat4, Quat};
+            for s in self.mods.client_structures.values() {
+                let t = if self.world.game_time <= s.at {
+                    alpha
+                } else {
+                    1.0
+                };
+                let from = DVec3::from(s.previous.pos);
+                let pos = from.lerp(DVec3::from(s.pose.pos), t);
+                let rotation = Quat::from_array(s.previous.rotation)
+                    .slerp(Quat::from_array(s.pose.rotation), t as f32);
+                let pose = horizon_mods::structure::Pose {
+                    pos: pos.to_array(),
+                    rotation: rotation.to_array(),
+                };
+                let centre = pose.apply(s.centre);
+                let light = self.world.light(
+                    centre[0].floor() as i32,
+                    centre[1].floor() as i32,
+                    centre[2].floor() as i32,
+                );
+                let packed = (u32::from(light >> 4) * 16) | ((u32::from(light & 15) * 16) << 8);
+                let m =
+                    Mat4::from_translation((pos - camera).as_vec3()) * Mat4::from_quat(rotation);
+                out.extend(s.mesh.iter().map(|v| horizon_client::mesher::Vertex {
+                    pos: m.transform_point3(glam::Vec3::from(v.pos)).to_array(),
+                    light: packed,
+                    ..*v
+                }));
+            }
+        }
+
         /// Draws the parts server mods set at their blocks, each turned by
         /// the ticks since it was set and this frame's fraction of one.
         pub(in crate::game) fn mod_visual_geometry(
@@ -2933,7 +3188,10 @@ mod run {
                     .mods
                     .client_visuals
                     .retain(|(_, p), _| (p[0] >> 4, p[2] >> 4) != c),
-                None => self.mods.client_visuals.clear(),
+                None => {
+                    self.mods.client_visuals.clear();
+                    self.mods.client_structures.clear();
+                }
             }
             if self.mods.client_block_data.is_empty() {
                 return;
@@ -3048,6 +3306,9 @@ mod run {
                     pos,
                     parts,
                 } => self.store_mod_visual(mod_id, dimension, pos, parts, host),
+                Output::Structure { dimension, payload } => {
+                    self.store_mod_structure(dimension, payload, host)
+                }
                 Output::Container {
                     op: horizon_mods::ContainerOp::Register { block, slots },
                     ..

@@ -234,6 +234,13 @@ mod visuals_bindings {
     });
 }
 use visuals_bindings::{VisualsHost, horizon::mods::visuals};
+mod structures_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "structures-host",
+    });
+}
+use structures_bindings::{StructuresHost, horizon::mods::structures};
 /// Most positions `block-data.in-box` answers with.
 const BLOCK_DATA_IN_BOX: usize = 256;
 /// Most entities of its own types one mod has at once.
@@ -829,6 +836,12 @@ pub enum Output {
         data: Option<Vec<u8>>,
         synced: bool,
     },
+    /// `structures.create`, `set-pose` and `remove`, for the game to keep,
+    /// save and send to players (`payload` names the mod and the id).
+    Structure {
+        dimension: Option<String>,
+        payload: crate::structure::Payload,
+    },
     /// `visuals.set`: the parts drawn at one of the mod's blocks (none:
     /// nothing any more), for the game to keep, save and send.
     Visual {
@@ -1227,6 +1240,10 @@ struct State {
     /// positions, by dimension and position; the game loads them back with
     /// [`Mods::load_block_data`].
     block_data: std::collections::HashMap<(String, [i32; 3]), Vec<u8>>,
+    /// The ids of the structures the mod has (`structures`), and the last
+    /// id given.
+    structures: std::collections::HashSet<u32>,
+    next_structure: u32,
     /// The namespaces whose blocks are the mod's: its id and manifest
     /// `namespaces`.
     block_namespaces: Vec<String>,
@@ -1399,6 +1416,8 @@ impl Mods {
                 .map_err(|e| e.to_string())?;
             VisualsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
+            StructuresHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
             EntitiesHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             ContainersHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
@@ -1520,6 +1539,8 @@ impl Mods {
                 .build(),
             world,
             block_data: Default::default(),
+            structures: Default::default(),
+            next_structure: 0,
             block_cursor: 0,
             entity_types: Default::default(),
             next_typed: 1,
@@ -3196,6 +3217,90 @@ impl block_data::Host for State {
                 data: data.clone(),
             })
             .collect()
+    }
+}
+fn pose_of(p: structures::Pose) -> Result<crate::structure::Pose, String> {
+    crate::structure::Pose {
+        pos: [p.x, p.y, p.z],
+        rotation: [p.rotation.0, p.rotation.1, p.rotation.2, p.rotation.3],
+    }
+    .checked()
+}
+impl structures::Host for State {
+    fn create(
+        &mut self,
+        dimension: String,
+        blocks: Vec<structures::StructureBlock>,
+        at: structures::Pose,
+    ) -> Result<u32, String> {
+        use crate::structure::{BLOCKS, PER_MOD, Payload, StructureBlock};
+        if self.structures.len() >= PER_MOD {
+            return Err(format!("at most {PER_MOD} structures"));
+        }
+        if blocks.len() > BLOCKS {
+            return Err(format!("{} blocks: at most {BLOCKS}", blocks.len()));
+        }
+        let pose = pose_of(at)?;
+        if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref()) {
+            if !view.has_dimension(&dimension) {
+                return Err(format!("no dimension {dimension}"));
+            }
+            let mut checked = std::collections::HashSet::new();
+            for b in &blocks {
+                if checked.insert(b.state.as_str()) {
+                    view.check_state(&b.state)?;
+                }
+            }
+        }
+        self.next_structure += 1;
+        let id = self.next_structure;
+        self.structures.insert(id);
+        self.out.push(Output::Structure {
+            dimension: Some(dimension),
+            payload: Payload::Create {
+                mod_id: self.id.clone(),
+                id,
+                blocks: blocks
+                    .into_iter()
+                    .map(|b| StructureBlock {
+                        pos: [b.x, b.y, b.z],
+                        state: b.state,
+                    })
+                    .collect(),
+                pose,
+            },
+        });
+        Ok(id)
+    }
+    fn set_pose(&mut self, id: u32, at: structures::Pose) -> bool {
+        let Ok(pose) = pose_of(at) else {
+            return false;
+        };
+        if !self.structures.contains(&id) {
+            return false;
+        }
+        self.out.push(Output::Structure {
+            dimension: None,
+            payload: crate::structure::Payload::Pose {
+                mod_id: self.id.clone(),
+                id,
+                pose,
+            },
+        });
+        true
+    }
+    fn remove(&mut self, id: u32) -> bool {
+        if !self.structures.remove(&id) {
+            return false;
+        }
+        self.out.push(Output::Structure {
+            dimension: None,
+            payload: crate::structure::Payload::Remove {
+                mod_id: self.id.clone(),
+                id,
+            },
+        });
+        true
     }
 }
 impl visuals::Host for State {

@@ -277,6 +277,15 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
                     pos[0], pos[1], pos[2]
                 )
             }
+            Output::Structure { payload, .. } => match payload {
+                horizon_mods::structure::Payload::Create { blocks, .. } => {
+                    format!("made a structure of {} block(s)", blocks.len())
+                }
+                horizon_mods::structure::Payload::Pose { .. } => "moved a structure".to_string(),
+                horizon_mods::structure::Payload::Remove { .. } => {
+                    "took a structure away".to_string()
+                }
+            },
             Output::Visual { parts, pos, .. } => format!(
                 "drew {} part(s) at {} {} {}",
                 parts.len(),
