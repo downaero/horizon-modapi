@@ -360,6 +360,85 @@ mod run {
         }
     }
     impl WorldView for LentWorld {
+        fn craft(
+            &self,
+            grid: &[Option<(String, u32)>],
+            width: u32,
+        ) -> Option<horizon_mods::Crafted> {
+            use horizon_client::items::ItemStack;
+            let size = width as usize;
+            let grid: Vec<Option<ItemStack>> = grid
+                .iter()
+                .map(|c| {
+                    c.as_ref()
+                        .map(|(item, count)| ItemStack::new(item.as_str(), *count))
+                })
+                .collect();
+            let recipes = self.res.recipes();
+            let (name, result) = recipes.find(&grid, size)?;
+            let full = |n: &str| match n.contains(':') {
+                true => n.to_owned(),
+                false => format!("minecraft:{n}"),
+            };
+            Some(horizon_mods::Crafted {
+                recipe: full(name),
+                result: (result.item.to_string(), result.count),
+                remainders: recipes
+                    .remainders(name, &grid, size)
+                    .into_iter()
+                    .map(|r| r.map(|s| (s.item.to_string(), s.count)))
+                    .collect(),
+            })
+        }
+        fn cook(&self, kind: &str, item: &str) -> Option<horizon_mods::Cooked> {
+            let kind = match kind.contains(':') {
+                true => kind.to_owned(),
+                false => format!("minecraft:{kind}"),
+            };
+            let stack = horizon_client::items::ItemStack::new(item, 1);
+            let c = self.res.recipes().cook(&kind, &stack)?;
+            Some(horizon_mods::Cooked {
+                recipe: match c.id.contains(':') {
+                    true => c.id.clone(),
+                    false => format!("minecraft:{}", c.id),
+                },
+                result: (c.result.item.to_string(), c.result.count),
+                experience: c.experience,
+                time: c.time,
+            })
+        }
+        fn stonecut(&self, item: &str) -> Vec<(String, (String, u32))> {
+            let stack = horizon_client::items::ItemStack::new(item, 1);
+            self.res
+                .stations()
+                .recipes
+                .stonecutter(&stack)
+                .into_iter()
+                .map(|r| {
+                    let id = match r.id.contains(':') {
+                        true => r.id.clone(),
+                        false => format!("minecraft:{}", r.id),
+                    };
+                    (id, (r.result.item.to_string(), r.result.count))
+                })
+                .collect()
+        }
+        fn recipes_of_type(&self, kind: &str) -> Vec<(String, String)> {
+            self.res
+                .recipes()
+                .custom
+                .iter()
+                .filter(|(_, k, _)| k == kind)
+                .map(|(id, _, json)| (id.clone(), json.clone()))
+                .collect()
+        }
+        fn test_ingredient(&self, ingredient: &str, item: &str) -> bool {
+            // A bare id or tag as written in a file, or JSON.
+            let value = serde_json::from_str(ingredient)
+                .unwrap_or_else(|_| serde_json::Value::String(ingredient.to_owned()));
+            horizon_client::crafting::Ingredient::parse(&value, self.res.items())
+                .is_some_and(|i| i.0.contains(item))
+        }
         fn stack_at(
             &self,
             dimension: &str,

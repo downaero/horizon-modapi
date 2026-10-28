@@ -27,7 +27,7 @@ impl Ingredient {
     pub fn of(items: Vec<String>) -> Self {
         Self(items.iter().cloned().collect(), items)
     }
-    fn parse(v: &Value, items: &Items) -> Option<Self> {
+    pub fn parse(v: &Value, items: &Items) -> Option<Self> {
         let mut list: Vec<String> = Vec::new();
         let mut add = |s: &str| {
             let more: Vec<String> = match s.strip_prefix('#') {
@@ -1099,6 +1099,9 @@ pub struct Recipes {
     pub cooking: Vec<Cooking>,
     /// `category` and `group` of each crafting recipe, by file name.
     pub meta: HashMap<String, (String, String)>,
+    /// Content mods' recipe files of types the game does not run (a mod's
+    /// machine's, `create:pressing`): id, type, JSON. For the mods' API.
+    pub custom: Vec<(String, String, String)>,
     facts: HashMap<Arc<str>, Facts>,
     /// The `#minecraft:curse` enchantments.
     curses: HashSet<String>,
@@ -1189,27 +1192,46 @@ impl Recipes {
             files.sort();
             Ok(files)
         };
+        // A content mod's recipes in folders too (`recipe/pressing/iron.json`).
+        fn tree(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>) {
+            let Ok(entries) = fs::read_dir(dir) else {
+                return;
+            };
+            let mut entries: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+            entries.sort();
+            for p in entries {
+                let Some(name) = p.file_name().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if p.is_dir() {
+                    tree(&p, &format!("{rel}{name}/"), out);
+                } else if let Some(stem) = name.strip_suffix(".json") {
+                    out.push((format!("{rel}{stem}"), p.clone()));
+                }
+            }
+        }
         // Vanilla's recipes by bare name, then content mods' as `<ns>:<name>`.
         let mut files: Vec<(String, PathBuf)> = json_files(&root.join("data/minecraft/recipe"))?
             .into_iter()
-            .map(|p| (String::new(), p))
+            .map(|p| {
+                let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                (stem.to_owned(), p)
+            })
             .collect();
         for namespace in crate::mod_content::namespaces(root) {
-            let dir = root.join(format!("data/{namespace}/recipe"));
-            if dir.is_dir() {
-                files.extend(
-                    json_files(&dir)?
-                        .into_iter()
-                        .map(|p| (format!("{namespace}:"), p)),
-                );
-            }
+            let mut own = Vec::new();
+            tree(&root.join(format!("data/{namespace}/recipe")), "", &mut own);
+            files.extend(
+                own.into_iter()
+                    .map(|(name, p)| (format!("{namespace}:{name}"), p)),
+            );
         }
-        for (prefix, path) in files {
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            let name = format!("{prefix}{stem}");
+        let mut custom = Vec::new();
+        for (name, path) in files {
             // Vanilla's RecipeManager logs a file that does not parse and
             // goes on ("Couldn't parse data file").
-            let v: Value = match serde_json::from_slice(&fs::read(&path)?) {
+            let bytes = fs::read(&path)?;
+            let v: Value = match serde_json::from_slice(&bytes) {
                 Ok(v) => v,
                 Err(e) => {
                     log::warn!("Horizon: recipe {name} not loaded: {e}");
@@ -1391,7 +1413,16 @@ impl Recipes {
                     }
                     None
                 }
-                _ => None,
+                kind => {
+                    if !kind.is_empty() && !kind.starts_with("minecraft:") && name.contains(':') {
+                        custom.push((
+                            name.clone(),
+                            kind.to_owned(),
+                            String::from_utf8_lossy(&bytes).into_owned(),
+                        ));
+                    }
+                    None
+                }
             };
             if let Some(recipe) = parsed {
                 crafting.push((name, recipe));
@@ -1423,6 +1454,7 @@ impl Recipes {
             crafting,
             cooking,
             meta,
+            custom,
             facts,
             curses,
             cook_index: Default::default(),
@@ -1683,6 +1715,7 @@ mod tests {
             crafting: Vec::new(),
             cooking,
             meta: HashMap::new(),
+            custom: Vec::new(),
             facts: HashMap::new(),
             curses: HashSet::new(),
             cook_index: Default::default(),
@@ -1735,6 +1768,7 @@ mod tests {
             crafting: Vec::new(),
             cooking: Vec::new(),
             meta: HashMap::new(),
+            custom: Vec::new(),
             facts: HashMap::new(),
             curses: HashSet::new(),
             cook_index: Default::default(),

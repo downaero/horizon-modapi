@@ -268,7 +268,10 @@ impl Capability {
         if !version.starts_with("0.1.") {
             return Err(format!("needs API {version}; this Horizon runs {API}"));
         }
-        if matches!(interface, "log" | "files" | "attachments" | "peers") {
+        if matches!(
+            interface,
+            "log" | "files" | "attachments" | "peers" | "recipe-manager"
+        ) {
             return Ok(None);
         }
         // A recipe viewer's panel is part of capability `ui`.

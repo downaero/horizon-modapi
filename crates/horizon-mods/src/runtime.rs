@@ -227,6 +227,32 @@ mod stack_bindings {
     });
 }
 use stack_bindings::{StacksHost, horizon::mods::stacks};
+mod recipe_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "recipe-manager-host",
+    });
+}
+use recipe_bindings::{RecipeManagerHost, horizon::mods::recipe_manager};
+/// Most bytes of recipe files one `recipe-manager.of-type` call returns.
+const RECIPE_FILE_BYTES: usize = 4 << 20;
+
+/// A crafting recipe a grid matched (`recipe-manager.craft`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Crafted {
+    pub recipe: String,
+    pub result: (String, u32),
+    pub remainders: Vec<Option<(String, u32)>>,
+}
+
+/// A cooking recipe (`recipe-manager.cook`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Cooked {
+    pub recipe: String,
+    pub result: (String, u32),
+    pub experience: f32,
+    pub time: u32,
+}
 /// Largest bytes a mod keeps on one stack.
 const STACK_DATA_BYTES: usize = 16 << 10;
 
@@ -856,6 +882,27 @@ pub trait WorldView: std::any::Any + Send {
     ) -> bool {
         false
     }
+    /// The crafting recipe a `width` by `width` grid matches.
+    fn craft(&self, _grid: &[Option<(String, u32)>], _width: u32) -> Option<Crafted> {
+        None
+    }
+    /// The cooking recipe of `kind` taking `item`.
+    fn cook(&self, _kind: &str, _item: &str) -> Option<Cooked> {
+        None
+    }
+    /// The stonecutter's recipes taking `item`: id, result.
+    fn stonecut(&self, _item: &str) -> Vec<(String, (String, u32))> {
+        Vec::new()
+    }
+    /// The content mods' recipe files of a type the game does not run: id,
+    /// JSON.
+    fn recipes_of_type(&self, _kind: &str) -> Vec<(String, String)> {
+        Vec::new()
+    }
+    /// Whether a recipe file's ingredient takes `item`.
+    fn test_ingredient(&self, _ingredient: &str, _item: &str) -> bool {
+        false
+    }
     /// The redstone signal reaching a block of the mod's, as of the tick's
     /// start (capability `redstone`); `None` where it is not known.
     fn power(&self, _dimension: &str, _x: i32, _y: i32, _z: i32) -> Option<u8> {
@@ -1241,6 +1288,8 @@ impl Mods {
             ConsoleHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             StacksHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
+            RecipeManagerHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             EffectsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
@@ -3279,6 +3328,78 @@ impl stacks::Host for State {
             .is_some_and(|v| v.set_stack_at(&dimension, [x, y, z], slot, stack, &id))
     }
 }
+impl recipe_manager::Host for State {
+    fn craft(
+        &mut self,
+        grid: Vec<Option<recipe_manager::ItemCount>>,
+        width: u32,
+    ) -> Option<recipe_manager::Crafted> {
+        if !(1..=3).contains(&width) || grid.len() != (width * width) as usize {
+            return None;
+        }
+        let grid: Vec<Option<(String, u32)>> = grid
+            .into_iter()
+            .map(|c| c.filter(|c| c.count > 0).map(|c| (c.item, c.count)))
+            .collect();
+        let c = self.world.lock().ok()?.as_ref()?.craft(&grid, width)?;
+        let item = |(item, count): (String, u32)| recipe_manager::ItemCount { item, count };
+        Some(recipe_manager::Crafted {
+            recipe: c.recipe,
+            output: item(c.result),
+            remainders: c.remainders.into_iter().map(|r| r.map(item)).collect(),
+        })
+    }
+    fn cook(&mut self, kind: String, item: String) -> Option<recipe_manager::Cooked> {
+        let c = self.world.lock().ok()?.as_ref()?.cook(&kind, &item)?;
+        Some(recipe_manager::Cooked {
+            recipe: c.recipe,
+            output: recipe_manager::ItemCount {
+                item: c.result.0,
+                count: c.result.1,
+            },
+            experience: c.experience,
+            time: c.time,
+        })
+    }
+    fn stonecut(&mut self, item: String) -> Vec<(String, recipe_manager::ItemCount)> {
+        let Ok(view) = self.world.lock() else {
+            return Vec::new();
+        };
+        view.as_ref()
+            .map(|v| v.stonecut(&item))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(id, (item, count))| (id, recipe_manager::ItemCount { item, count }))
+            .collect()
+    }
+    fn of_type(&mut self, kind: String) -> Vec<recipe_manager::RecipeFile> {
+        let Ok(view) = self.world.lock() else {
+            return Vec::new();
+        };
+        let mut budget = RECIPE_FILE_BYTES;
+        view.as_ref()
+            .map(|v| v.recipes_of_type(&kind))
+            .unwrap_or_default()
+            .into_iter()
+            .take_while(|(_, json)| {
+                let fits = json.len() <= budget;
+                budget = budget.saturating_sub(json.len());
+                fits
+            })
+            .map(|(id, json)| recipe_manager::RecipeFile { id, json })
+            .collect()
+    }
+    fn test_ingredient(&mut self, ingredient: String, item: String) -> bool {
+        if ingredient.len() > 64 << 10 {
+            return false;
+        }
+        let Ok(view) = self.world.lock() else {
+            return false;
+        };
+        view.as_ref()
+            .is_some_and(|v| v.test_ingredient(&ingredient, &item))
+    }
+}
 impl console::Host for State {
     fn run(&mut self, line: String) -> Result<(), String> {
         let line = line.trim().trim_start_matches('/').to_owned();
@@ -3393,7 +3514,7 @@ impl peers::Host for State {
         Ok(())
     }
     fn running(&mut self, id: String) -> bool {
-        self.peers.lock().is_ok_and(|p| p.iter().any(|m| *m == id))
+        self.peers.lock().is_ok_and(|p| p.contains(&id))
     }
 }
 impl transfer::Host for State {

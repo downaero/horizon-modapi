@@ -49,8 +49,15 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `console`, `stacks`, `log`, `storage`, `players`, `world`
+- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `console`, `stacks`, `recipe-manager`, `log`, `storage`, `players`, `world`
 - Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `item-events`, `peer-events`, `menu-events`, `server-events`
+
+## World `recipe-manager-host`
+
+The game's side of `recipe-manager` (imports only).
+
+- Imports (what the game offers): `recipe-manager`
+- Exports (what the mod provides): 
 
 ## World `stacks-host`
 
@@ -1381,3 +1388,56 @@ Capability `stacks`, server mods only (experimental): what an item stack carries
 | `set-player-stack` | `func(player: string, slot: u32, stack: option<stack>) -> bool` | Puts a stack in a player's slot (none empties it), after the call. What other mods keep on the stack there stays when the item does. |
 | `container-stack` | `func(dimension: string, x: s32, y: s32, z: s32, slot: u32) -> option<stack>` | A slot of an inventory (a chest, a mod container, a furnace) in the simulated dimension, as it is now. |
 | `set-container-stack` | `func(dimension: string, x: s32, y: s32, z: s32, slot: u32, stack: option<stack>) -> bool` | Puts a stack in an inventory's slot at once (none empties it); false when there is no such slot. |
+
+## `recipe-manager`
+
+Access: not granted by any capability.
+
+The game's recipes, as vanilla's data and content mods' `data/` give them (NeoForge's `RecipeManager`): a machine of a mod's crafts, cooks or cuts as vanilla's stations do (a fan smelting what blows past it, a crafter of the mod's), and recipe types of the mod's own are read from every content mod's `data/<namespace>/recipe/` files, so other mods add recipes to its machines as data. Every server mod has it, with no capability.
+
+### record `item-count`
+
+An item and how many of it.
+
+| Field | Type | |
+| --- | --- | --- |
+| `item` | `string` |  |
+| `count` | `u32` |  |
+
+### record `crafted`
+
+A crafting recipe a grid matched.
+
+| Field | Type | |
+| --- | --- | --- |
+| `recipe` | `string` | The recipe's id, `minecraft:oak_planks`. |
+| `output` | `item-count` |  |
+| `remainders` | `list<option<item-count>>` | What stays in each cell of the grid once it is crafted (a bucket from a milk bucket), row by row as the grid. |
+
+### record `cooked`
+
+A cooking recipe.
+
+| Field | Type | |
+| --- | --- | --- |
+| `recipe` | `string` |  |
+| `output` | `item-count` |  |
+| `experience` | `f32` |  |
+| `time` | `u32` | Ticks it takes. |
+
+### record `recipe-file`
+
+A recipe file of a type the game does not run itself.
+
+| Field | Type | |
+| --- | --- | --- |
+| `id` | `string` | `gears:pressing/iron`: the namespace, then the path under `recipe/` without `.json`. |
+| `json` | `string` | The file's JSON as written. |
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `craft` | `func(grid: list<option<item-count>>, width: u32) -> option<crafted>` | The crafting table's recipe for a `width` by `width` grid (1 to 3, cells row by row), matched as vanilla matches it (a shaped recipe anywhere in the grid, mirrored too). |
+| `cook` | `func(kind: string, item: string) -> option<cooked>` | The cooking recipe of `kind` (`minecraft:smelting`, `minecraft:blasting`, `minecraft:smoking` or `minecraft:campfire_cooking`) taking `item`. |
+| `stonecut` | `func(item: string) -> list<tuple<string, item-count>>` | The stonecutter's recipes taking `item`, in its order: each recipe's id and result. |
+| `of-type` | `func(kind: string) -> list<recipe-file>` | Every recipe file of type `kind` (`gears:pressing`) the content mods carry, by id; empty for vanilla's own types (`minecraft:`). |
+| `test-ingredient` | `func(ingredient: string, item: string) -> bool` | Whether an ingredient, as recipe files write one (`minecraft:iron_ingot`, `#minecraft:logs`, or a JSON list of them), takes `item`. |

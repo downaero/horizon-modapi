@@ -243,6 +243,9 @@ pub mod server {
     /// Messages to other server mods.
     pub use horizon::mods::peers;
     pub use horizon::mods::players::{self, GameMode, Player};
+    /// The game's recipes: crafting, cooking, cutting, and recipe types of
+    /// the mod's own as data.
+    pub use horizon::mods::recipe_manager;
     /// Capability `redstone`: the signal reaching the mod's blocks.
     pub use horizon::mods::redstone;
     /// Capability `stacks`: names, enchantments and the mod's own data on items.

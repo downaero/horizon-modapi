@@ -82,18 +82,24 @@ fn mods_dir() -> &'static Path {
         for (name, manifest) in mods {
             let core = std::fs::read(built.join(format!("{name}.wasm"))).unwrap();
             let component = componentize(&core).unwrap();
-            // The gears mod reads its press recipes from its own `data/`.
+            // The gears mod carries its press recipes in its own `data/`.
             let hmod = if name == "gears" {
-                let press = std::fs::read(
-                    root.join("crates/horizon-mod-sdk/examples/gears/data/gears/recipes/press.txt"),
-                )
-                .unwrap();
-                Package::write_files(
-                    &manifest,
-                    Some(&component),
-                    &[("data/gears/recipes/press.txt", &press)],
-                )
-                .unwrap()
+                let file = |f: &str| {
+                    let path = format!("data/gears/recipe/{f}.json");
+                    let bytes = std::fs::read(
+                        root.join("crates/horizon-mod-sdk/examples/gears")
+                            .join(&path),
+                    )
+                    .unwrap();
+                    (path, bytes)
+                };
+                let files =
+                    ["pressing/iron", "pressing/gold", "pressing/logs", "counter"].map(file);
+                let files: Vec<(&str, &[u8])> = files
+                    .iter()
+                    .map(|(p, b)| (p.as_str(), b.as_slice()))
+                    .collect();
+                Package::write_files(&manifest, Some(&component), &files).unwrap()
             } else {
                 Package::write(&manifest, &component).unwrap()
             };

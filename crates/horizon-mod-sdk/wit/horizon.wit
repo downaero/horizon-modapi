@@ -1356,6 +1356,63 @@ interface stacks {
     set-container-stack: func(dimension: string, x: s32, y: s32, z: s32, slot: u32, stack: option<stack>) -> bool;
 }
 
+/// The game's recipes, as vanilla's data and content mods' `data/` give
+/// them (NeoForge's `RecipeManager`): a machine of a mod's crafts, cooks or
+/// cuts as vanilla's stations do (a fan smelting what blows past it, a
+/// crafter of the mod's), and recipe types of the mod's own are read from
+/// every content mod's `data/<namespace>/recipe/` files, so other mods add
+/// recipes to its machines as data. Every server mod has it, with no
+/// capability.
+interface recipe-manager {
+    /// An item and how many of it.
+    record item-count {
+        item: string,
+        count: u32,
+    }
+    /// A crafting recipe a grid matched.
+    record crafted {
+        /// The recipe's id, `minecraft:oak_planks`.
+        recipe: string,
+        output: item-count,
+        /// What stays in each cell of the grid once it is crafted (a bucket
+        /// from a milk bucket), row by row as the grid.
+        remainders: list<option<item-count>>,
+    }
+    /// A cooking recipe.
+    record cooked {
+        recipe: string,
+        output: item-count,
+        experience: f32,
+        /// Ticks it takes.
+        time: u32,
+    }
+    /// A recipe file of a type the game does not run itself.
+    record recipe-file {
+        /// `gears:pressing/iron`: the namespace, then the path under
+        /// `recipe/` without `.json`.
+        id: string,
+        /// The file's JSON as written.
+        json: string,
+    }
+    /// The crafting table's recipe for a `width` by `width` grid (1 to 3,
+    /// cells row by row), matched as vanilla matches it (a shaped recipe
+    /// anywhere in the grid, mirrored too).
+    craft: func(grid: list<option<item-count>>, width: u32) -> option<crafted>;
+    /// The cooking recipe of `kind` (`minecraft:smelting`,
+    /// `minecraft:blasting`, `minecraft:smoking` or
+    /// `minecraft:campfire_cooking`) taking `item`.
+    cook: func(kind: string, item: string) -> option<cooked>;
+    /// The stonecutter's recipes taking `item`, in its order: each recipe's
+    /// id and result.
+    stonecut: func(item: string) -> list<tuple<string, item-count>>;
+    /// Every recipe file of type `kind` (`gears:pressing`) the content mods
+    /// carry, by id; empty for vanilla's own types (`minecraft:`).
+    of-type: func(kind: string) -> list<recipe-file>;
+    /// Whether an ingredient, as recipe files write one (`minecraft:iron_ingot`,
+    /// `#minecraft:logs`, or a JSON list of them), takes `item`.
+    test-ingredient: func(ingredient: string, item: string) -> bool;
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -1403,6 +1460,12 @@ world horizon-block-mod {
     export menu-events;
     import console;
     import stacks;
+    import recipe-manager;
+}
+
+/// The game's side of `recipe-manager` (imports only).
+world recipe-manager-host {
+    import recipe-manager;
 }
 
 /// The game's side of capability `stacks` (imports only).

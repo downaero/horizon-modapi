@@ -7,8 +7,8 @@ use horizon_mod_sdk::{
     export_server_mod, player_ops,
     server::{
         BlockPos, BlockTarget, Player, Pos, Registration, ServerMod, attachments, block_entities,
-        containers, effects, entities, files, items, menus, net, peers, players, redstone, stacks,
-        transfer, world,
+        containers, effects, entities, items, menus, net, peers, players, recipe_manager, redstone,
+        stacks, transfer, world,
     },
 };
 
@@ -24,22 +24,84 @@ const DEPLOYER: &str = "gears:deployer";
 const LIFT_TICKS: u32 = 60;
 const DIMENSION: &str = "minecraft:overworld";
 
-/// The press recipes the mod carries as data, one `input output count` a line.
+/// The press's recipes, `gears:pressing` files any content mod carries in
+/// `data/<namespace>/recipe/` (this one's in `data/gears/recipe/pressing/`):
+/// the ingredient as the file writes it, the output and its count.
 fn read_press() -> Vec<(String, String, u32)> {
-    let Some(bytes) = files::read("data/gears/recipes/press.txt") else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&bytes)
-        .lines()
-        .filter_map(|line| {
-            let mut w = line.split_whitespace();
+    recipe_manager::of_type("gears:pressing")
+        .iter()
+        .filter_map(|file| {
+            let v: serde_json::Value = serde_json::from_str(&file.json).ok()?;
+            let result = &v["result"];
             Some((
-                w.next()?.to_owned(),
-                w.next()?.to_owned(),
-                w.next()?.parse().ok()?,
+                v["ingredient"].to_string(),
+                result["id"].as_str()?.to_owned(),
+                result["count"].as_u64().unwrap_or(1) as u32,
             ))
         })
         .collect()
+}
+
+/// The chest under a crafting table crafts once from its first nine slots,
+/// as a 3 by 3 grid (`recipe_manager::craft`): the result and what the
+/// recipe leaves go to its other slots.
+fn auto_craft(player: &str, t: &BlockTarget) {
+    let (d, x, y, z) = (t.dimension.as_str(), t.x, t.y - 1, t.z);
+    let grid: Vec<Option<recipe_manager::ItemCount>> = (0..9)
+        .map(|slot| {
+            stacks::container_stack(d, x, y, z, slot).map(|s| recipe_manager::ItemCount {
+                item: s.item,
+                count: s.count,
+            })
+        })
+        .collect();
+    let Some(crafted) = recipe_manager::craft(&grid, 3) else {
+        players::tell(player, "The chest below crafts nothing");
+        return;
+    };
+    let mut made = vec![crafted.output.clone()];
+    for slot in 0..9u32 {
+        let Some(mut s) = stacks::container_stack(d, x, y, z, slot) else {
+            continue;
+        };
+        s.count -= 1;
+        let _ = stacks::set_container_stack(d, x, y, z, slot, (s.count > 0).then_some(&s));
+        if let Some(Some(rest)) = crafted.remainders.get(slot as usize) {
+            made.push(rest.clone());
+        }
+    }
+    // Into the first free slot past the grid; dropped when there is none.
+    for m in made {
+        let free = (9..27).find(|&slot| stacks::container_stack(d, x, y, z, slot).is_none());
+        let put = free.is_some_and(|slot| {
+            let stack = stacks::Stack {
+                item: m.item.clone(),
+                count: m.count,
+                damage: 0,
+                name: None,
+                enchantments: Vec::new(),
+                data: None,
+            };
+            stacks::set_container_stack(d, x, y, z, slot, Some(&stack))
+        });
+        if !put {
+            let _ = items::drop(
+                d,
+                f64::from(t.x) + 0.5,
+                f64::from(t.y) + 1.0,
+                f64::from(t.z) + 0.5,
+                &m.item,
+                m.count,
+            );
+        }
+    }
+    players::tell(
+        player,
+        &format!(
+            "Crafted {} {} ({})",
+            crafted.output.count, crafted.output.item, crafted.recipe
+        ),
+    );
 }
 
 /// The crate's screen: its slots 0 and 1 as a press's input and output, the
@@ -162,8 +224,8 @@ struct Gears {
     gears: Vec<([i32; 3], u32)>,
     /// The turn of the gears, in degrees (capability `entities`).
     spin: f32,
-    /// The recipes of the counter's press: (input, output, count) read from
-    /// the mod's own `data/gears/recipes/press.txt` (capability-free `files`).
+    /// The recipes of the counter's press: (ingredient, output, count), read
+    /// at the first tick that needs them (capability-free `recipe-manager`).
     press: Vec<(String, String, u32)>,
     /// Each lift on its way up: its position, the load and the ticks gone.
     lifts: Vec<([i32; 3], Contraption, u32)>,
@@ -183,7 +245,7 @@ impl ServerMod for Gears {
             ticks: Vec::new(),
             gears: Vec::new(),
             spin: 0.0,
-            press: read_press(),
+            press: Vec::new(),
             lifts: Vec::new(),
             drill_ticks: 0,
             viewers: Vec::new(),
@@ -308,6 +370,10 @@ impl ServerMod for Gears {
         target: Option<&BlockTarget>,
     ) -> bool {
         match target {
+            Some(t) if item == "minecraft:stick" && t.state == "minecraft:crafting_table" => {
+                auto_craft(player, t);
+                true
+            }
             Some(t) if item == "minecraft:stick" && t.state.starts_with("gears:") => {
                 players::tell(player, &format!("This is {}", t.state));
                 true
@@ -508,10 +574,23 @@ impl ServerMod for Gears {
             f64::from(pos.z) + 0.5,
             2.0,
         ) {
-            if let Some((_, out, n)) = self.press.iter().find(|(i, _, _)| *i == item.item)
+            if self.press.is_empty() {
+                self.press = read_press();
+            }
+            let pressed = self
+                .press
+                .iter()
+                .find(|(i, _, _)| recipe_manager::test_ingredient(i, &item.item))
+                .map(|(_, out, n)| (out.clone(), *n));
+            // What no press recipe takes, it smelts as a furnace would.
+            let made = pressed.or_else(|| {
+                recipe_manager::cook("minecraft:smelting", &item.item)
+                    .map(|c| (c.output.item, c.output.count))
+            });
+            if let Some((out, n)) = made
                 && items::take(item.id)
             {
-                gives.push((out.clone(), (item.count * n).min(99)));
+                gives.push((out, (item.count * n).min(99)));
             }
         }
         for (out, count) in gives {

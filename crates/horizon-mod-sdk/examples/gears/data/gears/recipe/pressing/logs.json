@@ -1,0 +1,5 @@
+{
+  "type": "gears:pressing",
+  "ingredient": "#minecraft:logs",
+  "result": { "id": "minecraft:stick", "count": 8 }
+}

@@ -1105,6 +1105,7 @@ name = "gears"
 version = "0.1.0"
 dependencies = [
  "horizon-mod-sdk",
+ "serde_json",
 ]
 
 [[package]]

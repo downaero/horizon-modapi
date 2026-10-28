@@ -806,10 +806,34 @@ gears example counts on each player the counters they placed.
 
 Every mod, with no capability, can read what its package carries under `data/` and
 `assets/` (API level 23): `files.read(path)` gives a file (at most 1 MiB) or none,
-`files.paths(prefix)` the paths that start with a prefix (at most 1024, sorted). That is
-where a server mod keeps its own recipe types as data: the gears example's
-counter reads `data/gears/recipes/press.txt`, one `input output count` a line, when it
-starts. Nothing outside `data/` and `assets/` of the mod's own package can be read.
+`files.paths(prefix)` the paths that start with a prefix (at most 1024, sorted). Nothing
+outside `data/` and `assets/` of the mod's own package can be read.
+
+### The game's recipes
+
+Every server mod, with no capability, asks the game about its recipes through
+`recipe-manager` (API level 36), as NeoForge's `RecipeManager`:
+
+- `craft(grid, width)`: the crafting table's recipe for a 1x1 to 3x3 grid, matched as vanilla
+  matches it, with its id, result and what stays in each cell (a bucket);
+- `cook(kind, item)`: the `minecraft:smelting`, `blasting`, `smoking` or `campfire_cooking`
+  recipe taking an item, with its result, experience and time;
+- `stonecut(item)`: the stonecutter's recipes for an item;
+- `of-type(kind)`: every recipe file of a type the game does not run itself (`gears:pressing`),
+  from the `data/<namespace>/recipe/` folders (subfolders too) of every content mod, as JSON;
+- `test-ingredient(ingredient, item)`: whether an ingredient as recipe files write one
+  (`minecraft:iron_ingot`, `#minecraft:logs`, a list) takes an item, tags included.
+
+A mod with capability `registries` puts recipe files in its package's `data/<namespace>/recipe/`:
+vanilla's types join the game's recipes (the crafting table, furnaces, the recipe book), and its
+own types are its machines', which another mod's or a pack's data adds to as with Create's
+`create:pressing`. The gears example's counter presses what `gears:pressing` files say
+(`data/gears/recipe/pressing/`) and smelts what no press recipe takes; a stick used on a crafting
+table crafts once from the first nine slots of the chest below it; `gears:counter` has a crafting
+recipe of its own.
+
+`cargo horizon-mod test` answers `of-type` from the package's own recipe files and tests
+ingredients by item id only; it has no vanilla recipes or tags.
 
 ### Capability `entities`
 

@@ -37,6 +37,9 @@ pub struct TestGame {
     pub power: std::collections::BTreeMap<(i32, i32, i32), u8>,
     /// The item entities lying in the Overworld; `take` removes them.
     pub items: Vec<crate::DroppedStack>,
+    /// The package's own recipe files (`data/<ns>/recipe/`): id, type, JSON.
+    /// `recipe-manager` sees these and no vanilla recipe.
+    recipes: Vec<(String, String, String)>,
 }
 
 /// The world a script's mod reads: [`TestGame::world`], the signals and item
@@ -45,9 +48,66 @@ struct ScriptWorld {
     blocks: std::collections::BTreeMap<(i32, i32, i32), String>,
     power: std::collections::BTreeMap<(i32, i32, i32), u8>,
     dropped: Vec<crate::DroppedStack>,
+    recipes: Vec<(String, String, String)>,
+}
+
+/// The recipe files a package carries: id, type, JSON.
+fn package_recipes(hmod: &Path) -> Vec<(String, String, String)> {
+    let Ok(file) = std::fs::File::open(hmod) else {
+        return Vec::new();
+    };
+    let Ok(mut zip) = zip::ZipArchive::new(file) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for i in 0..zip.len() {
+        let Ok(mut entry) = zip.by_index(i) else {
+            continue;
+        };
+        let name = entry.name().to_owned();
+        let Some((ns, path)) = name
+            .strip_prefix("data/")
+            .and_then(|n| n.split_once("/recipe/"))
+        else {
+            continue;
+        };
+        let Some(path) = path.strip_suffix(".json") else {
+            continue;
+        };
+        let mut json = String::new();
+        if std::io::Read::read_to_string(&mut entry, &mut json).is_err() {
+            continue;
+        }
+        let kind = serde_json::from_str::<serde_json::Value>(&json)
+            .ok()
+            .and_then(|v| v["type"].as_str().map(str::to_owned))
+            .unwrap_or_default();
+        out.push((format!("{ns}:{path}"), kind, json));
+    }
+    out
 }
 
 impl crate::WorldView for ScriptWorld {
+    fn recipes_of_type(&self, kind: &str) -> Vec<(String, String)> {
+        if kind.starts_with("minecraft:") {
+            return Vec::new();
+        }
+        self.recipes
+            .iter()
+            .filter(|(_, k, _)| k == kind)
+            .map(|(id, _, json)| (id.clone(), json.clone()))
+            .collect()
+    }
+    fn test_ingredient(&self, ingredient: &str, item: &str) -> bool {
+        // Items by id; no tag has items here.
+        let value = serde_json::from_str(ingredient)
+            .unwrap_or_else(|_| serde_json::Value::String(ingredient.to_owned()));
+        let is = |v: &serde_json::Value| v.as_str() == Some(item);
+        match &value {
+            serde_json::Value::Array(list) => list.iter().any(is),
+            v => is(v) || is(&v["item"]),
+        }
+    }
     fn power(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<u8> {
         (dimension == "minecraft:overworld")
             .then(|| self.power.get(&(x, y, z)).copied())
@@ -143,6 +203,7 @@ impl TestGame {
             world: Default::default(),
             power: Default::default(),
             items: Vec::new(),
+            recipes: package_recipes(hmod),
         };
         copy_mod(hmod, &copy)?;
         game.start()?;
@@ -611,6 +672,7 @@ impl Step {
             blocks: game.world.clone(),
             power: game.power.clone(),
             dropped: game.items.clone(),
+            recipes: game.recipes.clone(),
         }));
         if let Some(name) = &self.join {
             game.join(name);
