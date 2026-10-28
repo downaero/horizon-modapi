@@ -189,6 +189,11 @@ macro_rules! export_mod {
 /// type implementing [`ServerMod`](server::ServerMod), exported with
 /// [`export_server_mod!`]. It runs where the world is simulated, and reads
 /// and messages the players with capability `players`.
+/// Moving structures: blocks taken out of the world, moved, put back.
+pub mod contraption;
+/// Networks of connected blocks: shafts, pipes, cables.
+pub mod network;
+
 pub mod server {
     wit_bindgen::generate!({
         path: "wit",

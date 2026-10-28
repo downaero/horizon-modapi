@@ -663,6 +663,25 @@ guests'; hoppers and the mod itself are not held to it. Not saved: the mod sets
 its rules again after a load (the gears crate does at each open). A progress bar or
 a screen of its own is not part of this.
 
+### Moving structures and networks
+
+`entities.spawn-block(dimension, x, y, z, state)` (API level 24) places a block state as an
+entity, drawn full size as a falling block is, with no gravity and never landing; the
+mod moves it with `move-to` and takes it away with `remove`, and it is never saved. On it the
+SDK builds `horizon_mod_sdk::contraption::Contraption`: `assemble(dimension, min, max)` takes
+the non-air blocks of a box (at most 1024) out of the world as such entities, `move_by(delta)`
+moves them together a fraction of a block at a time, and `disassemble()` puts them back as
+blocks at the nearest whole position (capabilities `world` and `entities`). That is a piston,
+a gantry, an elevator or a simple flying machine; the gears example's `gears:lift` raises the
+3 x 3 x 3 box above it three blocks when used. Players do not stand on or collide with a
+structure while it moves, and it moves without turning.
+
+`horizon_mod_sdk::network` walks networks of connected blocks in the mod's own code:
+`propagate(sources, limit, link)` carries a value (a shaft's speed, reversed by a gear, doubled
+by a cog) from each source to each member and marks a conflict where two disagree;
+`members(start, limit, connects)` lists one pipe or cable network. A mod keeps what flows
+(stress, fluid amounts) in `block-entities` data and shows it with entities and effects.
+
 ### Reading the mod's own files
 
 Every mod, with no capability, can read what its package carries under `data/` and

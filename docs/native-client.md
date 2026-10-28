@@ -67,6 +67,9 @@ Worlds autosave every 6000 ticks (5 minutes), when chunks unload and on quit.
 On headless Linux use `vscreen start ./target/release/horizon-client` and
 `vscreen shot`.
 
+With `HORIZON_NO_CAPTURE` set the game never grabs the pointer, so an agent can
+drive it through `horizon-ctl` while someone keeps using the same mouse.
+
 Sound: the game prints the output it opened (`Horizon: audio output ...`) or
 why it has none (`Horizon: no sound: ...`). It opens none with
 `HORIZON_NO_AUDIO` set, nor on a `vscreen`, where tests run beside someone

@@ -951,6 +951,7 @@ Capability `entities`, server mods only (manifest `api = "0.3"`, experimental): 
 | `remove` | `func(handle: u32) -> bool` | Removes one of the mod's entities. |
 | `set-slot` | `func(handle: u32, slot: string, item: option<string>) -> bool` | Puts an item in an equipment slot of the entity (`mainhand`, `offhand`, `head`, `chest`, `legs`, `feet`); none empties it. A block's item on the head is drawn as the block, so a mod's own block (`mymod:gear`) can stand in the world as a model that `set-pose` then turns. |
 | `set-pose` | `func(handle: u32, part: string, x: f32, y: f32, z: f32) -> bool` | Turns a body part of the entity, in degrees about x, y and z as an armor stand's `Pose` does: `head`, `body`, `left-arm`, `right-arm`, `left-leg` or `right-leg`. Values are wrapped to -360 to 360. |
+| `spawn-block` | `func(dimension: string, x: f64, y: f64, z: f64, state: string) -> result<u32, string>` | Places a block state (`mymod:gear[axis=x]`, a vanilla one too) as an entity: drawn full size like a falling block, with no gravity, never landing; the mod moves it with `move-to` (x and z are its centre, y its bottom) and takes it away with `remove`. Players do not collide with it. Counts toward the same 1024 entities. A moving structure is its blocks taken out of the world (`world.set-blocks`) and put back. |
 
 ## `containers`
 

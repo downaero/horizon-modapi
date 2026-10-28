@@ -1068,12 +1068,59 @@ mod run {
                         self.mods.mod_entities.insert((mod_id, handle), stand.id);
                         self.armor_stands.push(stand);
                     }
+                    horizon_mods::EntityOp::SpawnBlock {
+                        handle,
+                        dimension,
+                        pos,
+                        state,
+                    } => {
+                        if dimension != self.dim.id() {
+                            continue;
+                        }
+                        let registry = self.pack.assets.registry;
+                        let Ok(state) = crate::game::render_control::parse_state(registry, &state)
+                        else {
+                            continue;
+                        };
+                        self.next_entity += 1;
+                        let at = Vec3::new(pos[0], pos[1], pos[2]);
+                        self.falling.push(crate::game::FallingBlock {
+                            id: self.next_entity,
+                            state,
+                            start_pos: horizon_core::position::BlockPos::new(
+                                pos[0].floor() as i32,
+                                pos[1].floor() as i32,
+                                pos[2].floor() as i32,
+                            ),
+                            position: at,
+                            previous: at,
+                            velocity: Vec3::ZERO,
+                            age: 0,
+                            no_gravity: true,
+                            drop_item: false,
+                            fall_distance: 0.0,
+                            stuck: Vec3::ZERO,
+                            damage: Default::default(),
+                            saved: None,
+                            mod_owned: true,
+                        });
+                        self.mods
+                            .mod_entities
+                            .insert((mod_id, handle), self.next_entity);
+                    }
                     horizon_mods::EntityOp::Move { handle, pos, yaw } => {
-                        if let Some(&id) = self.mods.mod_entities.get(&(mod_id, handle))
-                            && let Some(a) = self.armor_stands.iter_mut().find(|a| a.id == id)
-                        {
-                            a.position = Vec3::new(pos[0], pos[1], pos[2]);
+                        let Some(&id) = self.mods.mod_entities.get(&(mod_id, handle)) else {
+                            continue;
+                        };
+                        let to = Vec3::new(pos[0], pos[1], pos[2]);
+                        if let Some(a) = self.armor_stands.iter_mut().find(|a| a.id == id) {
+                            a.position = to;
                             a.yaw = yaw;
+                        } else if let Some(f) =
+                            self.falling.iter_mut().find(|f| f.mod_owned && f.id == id)
+                        {
+                            f.previous = f.position;
+                            f.position = to;
                         }
                     }
                     horizon_mods::EntityOp::SetItem { handle, item } => {
@@ -1106,6 +1153,7 @@ mod run {
                     horizon_mods::EntityOp::Remove { handle } => {
                         if let Some(id) = self.mods.mod_entities.remove(&(mod_id, handle)) {
                             self.armor_stands.retain(|a| a.id != id);
+                            self.falling.retain(|f| !(f.mod_owned && f.id == id));
                         }
                     }
                 }

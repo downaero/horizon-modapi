@@ -1143,6 +1143,9 @@ struct FallingBlock {
     damage: horizon_client::falling_block::Damage,
     /// The UUID and compound it was loaded with, kept while it moves.
     saved: Option<Box<([i32; 4], horizon_world::nbt::Tag)>>,
+    /// A server mod's block (`entities.spawn-block`): it neither falls nor
+    /// lands, moves only when the mod moves it and is never saved.
+    mod_owned: bool,
 }
 /// The data loaded once at startup and never changed: blocks, items,
 /// recipes, biomes, mobs, collision and motion. Read-only and `Send + Sync`,
@@ -3482,6 +3485,7 @@ impl Game<'_> {
                             &self.res.facts().get(state).name,
                         ),
                         saved: None,
+                        mod_owned: false,
                     });
                 }
                 LevelEvent::Player { pos, effect, .. } => match effect {
@@ -3729,6 +3733,11 @@ impl Game<'_> {
         // FallingBlockEntity.tick places or drops each block in its own tick,
         // so a block falling onto one that just landed lands on top of it.
         for mut f in falling {
+            if f.mod_owned {
+                f.previous = f.position;
+                kept.push(f);
+                continue;
+            }
             if !ticking(f.position.x.floor() as i32, f.position.z.floor() as i32) {
                 kept.push(f);
                 continue;
@@ -5632,6 +5641,11 @@ impl Game<'_> {
         }
         // MouseHandler.grabMouse never captures an inactive window.
         if capture && !self.focused {
+            return;
+        }
+        // HORIZON_NO_CAPTURE: the pointer is never grabbed, for runs an agent
+        // drives (horizon-ctl) beside someone using the same mouse.
+        if capture && std::env::var_os("HORIZON_NO_CAPTURE").is_some() {
             return;
         }
         // The container screen's press state belongs to the screen: a screen

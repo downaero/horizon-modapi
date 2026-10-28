@@ -3,6 +3,7 @@
 //! the server ticks it and saves the bytes with the world. A gear (an iron
 //! ingot, capability `entities`) floats above each counter placed.
 use horizon_mod_sdk::{
+    contraption::Contraption,
     export_server_mod,
     server::{
         BlockPos, Player, Pos, Registration, ServerMod, block_entities, containers, effects,
@@ -14,6 +15,9 @@ const COUNTER: &str = "gears:counter";
 const CRATE: &str = "gears:crate";
 const BELT: &str = "gears:belt";
 const GAUGE: &str = "gears:gauge";
+const LIFT: &str = "gears:lift";
+/// Ticks a lift takes to raise its load three blocks.
+const LIFT_TICKS: u32 = 60;
 const DIMENSION: &str = "minecraft:overworld";
 
 /// The press recipes the mod carries as data, one `input output count` a line.
@@ -44,6 +48,8 @@ struct Gears {
     /// The recipes of the counter's press: (input, output, count) read from
     /// the mod's own `data/gears/recipes/press.txt` (capability-free `files`).
     press: Vec<(String, String, u32)>,
+    /// Each lift on its way up: its position, the load and the ticks gone.
+    lifts: Vec<([i32; 3], Contraption, u32)>,
 }
 
 impl ServerMod for Gears {
@@ -53,6 +59,7 @@ impl ServerMod for Gears {
             gears: Vec::new(),
             spin: 0.0,
             press: read_press(),
+            lifts: Vec::new(),
         };
         // The crate holds items (capability `containers`) and opens as a chest.
         containers::register(CRATE)?;
@@ -60,7 +67,7 @@ impl ServerMod for Gears {
     }
 
     fn block_placed(&mut self, _player: &Player, pos: BlockPos, state: &str) {
-        if state.starts_with(BELT) || state.starts_with(GAUGE) {
+        if state.starts_with(BELT) || state.starts_with(GAUGE) || state.starts_with(LIFT) {
             // Data under it, so the server ticks it.
             let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &[0]);
         }
@@ -115,10 +122,26 @@ impl ServerMod for Gears {
     }
 
     fn ticking_blocks(&self) -> Vec<String> {
-        vec![COUNTER.into(), BELT.into(), GAUGE.into()]
+        vec![COUNTER.into(), BELT.into(), GAUGE.into(), LIFT.into()]
     }
 
     fn block_tick(&mut self, dimension: &str, pos: Pos, state: &str) {
+        if state.starts_with(LIFT) {
+            // A lift on its way raises its load 3/60 of a block a tick, then
+            // sets it down as blocks (`horizon_mod_sdk::contraption`).
+            let at = [pos.x, pos.y, pos.z];
+            if let Some(i) = self.lifts.iter().position(|(p, _, _)| *p == at) {
+                self.lifts[i]
+                    .1
+                    .move_by([0.0, 3.0 / f64::from(LIFT_TICKS), 0.0]);
+                self.lifts[i].2 += 1;
+                if self.lifts[i].2 >= LIFT_TICKS {
+                    let (_, load, _) = self.lifts.remove(i);
+                    let _ = load.disassemble();
+                }
+            }
+            return;
+        }
         if state.starts_with(GAUGE) {
             // Five of signal for each item lying on it (capability
             // `redstone`'s output: a trapped chest's analog signal).
@@ -230,6 +253,23 @@ impl ServerMod for Gears {
     }
 
     fn block_used(&mut self, player: &str, dimension: &str, pos: Pos, state: &str) -> bool {
+        if state.starts_with(LIFT) {
+            // The 3 x 3 x 3 box above the lift goes up three blocks.
+            let at = [pos.x, pos.y, pos.z];
+            if self.lifts.iter().any(|(p, _, _)| *p == at) {
+                return true;
+            }
+            let min = [pos.x - 1, pos.y + 1, pos.z - 1];
+            let max = [pos.x + 1, pos.y + 3, pos.z + 1];
+            match Contraption::assemble(dimension, min, max) {
+                Ok(load) if !load.is_empty() => self.lifts.push((at, load, 0)),
+                Ok(_) => {}
+                Err(e) => {
+                    players::tell(player, &format!("The lift is stuck: {e}"));
+                }
+            }
+            return true;
+        }
         if state.starts_with(CRATE) {
             let _ = containers::set_name(dimension, pos.x, pos.y, pos.z, Some("Gear Crate"));
             // Slot 0 takes iron ingots only; slot 1 is only for taking from.

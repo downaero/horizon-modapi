@@ -225,6 +225,7 @@ impl Game<'_> {
                                     self.res.facts().get(state).name.ends_with("anvil"),
                                 ),
                                 saved: uuid.map(|u| Box::new((u, tag.clone()))),
+                                mod_owned: false,
                             });
                         }
                     }
@@ -710,7 +711,7 @@ impl Game<'_> {
                 out.entry(chunk_of(p.position)).or_default().push(tag);
             }
         }
-        for f in &self.falling {
+        for f in self.falling.iter().filter(|f| !f.mod_owned) {
             if keys.contains(&chunk_of(f.position)) {
                 let (uuid, raw) = match &f.saved {
                     Some(saved) => (saved.0, Some(saved.1.clone())),

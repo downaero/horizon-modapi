@@ -316,6 +316,13 @@ pub enum EntityOp {
         yaw: f32,
         item: String,
     },
+    /// `entities.spawn-block`: a block state as an entity.
+    SpawnBlock {
+        handle: u32,
+        dimension: String,
+        pos: [f64; 3],
+        state: String,
+    },
     Move {
         handle: u32,
         pos: [f64; 3],
@@ -2824,6 +2831,40 @@ impl entities::Host for State {
             pos: [x, y, z],
             yaw,
             item,
+        };
+        if !self.entity_op(op) {
+            return Err(format!("at most {ENTITY_OPS_PER_CALL} changes a call"));
+        }
+        self.next_handle += 1;
+        self.entity_handles.insert(handle);
+        Ok(handle)
+    }
+    fn spawn_block(
+        &mut self,
+        dimension: String,
+        x: f64,
+        y: f64,
+        z: f64,
+        state: String,
+    ) -> Result<u32, String> {
+        if self.entity_handles.len() >= ENTITIES_PER_MOD {
+            return Err(format!("at most {ENTITIES_PER_MOD} entities"));
+        }
+        if ![x, y, z].iter().all(|v| v.is_finite()) {
+            return Err("a position that is not a number".into());
+        }
+        if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref()) {
+            if !view.has_dimension(&dimension) {
+                return Err(format!("no dimension {dimension}"));
+            }
+            view.check_state(&state)?;
+        }
+        let handle = self.next_handle;
+        let op = EntityOp::SpawnBlock {
+            handle,
+            dimension,
+            pos: [x, y, z],
+            state,
         };
         if !self.entity_op(op) {
             return Err(format!("at most {ENTITY_OPS_PER_CALL} changes a call"));

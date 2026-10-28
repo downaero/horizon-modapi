@@ -893,6 +893,13 @@ interface entities {
     /// stand's `Pose` does: `head`, `body`, `left-arm`, `right-arm`,
     /// `left-leg` or `right-leg`. Values are wrapped to -360 to 360.
     set-pose: func(handle: u32, part: string, x: f32, y: f32, z: f32) -> bool;
+    /// Places a block state (`mymod:gear[axis=x]`, a vanilla one too) as an
+    /// entity: drawn full size like a falling block, with no gravity, never
+    /// landing; the mod moves it with `move-to` (x and z are its centre, y
+    /// its bottom) and takes it away with `remove`. Players do not collide
+    /// with it. Counts toward the same 1024 entities. A moving structure is
+    /// its blocks taken out of the world (`world.set-blocks`) and put back.
+    spawn-block: func(dimension: string, x: f64, y: f64, z: f64, state: string) -> result<u32, string>;
 }
 
 /// Capability `containers`, server mods only (manifest `api = "0.3"`,

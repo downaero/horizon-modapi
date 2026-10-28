@@ -203,6 +203,7 @@ impl Game<'_> {
                 stuck: Vec3::ZERO,
                 damage: Default::default(),
                 saved: None,
+                mod_owned: false,
             }),
             "minecraft:trident" => {
                 let mut t = super::trident::ThrownTrident::remote(id, at, yaw, pitch);
