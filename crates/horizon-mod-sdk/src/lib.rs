@@ -260,6 +260,9 @@ pub mod server {
     pub use horizon::mods::stacks;
     /// Capability `transfer`: items, fluids and energy between blocks.
     pub use horizon::mods::transfer;
+    /// Capability `block-entities`: model parts players' games turn at the
+    /// mod's blocks.
+    pub use horizon::mods::visuals;
     pub use horizon::mods::world::{self, BlockChange};
 
     /// The server's calls into a mod. Only the hooks [`Registration`] asks

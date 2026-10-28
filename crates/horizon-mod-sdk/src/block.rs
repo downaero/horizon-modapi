@@ -12,9 +12,10 @@
 //! only where those bytes are. A block placed by the mod's own
 //! [`Level::set_block`] gets its entity from [`Level::set_block_entity`] in
 //! a later call, once the block stands.
-use crate::level::{BlockState, Direction, Level};
-use crate::server::{BlockPos, BlockTarget, Player, Pos, block_entities, items};
+use crate::level::{Axis, BlockState, Direction, Level};
+use crate::server::{BlockPos, BlockTarget, Player, Pos, block_entities, items, visuals};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// What a click did, as NeoForge's `InteractionResult`: anything but
@@ -112,6 +113,89 @@ pub trait BlockEntity: Sized + 'static {
     /// Each server tick, when [`BlockEntity::TICKING`]; it is saved after
     /// when it changed.
     fn tick(&mut self, _level: &Level, _pos: BlockPos, _state: &BlockState) {}
+    /// What it draws at its block, after it is placed and after each tick
+    /// (capability `block-entities`, `visuals`): the parts go to players'
+    /// games only when they differ from the last ones, and their games turn
+    /// them every frame. A part whose speed changes starts again from its
+    /// `angle`.
+    fn visual(&self, _state: &BlockState, _visual: &mut Visual) {}
+}
+
+/// Degrees a tick for a speed in revolutions a minute, as Create gives its
+/// shafts' speeds.
+pub fn rpm(rpm: f32) -> f32 {
+    rpm * 360.0 / 60.0 / 20.0
+}
+
+/// The parts a block entity draws, as Flywheel's instances: each a block
+/// state's model, still or turning about an axis.
+#[derive(Clone, Debug, Default)]
+pub struct Visual {
+    parts: Vec<visuals::Part>,
+}
+
+impl Visual {
+    /// `state`'s model turning about `axis` through the block's centre at
+    /// `speed` degrees a tick ([`rpm`] converts), as Flywheel's
+    /// `RotatingInstance`; the part is returned to move its pivot, offset
+    /// or starting angle.
+    pub fn rotating(&mut self, state: &str, axis: Axis, speed: f32) -> &mut visuals::Part {
+        self.parts.push(visuals::Part {
+            state: state.to_owned(),
+            axis: axis as u8,
+            pivot: (0.5, 0.5, 0.5),
+            offset: (0.0, 0.0, 0.0),
+            speed,
+            angle: 0.0,
+        });
+        self.parts.last_mut().expect("just pushed")
+    }
+    /// `state`'s model, still, its corner at `offset` blocks from the
+    /// block's, as Flywheel's `TransformedInstance`.
+    pub fn model(&mut self, state: &str, offset: [f32; 3]) -> &mut visuals::Part {
+        let part = self.rotating(state, Axis::Y, 0.0);
+        part.offset = (offset[0], offset[1], offset[2]);
+        part
+    }
+    pub fn parts(&self) -> &[visuals::Part] {
+        &self.parts
+    }
+    fn same(&self, other: &[visuals::Part]) -> bool {
+        let key =
+            |p: &visuals::Part| (p.state.clone(), p.axis, p.pivot, p.offset, p.speed, p.angle);
+        self.parts.len() == other.len() && self.parts.iter().map(key).eq(other.iter().map(key))
+    }
+}
+
+std::thread_local! {
+    /// The parts last sent for each position (`BlockEntity::visual`).
+    static DRAWN: RefCell<HashMap<(String, [i32; 3]), Vec<visuals::Part>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Sends `entity`'s parts at `pos` when they differ from the last sent.
+fn draw<T: BlockEntity>(entity: &T, level: &Level, pos: BlockPos, state: &BlockState) {
+    let mut visual = Visual::default();
+    entity.visual(state, &mut visual);
+    let key = (level.dimension().to_owned(), [pos.x, pos.y, pos.z]);
+    let unchanged = DRAWN.with(|d| {
+        d.borrow()
+            .get(&key)
+            .map_or(visual.parts.is_empty(), |last| visual.same(last))
+    });
+    if unchanged {
+        return;
+    }
+    if visuals::set(level.dimension(), pos.x, pos.y, pos.z, &visual.parts).is_ok() {
+        DRAWN.with(|d| {
+            let mut d = d.borrow_mut();
+            if visual.parts.is_empty() {
+                d.remove(&key);
+            } else {
+                d.insert(key, visual.parts);
+            }
+        });
+    }
 }
 
 /// A block entity type with its type forgotten: what the hooks call.
@@ -164,7 +248,9 @@ pub fn register_entity<T: BlockEntity>(block: &str) -> Result<(), String> {
 }
 
 fn place<T: BlockEntity>(level: &Level, pos: BlockPos, state: &BlockState) {
-    let _ = level.set_block_entity(pos, &T::new(pos, state));
+    let entity = T::new(pos, state);
+    let _ = level.set_block_entity(pos, &entity);
+    draw(&entity, level, pos, state);
 }
 
 fn tick<T: BlockEntity>(level: &Level, pos: BlockPos, state: &BlockState) {
@@ -184,6 +270,7 @@ fn tick<T: BlockEntity>(level: &Level, pos: BlockPos, state: &BlockState) {
             block_entities::set(d, pos.x, pos.y, pos.z, &after)
         };
     }
+    draw(&entity, level, pos, state);
 }
 
 /// Drops `count` of `item` at the middle of `pos`, as NeoForge's

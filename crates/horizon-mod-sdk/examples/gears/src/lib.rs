@@ -2,7 +2,8 @@
 //! it has stood as four bytes at its position (capability `block-entities`);
 //! the server ticks it and saves the bytes with the world, and sends them to
 //! the players near it for a client half to read. A gear (an iron
-//! ingot, capability `entities`) floats above each counter placed.
+//! trapdoor drawn by players' games, capability `visuals`) turns above each
+//! counter while it runs.
 use horizon_mod_sdk::{
     block::{self, Block, BlockEntity, BlockHitResult, InteractionResult},
     contraption::{Contraption, ROTATION_STEP},
@@ -11,8 +12,8 @@ use horizon_mod_sdk::{
     player_ops,
     server::{
         BlockPos, BlockTarget, Player, Pos, Registration, ServerMod, attachments, block_entities,
-        containers, effects, entities, entity_types, items, menus, net, peers, players,
-        recipe_manager, redstone, stacks, transfer, world,
+        containers, effects, entity_types, items, menus, net, peers, players, recipe_manager,
+        redstone, stacks, transfer, visuals, world,
     },
 };
 
@@ -227,9 +228,8 @@ struct Gears {
     /// Ticks seen by each counter since its last write.
     ticks: Vec<([i32; 3], u32)>,
     /// The floating gear above each counter (capability `entities`).
-    gears: Vec<([i32; 3], u32)>,
+    gears: Vec<([i32; 3], bool)>,
     /// The turn of the gears, in degrees (capability `entities`).
-    spin: f32,
     /// The recipes of the counter's press: (ingredient, output, count), read
     /// at the first tick that needs them (capability-free `recipe-manager`).
     press: Vec<(String, String, u32)>,
@@ -241,6 +241,20 @@ struct Gears {
     viewers: Vec<String>,
     /// Each mill turning: its position, its wheel and the wheel's turn.
     mills: Vec<([i32; 3], Contraption, f32)>,
+}
+
+/// The gear over a counter: an iron trapdoor's model a tenth of a block above
+/// it, turning about its upright axis while the counter runs (`visuals`).
+fn gear(dimension: &str, x: i32, y: i32, z: i32, running: bool) {
+    let part = visuals::Part {
+        state: "minecraft:iron_trapdoor[half=bottom]".into(),
+        axis: 1,
+        pivot: (0.5, 1.1, 0.5),
+        offset: (0.0, 1.1, 0.0),
+        speed: if running { 2.0 * ROTATION_STEP } else { 0.0 },
+        angle: 0.0,
+    };
+    let _ = visuals::set(dimension, x, y, z, &[part]);
 }
 
 /// A drill's block entity: the ticks since it last mined.
@@ -315,7 +329,6 @@ impl ServerMod for Gears {
         let this = Self {
             ticks: Vec::new(),
             gears: Vec::new(),
-            spin: 0.0,
             press: Vec::new(),
             lifts: Vec::new(),
             viewers: Vec::new(),
@@ -357,35 +370,16 @@ impl ServerMod for Gears {
                 .and_then(|d| <[u8; 4]>::try_from(d).ok())
                 .map_or(0, u32::from_le_bytes);
             let _ = attachments::set(&me, "counters", &(placed + 1).to_le_bytes());
-            // A gear above it: an iron trapdoor as a block entity, turned
-            // each tick (drawn smoothly between ticks on every client).
-            let at = [
-                f64::from(pos.x) + 0.5,
-                f64::from(pos.y) + 1.1,
-                f64::from(pos.z) + 0.5,
-            ];
-            if let Ok(handle) = entities::spawn_block(
-                DIMENSION,
-                at[0],
-                at[1],
-                at[2],
-                "minecraft:iron_trapdoor[half=bottom]",
-            ) {
-                self.gears.push(([pos.x, pos.y, pos.z], handle));
-            }
+            // A gear above it, turning while the counter runs.
+            gear(DIMENSION, pos.x, pos.y, pos.z, true);
+            self.gears.push(([pos.x, pos.y, pos.z], true));
         }
     }
 
+    /// The game takes the gear away with its block.
     fn block_broken(&mut self, _player: &Player, pos: BlockPos, state: &str) {
         if state.starts_with(COUNTER) {
-            let at = [pos.x, pos.y, pos.z];
-            self.gears.retain(|&(p, handle)| {
-                let gone = p == at;
-                if gone {
-                    entities::remove(handle);
-                }
-                !gone
-            });
+            self.gears.retain(|(p, _)| *p != [pos.x, pos.y, pos.z]);
         }
     }
 
@@ -665,16 +659,23 @@ impl ServerMod for Gears {
             }
             return;
         }
-        // A redstone signal stops the counter (capability `redstone`).
-        if redstone::power(dimension, pos.x, pos.y, pos.z).is_some_and(|p| p > 0) {
-            return;
-        }
+        // A redstone signal stops the counter (capability `redstone`), and
+        // its gear: players' games are told only when that changes.
         let at = [pos.x, pos.y, pos.z];
-        // Two steps of the rotation clients are sent (360/256 degrees each) a
-        // tick, so every tick turns it the same.
-        self.spin = (self.spin + 2.0 * ROTATION_STEP) % 360.0;
-        if let Some(&(_, handle)) = self.gears.iter().find(|(p, _)| *p == at) {
-            entities::rotate(handle, self.spin, 0.0);
+        let running = !redstone::power(dimension, pos.x, pos.y, pos.z).is_some_and(|p| p > 0);
+        match self.gears.iter_mut().find(|(p, _)| *p == at) {
+            Some((_, was)) if *was == running => {}
+            Some((_, was)) => {
+                *was = running;
+                gear(dimension, pos.x, pos.y, pos.z, running);
+            }
+            None => {
+                self.gears.push((at, running));
+                gear(dimension, pos.x, pos.y, pos.z, running);
+            }
+        }
+        if !running {
+            return;
         }
         let seen = match self.ticks.iter_mut().find(|(p, _)| *p == at) {
             Some((_, n)) => n,

@@ -1739,6 +1739,8 @@ impl Game<'_> {
             C::CustomPayload(p) => {
                 if p.channel == super::server_mods::BLOCK_DATA_CHANNEL {
                     self.remote_mod_block_data(&p.data);
+                } else if p.channel == super::server_mods::VISUAL_CHANNEL {
+                    self.remote_mod_visual(&p.data);
                 } else if !self.remote_menu_message(&p.channel, &p.data) {
                     self.remote_mod_net(&p.channel, p.data)
                 }

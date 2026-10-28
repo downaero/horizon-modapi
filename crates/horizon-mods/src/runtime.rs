@@ -227,6 +227,13 @@ mod block_data_bindings {
     });
 }
 use block_data_bindings::{BlockDataHost, horizon::mods::block_data};
+mod visuals_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "visuals-host",
+    });
+}
+use visuals_bindings::{VisualsHost, horizon::mods::visuals};
 /// Most positions `block-data.in-box` answers with.
 const BLOCK_DATA_IN_BOX: usize = 256;
 /// Most entities of its own types one mod has at once.
@@ -822,6 +829,14 @@ pub enum Output {
         data: Option<Vec<u8>>,
         synced: bool,
     },
+    /// `visuals.set`: the parts drawn at one of the mod's blocks (none:
+    /// nothing any more), for the game to keep, save and send.
+    Visual {
+        mod_id: String,
+        dimension: String,
+        pos: [i32; 3],
+        parts: Vec<crate::visual::VisualPart>,
+    },
     /// `net.send`: a message on the mod's channel. `player` is the target
     /// of a server mod's message (none: every player); a client mod's goes to
     /// its server.
@@ -1381,6 +1396,8 @@ impl Mods {
             NetHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             BlockDataHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
+            VisualsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             EntitiesHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
@@ -3181,6 +3198,70 @@ impl block_data::Host for State {
             .collect()
     }
 }
+impl visuals::Host for State {
+    fn set(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        parts: Vec<visuals::Part>,
+    ) -> Result<(), String> {
+        if parts.len() > crate::visual::PARTS {
+            return Err(format!(
+                "{} parts: at most {}",
+                parts.len(),
+                crate::visual::PARTS
+            ));
+        }
+        self.own_block(&dimension, x, y, z)?;
+        let parts = parts
+            .into_iter()
+            .map(|p| {
+                let part = crate::visual::VisualPart {
+                    state: p.state,
+                    axis: p.axis,
+                    pivot: [p.pivot.0, p.pivot.1, p.pivot.2],
+                    offset: [p.offset.0, p.offset.1, p.offset.2],
+                    speed: p.speed,
+                    angle: p.angle,
+                };
+                part.check()?;
+                if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref()) {
+                    view.check_state(&part.state)?;
+                }
+                Ok(part)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        self.out.push(Output::Visual {
+            mod_id: self.id.clone(),
+            dimension,
+            pos: [x, y, z],
+            parts,
+        });
+        Ok(())
+    }
+}
+impl State {
+    /// Refuses a position where none of the mod's own blocks stands, while
+    /// the game lends the world (`block-entities`, `visuals`).
+    fn own_block(&self, dimension: &str, x: i32, y: i32, z: i32) -> Result<(), String> {
+        if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref()) {
+            if !view.has_dimension(dimension) {
+                return Err(format!("no dimension {dimension}"));
+            }
+            let owned = view.block(dimension, x, y, z).is_some_and(|s| {
+                let id = s.split('[').next().unwrap_or(&s);
+                id.split_once(':')
+                    .is_some_and(|(ns, _)| self.block_namespaces.iter().any(|n| n == ns))
+            });
+            if !owned {
+                return Err(format!("({x}, {y}, {z}) is not a block of this mod"));
+            }
+        }
+        Ok(())
+    }
+}
 impl block_entities::Host for State {
     fn get(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<Vec<u8>> {
         self.block_data.get(&(dimension, [x, y, z])).cloned()
@@ -3203,20 +3284,7 @@ impl block_entities::Host for State {
         if self.block_data.len() >= BLOCK_DATA_POSITIONS && !self.block_data.contains_key(&key) {
             return Err(format!("at most {BLOCK_DATA_POSITIONS} positions"));
         }
-        if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref()) {
-            if !view.has_dimension(&dimension) {
-                return Err(format!("no dimension {dimension}"));
-            }
-            // Only where one of the mod's own blocks stands.
-            let owned = view.block(&dimension, x, y, z).is_some_and(|s| {
-                let id = s.split('[').next().unwrap_or(&s);
-                id.split_once(':')
-                    .is_some_and(|(ns, _)| self.block_namespaces.iter().any(|n| n == ns))
-            });
-            if !owned {
-                return Err(format!("({x}, {y}, {z}) is not a block of this mod"));
-            }
-        }
+        self.own_block(&dimension, x, y, z)?;
         self.block_data.insert(key, data.clone());
         self.out.push(Output::BlockData {
             mod_id: self.id.clone(),

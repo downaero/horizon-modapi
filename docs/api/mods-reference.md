@@ -49,7 +49,7 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `console`, `stacks`, `recipe-manager`, `entity-data`, `entity-types`, `log`, `storage`, `players`, `world`
+- Imports (what the game offers): `block-entities`, `visuals`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `console`, `stacks`, `recipe-manager`, `entity-data`, `entity-types`, `log`, `storage`, `players`, `world`
 - Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `item-events`, `peer-events`, `menu-events`, `entity-events`, `server-events`
 
 ## World `entity-types-host`
@@ -156,6 +156,13 @@ The game's side of `horizon-block-mod` beyond `horizon-server-mod`.
 
 - Imports (what the game offers): `block-entities`
 - Exports (what the mod provides): `block-events`
+
+## World `visuals-host`
+
+The game's side of `visuals` (imports only).
+
+- Imports (what the game offers): `visuals`
+- Exports (what the mod provides): 
 
 ## World `net-host`
 
@@ -972,6 +979,27 @@ Capability `block-entities`, server mods only (manifest `api = "0.3"`, experimen
 | `set` | `func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>` | Stores bytes at a position (at most 64 KiB; 65,536 positions per mod), replacing any there. The game forgets them when the block is broken or replaced by something that is not one of the mod's. |
 | `remove` | `func(dimension: string, x: s32, y: s32, z: s32)` | Forgets the bytes at a position. |
 | `set-synced` | `func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>` | `set`, and the bytes also go to every player whose game has the chunk, now, whenever they change and when the chunk reaches a player later: what the mod's client half reads with `block-data` (NeoForge's update tag). A later `set` at the position keeps them on the server only; `remove` takes them from the players' games too. Saved with the world as `set`'s are. |
+
+## `visuals`
+
+Access: not granted by any capability.
+
+Capability `block-entities`, server mods: model parts drawn at the mod's own blocks, each turning at a constant speed, as Flywheel's instances draw Create's shafts and cogs. The server sends a position's parts to the players whose games have its chunk once, and again only when they change; their games turn them every frame. Saved with the world, and gone when the block is broken.
+
+### record `part`
+
+| Field | Type | |
+| --- | --- | --- |
+| `state` | `string` | The block state whose model is drawn: `mymod:shaft[axis=x]`, a vanilla one too. |
+| `axis` | `u8` | The axis it turns about: 0 x, 1 y, 2 z. |
+| `pivot` | `tuple<f32, f32, f32>` | The point it turns about, in blocks from the position's corner (0.5, 0.5, 0.5 is the block's centre); at most 16 away. |
+| `offset` | `tuple<f32, f32, f32>` | Where its model's corner is, in blocks from the position's corner: (0, 1, 0) draws it on top of the block. |
+| `speed` | `f32` | Degrees a tick (360 at most), counterclockwise looking from the axis's positive end; negative turns the other way, 0 not at all. |
+| `angle` | `f32` | Its angle in degrees when set: parts set in one tick at the same speed turn together. |
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `set` | `func(dimension: string, x: s32, y: s32, z: s32, parts: list<part>) -> result<_, string>` | Draws `parts` (at most 16) at a block of the mod's own, replacing what it drew there, after the call; none draws nothing there any more. |
 
 ## `block-data`
 

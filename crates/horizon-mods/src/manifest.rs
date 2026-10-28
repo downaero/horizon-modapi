@@ -278,6 +278,10 @@ impl Capability {
         if interface == "entity-types" {
             return Ok(Some(Capability::Entities));
         }
+        // Parts drawn at a mod's blocks are part of capability `block-entities`.
+        if interface == "visuals" {
+            return Ok(Some(Capability::BlockEntities));
+        }
         // What a client half reads of its server half's blocks comes over
         // the mod's channel: capability `net`.
         if interface == "block-data" {

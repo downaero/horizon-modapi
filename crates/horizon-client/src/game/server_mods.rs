@@ -66,6 +66,14 @@ impl Game<'_> {
     }
     pub(super) fn remote_mod_net(&mut self, _channel: &str, _data: Vec<u8>) {}
     pub(super) fn remote_mod_block_data(&mut self, _data: &[u8]) {}
+    pub(super) fn remote_mod_visual(&mut self, _data: &[u8]) {}
+    pub(super) fn mod_visual_geometry(
+        &self,
+        _camera: glam::DVec3,
+        _alpha: f64,
+        _out: &mut Vec<horizon_client::mesher::Vertex>,
+    ) {
+    }
     pub(super) fn forget_mod_block_data(&mut self, _chunk: Option<(i32, i32)>) {}
     pub(super) fn local_server_mod_command(&mut self, _line: &str) -> bool {
         false
@@ -106,6 +114,16 @@ pub(super) const BLOCK_DATA_DIR: &str = "horizon-mod-data";
 /// [`encode_synced_block`] writes it (`block-entities.set-synced`).
 #[cfg_attr(not(feature = "mods"), allow(dead_code))]
 pub(super) const BLOCK_DATA_CHANNEL: &str = "horizon:block_data";
+
+/// The channel the parts server mods draw at their blocks travel on, as
+/// `horizon_mods::visual::encode` writes them (capability `visuals`).
+#[cfg_attr(not(feature = "mods"), allow(dead_code))]
+pub(super) const VISUAL_CHANNEL: &str = "horizon:block_visual";
+
+/// Marks a `.blocks` file entry that holds a position's visual parts
+/// (`horizon_mods::visual::encode`) rather than block data.
+#[cfg_attr(not(feature = "mods"), allow(dead_code))]
+pub(super) const VISUAL_MARK: char = '\u{3}';
 
 /// Marks a synced entry's dimension in a `.blocks` file.
 #[cfg_attr(not(feature = "mods"), allow(dead_code))]
@@ -925,6 +943,18 @@ mod run {
                             self.mods.mods.block_placed(&p, pos, &state);
                         } else {
                             self.mods.mods.block_broken(&p, pos, &state);
+                            // What any mod drew at the block goes with it.
+                            let at = [pos.x, pos.y, pos.z];
+                            let drawn: Vec<_> = self
+                                .mods
+                                .visuals
+                                .keys()
+                                .filter(|(_, d, q)| *d == p.dimension && *q == at)
+                                .cloned()
+                                .collect();
+                            for (mod_id, dimension, at) in drawn {
+                                self.store_mod_visual(mod_id, dimension, at, Vec::new(), None);
+                            }
                         }
                     }
                 }
@@ -998,6 +1028,8 @@ mod run {
             if self.mods.block_data_key.as_ref().map(|k| &k.0) != Some(&key.0) {
                 self.mods.block_data.clear();
                 self.mods.block_synced.clear();
+                self.mods.visuals.clear();
+                self.mods.client_visuals.clear();
                 self.mods.block_data_dirty = false;
                 if !key.0.as_os_str().is_empty()
                     && let Ok(dir) = std::fs::read_dir(key.0.join(super::BLOCK_DATA_DIR))
@@ -1012,6 +1044,15 @@ mod run {
                             continue;
                         };
                         for (dimension, pos, data) in super::decode_block_data(&bytes) {
+                            if let Some(d) = dimension.strip_prefix(super::VISUAL_MARK) {
+                                if let Some((_, _, start, parts)) =
+                                    horizon_mods::visual::decode(&data)
+                                {
+                                    let key = (id.to_owned(), d.to_owned(), pos);
+                                    self.mods.visuals.insert(key, (start, parts));
+                                }
+                                continue;
+                            }
                             let key = match dimension.strip_prefix(super::SYNCED_MARK) {
                                 Some(d) => {
                                     let key = (id.to_owned(), d.to_owned(), pos);
@@ -1053,11 +1094,71 @@ mod run {
                 let sent = data.as_deref().filter(|_| synced);
                 self.send_mod_block_data(host, &key.0, &key.1, pos, sent);
             }
+            let gone = data.is_none();
             let changed = match data {
-                Some(data) => self.mods.block_data.insert(key, data.clone()) != Some(data),
+                Some(data) => self.mods.block_data.insert(key.clone(), data.clone()) != Some(data),
                 None => self.mods.block_data.remove(&key).is_some(),
             };
             self.mods.block_data_dirty |= changed || synced != was_synced;
+            // Its block is gone: so is what the mod drew there.
+            if gone && self.mods.visuals.contains_key(&key) {
+                self.store_mod_visual(key.0, key.1, key.2, Vec::new(), None);
+            }
+        }
+
+        /// Records the parts a mod draws at a block (none: nothing any more)
+        /// and sends them to the players whose games have the chunk, from
+        /// this tick on; this window draws them itself in its own world.
+        fn store_mod_visual(
+            &mut self,
+            mod_id: String,
+            dimension: String,
+            pos: [i32; 3],
+            parts: Vec<horizon_mods::visual::VisualPart>,
+            host: Option<&mut LanHost>,
+        ) {
+            let start = self.world.game_time;
+            let key = (mod_id, dimension, pos);
+            let changed = if parts.is_empty() {
+                self.mods.visuals.remove(&key).is_some()
+            } else {
+                self.mods
+                    .visuals
+                    .insert(key.clone(), (start, parts.clone()))
+                    .is_none_or(|old| old.1 != parts)
+            };
+            if !changed {
+                return;
+            }
+            self.mods.block_data_dirty = true;
+            self.send_mod_visual(host, &key, start, &parts);
+            if self.options.execution_role.is_client() && self.remote.is_none() {
+                let bytes = horizon_mods::visual::encode(&key.0, pos, start, &parts);
+                if key.1 == self.dim.id() {
+                    self.remote_mod_visual(&bytes);
+                }
+            }
+        }
+
+        fn send_mod_visual(
+            &mut self,
+            host: Option<&mut LanHost>,
+            key: &(String, String, [i32; 3]),
+            start: i64,
+            parts: &[horizon_mods::visual::VisualPart],
+        ) {
+            let hub = match host {
+                Some(h) => Some(h),
+                None => self.lan.as_mut(),
+            };
+            let Some(hub) = hub else { return };
+            let packet = C::CustomPayload(CustomPayload {
+                channel: super::VISUAL_CHANNEL.into(),
+                data: horizon_mods::visual::encode(&key.0, key.2, start, parts),
+            });
+            let id = format!("{}{}", key.0, super::VISUAL_MARK);
+            hub.hub
+                .set_chunk_payload(&key.1, &id, key.2, &packet, !parts.is_empty());
         }
 
         /// Tells the players whose games have the chunk what a server mod
@@ -1091,13 +1192,22 @@ mod run {
                 .lan
                 .as_ref()
                 .is_some_and(|h| h.hub.chunk_payload_count() == 0);
-            if !fresh || self.mods.block_synced.is_empty() {
+            if !fresh || (self.mods.block_synced.is_empty() && self.mods.visuals.is_empty()) {
                 return;
             }
             let synced: Vec<_> = self.mods.block_synced.iter().cloned().collect();
             for key in synced {
                 let data = self.mods.block_data.get(&key).cloned();
                 self.send_mod_block_data(None, &key.0, &key.1, key.2, data.as_deref());
+            }
+            let visuals: Vec<_> = self
+                .mods
+                .visuals
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            for (key, (start, parts)) in visuals {
+                self.send_mod_visual(None, &key, start, &parts);
             }
         }
 
@@ -1118,6 +1228,25 @@ mod run {
                     dimension.clone()
                 };
                 ids.entry(id).or_default().push((dimension, *pos, data));
+            }
+            let visuals: Vec<(&str, String, [i32; 3], Vec<u8>)> = self
+                .mods
+                .visuals
+                .iter()
+                .map(|((id, dimension, pos), (start, parts))| {
+                    let bytes = horizon_mods::visual::encode(id, *pos, *start, parts);
+                    (
+                        id.as_str(),
+                        format!("{}{dimension}", super::VISUAL_MARK),
+                        *pos,
+                        bytes,
+                    )
+                })
+                .collect();
+            for (id, dimension, pos, bytes) in &visuals {
+                ids.entry(id)
+                    .or_default()
+                    .push((dimension.clone(), *pos, bytes));
             }
             let result = (|| -> std::io::Result<()> {
                 if !ids.is_empty() {
@@ -2736,9 +2865,76 @@ mod run {
             }
         }
 
-        /// Forgets the synced block data of a chunk the server took back,
-        /// or all of it (`None`: a new level).
+        /// Parts a server mod draws at a block, from the server this window
+        /// plays on (or its own world's server mods, in-frame).
+        pub(in crate::game) fn remote_mod_visual(&mut self, data: &[u8]) {
+            let Some((mod_id, pos, start, parts)) = horizon_mods::visual::decode(data) else {
+                return;
+            };
+            let registry = self.pack.assets.registry;
+            let parts: Vec<_> = parts
+                .into_iter()
+                .filter_map(|p| {
+                    let state =
+                        crate::game::render_control::parse_state(registry, &p.state).ok()?;
+                    Some((state, p))
+                })
+                .collect();
+            if parts.is_empty() {
+                self.mods.client_visuals.remove(&(mod_id, pos));
+            } else {
+                let visual = crate::game::mods::ClientVisual { start, parts };
+                self.mods.client_visuals.insert((mod_id, pos), visual);
+            }
+        }
+
+        /// Draws the parts server mods set at their blocks, each turned by
+        /// the ticks since it was set and this frame's fraction of one.
+        pub(in crate::game) fn mod_visual_geometry(
+            &self,
+            camera: glam::DVec3,
+            alpha: f64,
+            out: &mut Vec<horizon_client::mesher::Vertex>,
+        ) {
+            use glam::{Mat4, Vec3};
+            for ((_, pos), v) in &self.mods.client_visuals {
+                let o = (glam::DVec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64) - camera)
+                    .as_vec3();
+                // Parts may reach past their block: two blocks of margin.
+                if self
+                    .view_frustum
+                    .as_ref()
+                    .is_some_and(|f| !f.intersects(o - Vec3::splat(2.0), o + Vec3::splat(3.0)))
+                {
+                    continue;
+                }
+                let light = self.world.light(pos[0], pos[1], pos[2]);
+                let packed = (u32::from(light >> 4) * 16) | ((u32::from(light & 15) * 16) << 8);
+                let ticks = (self.world.game_time - v.start) as f64 + alpha;
+                let seed = horizon_core::random::position_seed(
+                    horizon_core::position::BlockPos::new(pos[0], pos[1], pos[2]),
+                );
+                for (state, part) in &v.parts {
+                    let axis = [Vec3::X, Vec3::Y, Vec3::Z][usize::from(part.axis.min(2))];
+                    let pivot = Vec3::from(part.pivot);
+                    let transform = Mat4::from_translation(o + pivot)
+                        * Mat4::from_axis_angle(axis, part.angle_at(ticks).to_radians())
+                        * Mat4::from_translation(Vec3::from(part.offset) - pivot);
+                    self.block_model_vertices(*state, seed, transform, packed, false, out);
+                }
+            }
+        }
+
+        /// Forgets the synced block data and parts of a chunk the server
+        /// took back, or all of it (`None`: a new level).
         pub(in crate::game) fn forget_mod_block_data(&mut self, chunk: Option<(i32, i32)>) {
+            match chunk {
+                Some(c) => self
+                    .mods
+                    .client_visuals
+                    .retain(|(_, p), _| (p[0] >> 4, p[2] >> 4) != c),
+                None => self.mods.client_visuals.clear(),
+            }
             if self.mods.client_block_data.is_empty() {
                 return;
             }
@@ -2846,6 +3042,12 @@ mod run {
                     data,
                     synced,
                 } => self.store_mod_block_data(mod_id, dimension, pos, data, synced, host),
+                Output::Visual {
+                    mod_id,
+                    dimension,
+                    pos,
+                    parts,
+                } => self.store_mod_visual(mod_id, dimension, pos, parts, host),
                 Output::Container {
                     op: horizon_mods::ContainerOp::Register { block, slots },
                     ..

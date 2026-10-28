@@ -36,6 +36,17 @@ use {
     winit::{event::MouseButton, keyboard::KeyCode},
 };
 
+/// Parts drawn at one block position, their states resolved.
+#[cfg(feature = "mods")]
+pub(super) struct ClientVisual {
+    /// The tick they were set.
+    pub(super) start: i64,
+    pub(super) parts: Vec<(
+        horizon_world::registry::BlockStateId,
+        horizon_mods::visual::VisualPart,
+    )>,
+}
+
 #[derive(Default)]
 pub(super) struct ModsState {
     #[cfg(feature = "mods")]
@@ -183,6 +194,19 @@ pub(super) struct ModsState {
     #[cfg(feature = "mods")]
     pub(super) client_block_data:
         std::sync::Arc<std::collections::HashMap<(String, [i32; 3]), Vec<u8>>>,
+    /// Capability `visuals`: the parts server mods draw at their blocks, by
+    /// mod id, dimension and position, with the tick they were set; saved in
+    /// the world's folder with `block_data`.
+    #[cfg(feature = "mods")]
+    pub(super) visuals: std::collections::BTreeMap<
+        (String, String, [i32; 3]),
+        (i64, Vec<horizon_mods::visual::VisualPart>),
+    >,
+    /// The parts this window draws (`Game::mod_visual_geometry`), by mod id
+    /// and position in the player's dimension: what its server sent, or in
+    /// its own world (in-frame) what its server mods set.
+    #[cfg(feature = "mods")]
+    pub(super) client_visuals: std::collections::HashMap<(String, [i32; 3]), ClientVisual>,
     /// `block_data` changed since it was written.
     #[cfg(feature = "mods")]
     pub(super) block_data_dirty: bool,
@@ -831,6 +855,7 @@ impl Game<'_> {
                 | Output::Reply { .. }
                 | Output::SetBlocks { .. }
                 | Output::BlockData { .. }
+                | Output::Visual { .. }
                 | Output::Entity { .. }
                 | Output::Drop { .. }
                 | Output::Take { .. }

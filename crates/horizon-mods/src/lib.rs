@@ -18,6 +18,7 @@ pub mod modpack;
 mod runtime;
 #[cfg(feature = "runtime")]
 pub mod testing;
+pub mod visual;
 
 pub use content::Content;
 pub use manifest::{Capability, Manifest, Package, Side, find};

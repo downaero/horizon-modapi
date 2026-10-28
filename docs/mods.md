@@ -689,6 +689,23 @@ guests'; hoppers and the mod itself are not held to it. Not saved: the mod sets
 its rules again after a load (the gears crate does at each open). A progress bar or
 a screen of its own is not part of this.
 
+### Turning parts (capability `block-entities`, `visuals`)
+
+**API level 39.** `visuals.set(dimension, x, y, z, parts)` draws up to 16 model parts at one of
+the mod's own blocks, replacing what it drew there; no parts draws nothing. Each part is a block
+state's model (`mymod:shaft[axis=x]`, a vanilla one too) with its corner at `offset` blocks from
+the block's, turning about `axis` (0 x, 1 y, 2 z) through `pivot` at `speed` degrees a tick from
+`angle`, as Flywheel's instances draw Create's shafts and cogs. The server sends a position's parts
+to the players whose games have its chunk once, on `horizon:block_visual` after the chunk, and again
+only when they change; each game turns them every frame from the tick they were set, with that
+frame's fraction of a tick, so a thousand shafts cost no packets while they turn. Parts set in one
+tick at the same speed turn together. They are saved with the world beside the block data, and gone
+when a player breaks the block or the game forgets its data. They are drawn as falling blocks are,
+lit by the block's light. In the SDK, `BlockEntity::visual` fills a `Visual`
+(`rotating(state, axis, speed)`, `model(state, offset)`; `block::rpm` turns revolutions a minute
+into degrees a tick) after each tick, sent only when it changed; a part whose speed changes starts
+again from its `angle`. The gears example's counter turns an iron trapdoor above it while it runs.
+
 ### Moving structures and networks
 
 `entities.spawn-block(dimension, x, y, z, state)` (API level 24) places a block state as an

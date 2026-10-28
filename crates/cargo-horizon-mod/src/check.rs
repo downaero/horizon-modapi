@@ -277,6 +277,13 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
                     pos[0], pos[1], pos[2]
                 )
             }
+            Output::Visual { parts, pos, .. } => format!(
+                "drew {} part(s) at {} {} {}",
+                parts.len(),
+                pos[0],
+                pos[1],
+                pos[2]
+            ),
             Output::Net { data, .. } => format!("sent a {}-byte net message", data.len()),
             Output::Container { .. } => "changed a container".to_string(),
             Output::Entity { .. } => "changed an entity".to_string(),

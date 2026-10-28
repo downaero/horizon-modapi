@@ -855,6 +855,37 @@ interface block-entities {
     set-synced: func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>;
 }
 
+/// Capability `block-entities`, server mods: model parts drawn at the mod's
+/// own blocks, each turning at a constant speed, as Flywheel's instances
+/// draw Create's shafts and cogs. The server sends a position's parts to the
+/// players whose games have its chunk once, and again only when they
+/// change; their games turn them every frame. Saved with the world, and
+/// gone when the block is broken.
+interface visuals {
+    record part {
+        /// The block state whose model is drawn: `mymod:shaft[axis=x]`, a
+        /// vanilla one too.
+        state: string,
+        /// The axis it turns about: 0 x, 1 y, 2 z.
+        axis: u8,
+        /// The point it turns about, in blocks from the position's corner
+        /// (0.5, 0.5, 0.5 is the block's centre); at most 16 away.
+        pivot: tuple<f32, f32, f32>,
+        /// Where its model's corner is, in blocks from the position's
+        /// corner: (0, 1, 0) draws it on top of the block.
+        offset: tuple<f32, f32, f32>,
+        /// Degrees a tick (360 at most), counterclockwise looking from the
+        /// axis's positive end; negative turns the other way, 0 not at all.
+        speed: f32,
+        /// Its angle in degrees when set: parts set in one tick at the same
+        /// speed turn together.
+        angle: f32,
+    }
+    /// Draws `parts` (at most 16) at a block of the mod's own, replacing
+    /// what it drew there, after the call; none draws nothing there any more.
+    set: func(dimension: string, x: s32, y: s32, z: s32, parts: list<part>) -> result<_, string>;
+}
+
 /// Capability `net`, client mods: the bytes the mod's server half keeps
 /// with `block-entities.set-synced`, at the blocks of the chunks the
 /// player's game has, in the dimension the player is in, as of this tick.
@@ -1560,6 +1591,7 @@ world horizon-server-mod {
 world horizon-block-mod {
     include horizon-server-mod;
     import block-entities;
+    import visuals;
     export block-events;
     import net;
     export server-net-events;
@@ -1661,6 +1693,11 @@ world redstone-host {
 world block-host {
     import block-entities;
     export block-events;
+}
+
+/// The game's side of `visuals` (imports only).
+world visuals-host {
+    import visuals;
 }
 
 /// The game's side of capability `net` for client mods (it adds the `net`
