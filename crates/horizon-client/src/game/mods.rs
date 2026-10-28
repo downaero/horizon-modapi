@@ -67,6 +67,9 @@ pub(super) struct ModsState {
     /// levels' chunks to read.
     #[cfg(feature = "mods")]
     pub(super) world: bool,
+    /// A running server mod has capability `redstone`.
+    #[cfg(feature = "mods")]
+    pub(super) redstone: bool,
     /// Blocks server mods set, by dimension, made before that level's next
     /// tick.
     #[cfg(feature = "mods")]
@@ -358,6 +361,7 @@ impl Game<'_> {
     fn list_mods(&mut self) {
         self.mods.server = self.mods.mods.runs_server();
         self.mods.world = self.mods.mods.wants_world();
+        self.mods.redstone = self.mods.mods.wants_redstone();
         let dev = &self.mods.dev;
         self.settings.mods.installed = self
             .mods

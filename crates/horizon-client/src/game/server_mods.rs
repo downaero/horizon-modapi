@@ -169,6 +169,8 @@ mod run {
     use horizon_world::registry::{BlockRegistry, BlockStateId};
     use serde_json::{Value, json};
 
+    /// Positions whose redstone signal is read for mods each tick.
+    const MAX_POWER_READS: usize = 4096;
     /// `net` messages waiting for a tick are kept up to this many.
     const MAX_QUEUED_NET: usize = 4096;
     /// Entity changes waiting for a tick are kept up to this many.
@@ -188,8 +190,18 @@ mod run {
         /// `containers`) as of the call's start, by position.
         containers: std::collections::HashMap<[i32; 3], Vec<Option<horizon_mods::SlotStack>>>,
         container_dim: &'static str,
+        /// The redstone signal at the positions of the mod blocks that keep
+        /// data or items in the simulated dimension, as of the call's start
+        /// (capability `redstone`).
+        power: std::collections::HashMap<[i32; 3], u8>,
     }
     impl WorldView for LentWorld {
+        fn power(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<u8> {
+            if dimension != self.container_dim {
+                return None;
+            }
+            self.power.get(&[x, y, z]).copied()
+        }
         fn container(
             &self,
             dimension: &str,
@@ -596,6 +608,7 @@ mod run {
                     }
                 }
             }
+            let power = self.mod_block_power(containers.keys().copied());
             let mut dims = vec![(self.dim.id(), std::mem::take(&mut self.world.chunks))];
             for (dim, chunks) in self.levels.parked_chunks() {
                 dims.push((dim.id(), std::mem::take(chunks)));
@@ -608,7 +621,40 @@ mod run {
                 dims,
                 containers,
                 container_dim: self.dim.id(),
+                power,
             }));
+        }
+
+        /// The redstone signal at the positions mods keep block data at in
+        /// the simulated dimension, and at `extra` ones, where the chunk is
+        /// loaded: the most [`MAX_POWER_READS`] a tick.
+        fn mod_block_power(
+            &mut self,
+            extra: impl Iterator<Item = [i32; 3]>,
+        ) -> std::collections::HashMap<[i32; 3], u8> {
+            if !self.mods.redstone {
+                return Default::default();
+            }
+            let dim = self.dim.id();
+            let mut at: std::collections::BTreeSet<[i32; 3]> = self
+                .mods
+                .block_data
+                .keys()
+                .filter(|(_, d, _)| d == dim)
+                .map(|(_, _, p)| *p)
+                .collect();
+            at.extend(extra);
+            let mut power = std::collections::HashMap::new();
+            for p in at.into_iter().take(MAX_POWER_READS) {
+                if self.world.chunks.get(&(p[0] >> 4, p[2] >> 4)).is_none() {
+                    continue;
+                }
+                let pos = horizon_core::position::BlockPos::new(p[0], p[1], p[2]);
+                let best =
+                    self.with_level(|b, level, ticks| b.best_neighbor_signal(level, ticks, pos));
+                power.insert(p, best.clamp(0, 15) as u8);
+            }
+            power
         }
 
         /// Puts back the chunks [`Game::lend_world`] lent.

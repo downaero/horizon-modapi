@@ -6,7 +6,7 @@ use horizon_mod_sdk::{
     export_server_mod,
     server::{
         BlockPos, Player, Pos, Registration, ServerMod, block_entities, containers, entities, net,
-        players,
+        players, redstone,
     },
 };
 
@@ -66,6 +66,10 @@ impl ServerMod for Gears {
     }
 
     fn block_tick(&mut self, dimension: &str, pos: Pos, _state: &str) {
+        // A redstone signal stops the counter (capability `redstone`).
+        if redstone::power(dimension, pos.x, pos.y, pos.z).is_some_and(|p| p > 0) {
+            return;
+        }
         let at = [pos.x, pos.y, pos.z];
         let seen = match self.ticks.iter_mut().find(|(p, _)| *p == at) {
             Some((_, n)) => n,

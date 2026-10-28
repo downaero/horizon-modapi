@@ -67,6 +67,14 @@ mod container_bindings {
     });
 }
 use container_bindings::{ContainersHost, horizon::mods::containers};
+/// Capability `redstone`'s imports.
+mod redstone_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "redstone-host",
+    });
+}
+use redstone_bindings::{RedstoneHost, horizon::mods::redstone};
 mod server_net_bindings {
     wasmtime::component::bindgen!({
         path: "../horizon-mod-sdk/wit",
@@ -401,6 +409,11 @@ pub trait WorldView: std::any::Any + Send {
     ) -> Option<Vec<Option<SlotStack>>> {
         None
     }
+    /// The redstone signal reaching a block of the mod's, as of the tick's
+    /// start (capability `redstone`); `None` where it is not known.
+    fn power(&self, _dimension: &str, _x: i32, _y: i32, _z: i32) -> Option<u8> {
+        None
+    }
 }
 
 /// The view lent for the current calls, shared by every mod's store.
@@ -637,7 +650,18 @@ impl Mods {
                     m.capabilities.contains(&crate::Capability::World)
                         || m.capabilities.contains(&crate::Capability::BlockEntities)
                         || m.capabilities.contains(&crate::Capability::Containers)
+                        || m.capabilities.contains(&crate::Capability::Redstone)
                 })
+        })
+    }
+    /// Whether a running mod may use capability `redstone`: only then does
+    /// the game read signals for the lent view.
+    pub fn wants_redstone(&self) -> bool {
+        self.entries.iter().any(|e| {
+            e.status == Status::Running
+                && e.manifest
+                    .as_ref()
+                    .is_some_and(|m| m.capabilities.contains(&crate::Capability::Redstone))
         })
     }
     /// Lends the game's world to capability `world` for the calls until
@@ -731,6 +755,8 @@ impl Mods {
             EntitiesHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             ContainersHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
+            RedstoneHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
@@ -2107,6 +2133,12 @@ impl State {
     fn owns_container_block(&self, id: &str) -> bool {
         id.split_once(':')
             .is_some_and(|(ns, _)| self.block_namespaces.iter().any(|n| n == ns))
+    }
+}
+impl redstone::Host for State {
+    fn power(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<u8> {
+        let view = self.world.lock().ok()?;
+        view.as_ref()?.power(&dimension, x, y, z)
     }
 }
 impl containers::Host for State {

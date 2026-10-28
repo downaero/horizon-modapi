@@ -23,6 +23,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
 | `net` | [`net`](#net) | send messages between the game and the server it plays on |
 | `entities` | [`entities`](#entities) | place and move small entities in your worlds |
 | `containers` | [`containers`](#containers) | keep items in its own blocks and open them for players |
+| `redstone` | [`redstone`](#redstone) | see the redstone signal reaching its own blocks |
 
 ## World `horizon-mod`
 
@@ -42,8 +43,15 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `log`, `storage`, `players`, `world`
+- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `log`, `storage`, `players`, `world`
 - Exports (what the mod provides): `block-events`, `server-net-events`, `server-events`
+
+## World `redstone-host`
+
+The game's side of capability `redstone` (imports only).
+
+- Imports (what the game offers): `redstone`
+- Exports (what the mod provides): 
 
 ## World `block-host`
 
@@ -909,3 +917,13 @@ Capability `containers`, server mods only (manifest `api = "0.3"`, experimental)
 | `open` | `func(player: string, dimension: string, x: s32, y: s32, z: s32) -> bool` | Opens the container at a position for the player with this id, after the call; false when the player is not online. |
 | `slots` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<option<item-stack>>>` | The 27 slots of a container in a loaded chunk, as of the start of this tick; none where there is no container with items yet or none loaded. (Item components are not shown.) |
 | `set-slot` | `func(dimension: string, x: s32, y: s32, z: s32, slot: u32, stack: option<item-stack>) -> result<_, string>` | Puts a stack in slot 0 to 26 (none empties it), after the call, in a registered container; count 1 to 99. Components of what was there go. |
+
+## `redstone`
+
+Access: capability `redstone`.
+
+Capability `redstone`, server mods only (manifest `api = "0.3"`, experimental): the redstone signal reaching the mod's own blocks.
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `power` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<u8>` | The strongest signal (0 to 15) reaching the block at a position from its neighbours (vanilla's best neighbour signal), as of the start of this tick. Known only for positions where the mod keeps block data (`block-entities.set`) or has a container, in the simulated dimension; none elsewhere. |

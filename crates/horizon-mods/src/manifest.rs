@@ -114,9 +114,11 @@ pub enum Capability {
     Entities,
     /// The mod's own blocks that hold items (interface `containers`).
     Containers,
+    /// The redstone signal reaching the mod's blocks (interface `redstone`).
+    Redstone,
 }
 impl Capability {
-    pub const ALL: [Capability; 16] = [
+    pub const ALL: [Capability; 17] = [
         Capability::GameRead,
         Capability::Chat,
         Capability::Hud,
@@ -133,6 +135,7 @@ impl Capability {
         Capability::Net,
         Capability::Entities,
         Capability::Containers,
+        Capability::Redstone,
     ];
     /// Whether a server mod may have it: the others act on a local player.
     pub fn on_server(self) -> bool {
@@ -145,6 +148,7 @@ impl Capability {
                 | Capability::Net
                 | Capability::Entities
                 | Capability::Containers
+                | Capability::Redstone
         )
     }
     /// The WIT interface it grants, in `horizon:mods`.
@@ -166,6 +170,7 @@ impl Capability {
             Capability::Net => "net",
             Capability::Entities => "entities",
             Capability::Containers => "containers",
+            Capability::Redstone => "redstone",
         }
     }
     /// May change in any release: a mod uses it only with
@@ -181,6 +186,7 @@ impl Capability {
                 | Capability::Net
                 | Capability::Entities
                 | Capability::Containers
+                | Capability::Redstone
         )
     }
     /// What the player reads before turning the mod on: "May <this>".
@@ -205,6 +211,7 @@ impl Capability {
             Capability::Net => "send messages between the game and the server it plays on",
             Capability::Entities => "place and move small entities in your worlds",
             Capability::Containers => "keep items in its own blocks and open them for players",
+            Capability::Redstone => "see the redstone signal reaching its own blocks",
             Capability::Recipes => {
                 "read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items"
             }
@@ -253,6 +260,7 @@ impl fmt::Display for Capability {
             Capability::Net => "net",
             Capability::Entities => "entities",
             Capability::Containers => "containers",
+            Capability::Redstone => "redstone",
         };
         f.write_str(name)
     }

@@ -889,6 +889,17 @@ interface containers {
     set-slot: func(dimension: string, x: s32, y: s32, z: s32, slot: u32, stack: option<item-stack>) -> result<_, string>;
 }
 
+/// Capability `redstone`, server mods only (manifest `api = "0.3"`,
+/// experimental): the redstone signal reaching the mod's own blocks.
+interface redstone {
+    /// The strongest signal (0 to 15) reaching the block at a position from
+    /// its neighbours (vanilla's best neighbour signal), as of the start of
+    /// this tick. Known only for positions where the mod keeps block data
+    /// (`block-entities.set`) or has a container, in the simulated
+    /// dimension; none elsewhere.
+    power: func(dimension: string, x: s32, y: s32, z: s32) -> option<u8>;
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -922,6 +933,12 @@ world horizon-block-mod {
     export server-net-events;
     import entities;
     import containers;
+    import redstone;
+}
+
+/// The game's side of capability `redstone` (imports only).
+world redstone-host {
+    import redstone;
 }
 
 /// The game's side of `horizon-block-mod` beyond `horizon-server-mod`.
