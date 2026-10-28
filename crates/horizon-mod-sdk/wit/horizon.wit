@@ -900,6 +900,16 @@ interface redstone {
     power: func(dimension: string, x: s32, y: s32, z: s32) -> option<u8>;
 }
 
+/// Capability `items`, server mods only (manifest `api = "0.3"`,
+/// experimental): items a mod's blocks put into the world.
+interface items {
+    /// Drops a stack as an item entity at a position (blocks, so
+    /// x + 0.5 is a block's middle), after the call, in the dimension the
+    /// world simulates; count 1 to 99. At most 64 drops a call. The item is
+    /// any item id, a mod's own too.
+    drop: func(dimension: string, x: f64, y: f64, z: f64, item: string, count: u32) -> result<_, string>;
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -934,6 +944,12 @@ world horizon-block-mod {
     import entities;
     import containers;
     import redstone;
+    import items;
+}
+
+/// The game's side of capability `items` (imports only).
+world items-host {
+    import items;
 }
 
 /// The game's side of capability `redstone` (imports only).

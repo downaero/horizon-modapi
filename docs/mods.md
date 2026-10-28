@@ -89,6 +89,7 @@ folder, loads no runtime and plays exactly like vanilla 26.3.
 | `storage` | `storage` | `get(key)`, `set(key, value)`, `delete(key)`: a per-mod folder of up to 64 files, 4 MiB total, at most 1 MiB written per call |
 | `command` | `command` | `run(line)`: a vanilla command run as the player, with the player's permissions, after the hook returns (8 per call); mods' own commands are not run. `run-quiet(lines)`: up to 256 a call, the same rights, nothing in the chat (single player and Horizon's servers run them 64 a tick and log one line a batch; elsewhere they go as chat commands and their feedback shows) |
 | `containers` | `containers` | server mods: `register`, `open`, `slots`, `set-slot` for the mod's own blocks that hold items and open as a chest ([below](#capability-containers)). **Experimental:** `experimental = ["containers"]` |
+| `items` | `items` | server mods: `drop` puts item entities into the world ([below](#capability-items)). **Experimental:** `experimental = ["items"]` |
 | `redstone` | `redstone` | server mods: `power` reads the redstone signal reaching the mod's own blocks ([below](#capability-redstone)). **Experimental:** `experimental = ["redstone"]` |
 | `entities` | `entities` | server mods: `spawn`, `move-to`, `set-item`, `remove` of small marker entities drawn as an item ([below](#capability-entities)). **Experimental:** `experimental = ["entities"]` |
 | `net` | `net` | `send(player, data)`: messages between a mod's client half and its server half ([below](#capability-net)). **Experimental:** `experimental = ["net"]` |
@@ -591,6 +592,14 @@ has a container, in the dimension the world is simulating, at most 4096 a
 tick; elsewhere it is `none`. There is no event for a change yet: a mod reads
 it from `block-tick`, and a block has to be a ticking one. It does not make a
 block a signal source.
+
+### Capability `items`
+
+**API level 13, experimental, server mods.** `items.drop(dimension, x, y, z,
+item, count)` drops a stack (1 to 99, any item id, a mod's own too) as an item
+entity at a position, at the tick's end, with a short pickup delay; at most 64
+a call. Only the dimension the world is simulating drops; others are ignored.
+The game does not check the item id: an unknown one drops as an unknown item.
 
 ### Capability `entities`
 

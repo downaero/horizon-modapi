@@ -24,6 +24,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
 | `entities` | [`entities`](#entities) | place and move small entities in your worlds |
 | `containers` | [`containers`](#containers) | keep items in its own blocks and open them for players |
 | `redstone` | [`redstone`](#redstone) | see the redstone signal reaching its own blocks |
+| `items` | [`items`](#items) | drop items into your worlds |
 
 ## World `horizon-mod`
 
@@ -43,8 +44,15 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `log`, `storage`, `players`, `world`
+- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `log`, `storage`, `players`, `world`
 - Exports (what the mod provides): `block-events`, `server-net-events`, `server-events`
+
+## World `items-host`
+
+The game's side of capability `items` (imports only).
+
+- Imports (what the game offers): `items`
+- Exports (what the mod provides): 
 
 ## World `redstone-host`
 
@@ -927,3 +935,13 @@ Capability `redstone`, server mods only (manifest `api = "0.3"`, experimental): 
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `power` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<u8>` | The strongest signal (0 to 15) reaching the block at a position from its neighbours (vanilla's best neighbour signal), as of the start of this tick. Known only for positions where the mod keeps block data (`block-entities.set`) or has a container, in the simulated dimension; none elsewhere. |
+
+## `items`
+
+Access: capability `items`.
+
+Capability `items`, server mods only (manifest `api = "0.3"`, experimental): items a mod's blocks put into the world.
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `drop` | `func(dimension: string, x: f64, y: f64, z: f64, item: string, count: u32) -> result<_, string>` | Drops a stack as an item entity at a position (blocks, so x + 0.5 is a block's middle), after the call, in the dimension the world simulates; count 1 to 99. At most 64 drops a call. The item is any item id, a mod's own too. |

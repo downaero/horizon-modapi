@@ -456,6 +456,7 @@ mod run {
             self.apply_mod_block_writes();
             self.apply_mod_entities();
             self.apply_mod_containers();
+            self.apply_mod_drops();
             if self.mods.block_data_dirty && self.ticks % 200 == 0 {
                 self.flush_mod_block_data();
             }
@@ -795,6 +796,18 @@ mod run {
                         }
                     }
                 }
+            }
+        }
+
+        /// Drops the stacks server mods queued as item entities. Only the
+        /// dimension the window simulates is there; others are dropped.
+        pub(in crate::game) fn apply_mod_drops(&mut self) {
+            for (dimension, pos, item, count) in std::mem::take(&mut self.mods.drops) {
+                if dimension != self.dim.id() {
+                    continue;
+                }
+                let stack = horizon_client::items::ItemStack::new(item.as_str(), count);
+                self.spawn_item(stack, pos, [0.0, 0.2, 0.0], 10);
             }
         }
 
@@ -1186,6 +1199,18 @@ mod run {
                     let queue = &mut self.mods.container_ops;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((mod_id, op));
+                    }
+                }
+                Output::Drop {
+                    dimension,
+                    pos,
+                    item,
+                    count,
+                    ..
+                } => {
+                    let queue = &mut self.mods.drops;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push((dimension, pos, item, count));
                     }
                 }
                 Output::Entity { mod_id, op } => {

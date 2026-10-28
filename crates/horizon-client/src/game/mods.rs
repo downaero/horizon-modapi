@@ -70,6 +70,10 @@ pub(super) struct ModsState {
     /// A running server mod has capability `redstone`.
     #[cfg(feature = "mods")]
     pub(super) redstone: bool,
+    /// Item drops server mods queued (dimension, position, item, count), for
+    /// the tick's end.
+    #[cfg(feature = "mods")]
+    pub(super) drops: Vec<(String, [f64; 3], String, u32)>,
     /// Blocks server mods set, by dimension, made before that level's next
     /// tick.
     #[cfg(feature = "mods")]
@@ -743,6 +747,7 @@ impl Game<'_> {
                 | Output::SetBlocks { .. }
                 | Output::BlockData { .. }
                 | Output::Entity { .. }
+                | Output::Drop { .. }
                 | Output::Container { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);
                     continue;

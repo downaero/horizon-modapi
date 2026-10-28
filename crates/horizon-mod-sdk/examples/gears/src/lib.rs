@@ -6,7 +6,7 @@ use horizon_mod_sdk::{
     export_server_mod,
     server::{
         BlockPos, Player, Pos, Registration, ServerMod, block_entities, containers, entities, net,
-        players, redstone,
+        items, players, redstone,
     },
 };
 
@@ -87,6 +87,17 @@ impl ServerMod for Gears {
             .and_then(|d| <[u8; 4]>::try_from(d).ok())
             .map_or(0, u32::from_le_bytes);
         let _ = block_entities::set(dimension, pos.x, pos.y, pos.z, &(seconds + 1).to_le_bytes());
+        // A minute of running makes an iron nugget (capability `items`).
+        if (seconds + 1).is_multiple_of(60) {
+            let _ = items::drop(
+                dimension,
+                f64::from(pos.x) + 0.5,
+                f64::from(pos.y) + 1.0,
+                f64::from(pos.z) + 0.5,
+                "minecraft:iron_nugget",
+                1,
+            );
+        }
     }
 
     fn block_used(&mut self, player: &str, dimension: &str, pos: Pos, state: &str) -> bool {

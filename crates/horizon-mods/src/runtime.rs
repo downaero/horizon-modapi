@@ -75,6 +75,14 @@ mod redstone_bindings {
     });
 }
 use redstone_bindings::{RedstoneHost, horizon::mods::redstone};
+/// Capability `items`' imports.
+mod item_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "items-host",
+    });
+}
+use item_bindings::{ItemsHost, horizon::mods::items};
 mod server_net_bindings {
     wasmtime::component::bindgen!({
         path: "../horizon-mod-sdk/wit",
@@ -179,6 +187,8 @@ pub const ENTITIES_PER_MOD: usize = 1024;
 const CONTAINER_BLOCKS: usize = 64;
 pub const CONTAINER_SLOTS: u32 = 27;
 const CONTAINER_OPS_PER_CALL: usize = 4096;
+/// Item drops (capability `items`) a mod may queue in one call.
+const DROPS_PER_CALL: usize = 64;
 const ENTITY_OPS_PER_CALL: usize = 4096;
 /// Chat lines a mod may show per call, HUD lines and their length.
 const CHAT_PER_CALL: usize = 8;
@@ -378,6 +388,14 @@ pub enum Output {
     Container { mod_id: String, op: ContainerOp },
     /// `entities.*`: a change to the mod's entities, applied in order.
     Entity { mod_id: String, op: EntityOp },
+    /// `items.drop`: a stack to drop as an item entity.
+    Drop {
+        mod_id: String,
+        dimension: String,
+        pos: [f64; 3],
+        item: String,
+        count: u32,
+    },
     /// `recipes.give`: a stack for a creative player.
     Give {
         item: String,
@@ -757,6 +775,8 @@ impl Mods {
             ContainersHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             RedstoneHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
+            ItemsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
@@ -2133,6 +2153,40 @@ impl State {
     fn owns_container_block(&self, id: &str) -> bool {
         id.split_once(':')
             .is_some_and(|(ns, _)| self.block_namespaces.iter().any(|n| n == ns))
+    }
+}
+impl items::Host for State {
+    fn drop(
+        &mut self,
+        dimension: String,
+        x: f64,
+        y: f64,
+        z: f64,
+        item: String,
+        count: u32,
+    ) -> Result<(), String> {
+        if !(1..=99).contains(&count) || item.is_empty() || item.len() > 128 {
+            return Err("a stack of 1 to 99".into());
+        }
+        if ![x, y, z].iter().all(|v| v.is_finite() && v.abs() < 3.0e7) {
+            return Err("position out of range".into());
+        }
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Drop { .. }))
+            .count();
+        if queued >= DROPS_PER_CALL {
+            return Err(format!("at most {DROPS_PER_CALL} drops a call"));
+        }
+        self.out.push(Output::Drop {
+            mod_id: self.id.clone(),
+            dimension,
+            pos: [x, y, z],
+            item,
+            count,
+        });
+        Ok(())
     }
 }
 impl redstone::Host for State {

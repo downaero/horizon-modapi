@@ -215,6 +215,8 @@ pub mod server {
     pub use horizon::mods::containers;
     /// Capability `redstone`: the signal reaching the mod's blocks.
     pub use horizon::mods::redstone;
+    /// Capability `items`: item entities dropped into the world.
+    pub use horizon::mods::items;
     /// Capability `entities`: small marker entities.
     pub use horizon::mods::entities;
     /// Capability `net`: messages to and from the mod's client half.
