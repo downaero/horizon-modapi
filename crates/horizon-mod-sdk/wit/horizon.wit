@@ -907,8 +907,9 @@ interface entities {
     /// rotation.
     rotate: func(handle: u32, yaw: f32, pitch: f32) -> bool;
     /// Makes a block entity (`spawn-block`) solid for players, as a boat is:
-    /// they stand on it and walk into it as on its full cube. A player it
-    /// moves into is not pushed. Sent to clients as the entity being silent.
+    /// they stand on it and walk into it as on its full cube, and a player
+    /// standing on it rides along as it moves; one it moves into from the
+    /// side is not pushed. Sent to clients as the entity being silent.
     set-solid: func(handle: u32, solid: bool) -> bool;
 }
 

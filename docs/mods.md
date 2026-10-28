@@ -678,7 +678,9 @@ a gantry, an elevator or a simple flying machine; the gears example's `gears:lif
 `entities.rotate(handle, yaw, pitch)` (API level 25) turns a block entity about its centre, pitch
 about x then yaw about y, so a block with `axis=x` spins about any axis; it reaches clients as the
 entity's rotation. `entities.set-solid(handle, solid)` (API level 26) makes it solid for players as a
-boat is, its full cube: they stand on it and walk into it, though one it moves into is not pushed. It
+boat is, its full cube: they stand on it and walk into it, and one standing on it rides along as it
+moves (a guest is sent a teleport that keeps their motion); one it moves into from the side is not
+pushed. It
 reaches clients as a silent falling block with no gravity. `Contraption::set_rotation(yaw, pitch)`
 turns a whole structure about the centre of its box and `set_solid` makes it walkable: the gears
 example's `gears:mill` spins the 1 x 3 x 3 wheel above it, and its lift carries players.

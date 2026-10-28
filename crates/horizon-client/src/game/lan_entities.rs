@@ -360,6 +360,13 @@ impl Game<'_> {
             if f.no_gravity {
                 e.meta.push((5, serializer::BOOLEAN, Value::Bool(true)));
             }
+            // A server mod's block moves and turns as the mod says, every
+            // tick: its changes go out at once and in full, all its blocks
+            // together.
+            if f.mod_owned {
+                e.needs_sync = true;
+                e.precise = true;
+            }
             // Entity.DATA_SILENT: a server mod's solid block.
             if f.solid {
                 e.meta.push((4, serializer::BOOLEAN, Value::Bool(true)));

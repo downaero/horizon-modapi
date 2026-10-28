@@ -1041,6 +1041,8 @@ mod run {
         pub(in crate::game) fn apply_mod_entities(&mut self) {
             use horizon_client::{entities::ArmorStand, items::ItemStack};
             use horizon_core::geometry::Vec3;
+            // Solid blocks that moved: where each stood and by how much.
+            let mut carried: Vec<(Vec3, Vec3)> = Vec::new();
             for (mod_id, op) in std::mem::take(&mut self.mods.entity_ops) {
                 match op {
                     horizon_mods::EntityOp::Spawn {
@@ -1142,6 +1144,9 @@ mod run {
                         } else if let Some(f) =
                             self.falling.iter_mut().find(|f| f.mod_owned && f.id == id)
                         {
+                            if f.solid {
+                                carried.push((f.position, to.subtract(f.position)));
+                            }
                             f.previous = f.position;
                             f.position = to;
                         }
@@ -1181,6 +1186,48 @@ mod run {
                     }
                 }
             }
+            self.carry_riders(&carried);
+        }
+
+        /// Moves the players standing on a server mod's solid blocks with
+        /// them: a block at `at` (bottom centre) moved by the delta. The
+        /// window's own player is moved; a guest is sent a teleport that keeps
+        /// their motion. One block's move carries a player at most once.
+        fn carry_riders(
+            &mut self,
+            carried: &[(horizon_core::geometry::Vec3, horizon_core::geometry::Vec3)],
+        ) {
+            use horizon_core::geometry::Vec3;
+            if carried.is_empty() {
+                return;
+            }
+            // Feet over a block's top (within a little either way), inside its
+            // square widened by a player's half width.
+            let on = |feet: [f64; 3]| {
+                carried.iter().find(|(at, _)| {
+                    (feet[0] - at.x).abs() < 0.8
+                        && (feet[2] - at.z).abs() < 0.8
+                        && (feet[1] - (at.y + 1.0)).abs() < 0.3
+                })
+            };
+            if self.options.execution_role.is_client()
+                && self.remote.is_none()
+                && let Some(p) = self.player.as_mut()
+                && let Some((_, d)) = on([p.position.x, p.position.y, p.position.z])
+            {
+                p.position = p.position.add_vector(*d);
+            }
+            let Some(mut host) = self.lan.take() else {
+                return;
+            };
+            for i in 0..host.hub.guests.len() {
+                let feet = host.hub.guests[i].position;
+                if let Some((_, d)) = on(feet) {
+                    let to = Vec3::new(feet[0], feet[1], feet[2]).add_vector(*d);
+                    host.hub.teleport_keeping_motion(i, [to.x, to.y, to.z]);
+                }
+            }
+            self.lan = Some(host);
         }
 
         /// A player broke (or placed) `state` at `pos`: the player acting now.

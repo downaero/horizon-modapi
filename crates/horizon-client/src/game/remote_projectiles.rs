@@ -350,6 +350,8 @@ impl Game<'_> {
                 match (index, value) {
                     (8, Value::Pos(p)) => f.start_pos = BlockPos::new(p[0], p[1], p[2]),
                     (4, Value::Bool(silent)) => f.solid = *silent,
+                    // Entity.DATA_NO_GRAVITY: it hangs where the server puts it.
+                    (5, Value::Bool(no_gravity)) => f.no_gravity = *no_gravity,
                     _ => {}
                 }
             } else if let Some(c) = self.crystals.iter_mut().find(|c| c.id == id) {
