@@ -51,6 +51,14 @@ mod net_bindings {
         world: "net-host",
     });
 }
+/// Capability `entities`' imports.
+mod entity_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "entities-host",
+    });
+}
+use entity_bindings::{EntitiesHost, horizon::mods::entities};
 mod server_net_bindings {
     wasmtime::component::bindgen!({
         path: "../horizon-mod-sdk/wit",
@@ -147,6 +155,10 @@ pub const BLOCK_TICKS_PER_TICK: usize = 4096;
 /// Bytes of one `net.send`, and messages a mod may send per hook call.
 pub const NET_BYTES: usize = 32 << 10;
 const NET_PER_CALL: usize = 64;
+/// Entities a mod may hold at once (`entities.spawn`), and the operations
+/// it may queue per hook call.
+pub const ENTITIES_PER_MOD: usize = 1024;
+const ENTITY_OPS_PER_CALL: usize = 4096;
 /// Chat lines a mod may show per call, HUD lines and their length.
 const CHAT_PER_CALL: usize = 8;
 /// `command.run-quiet` lines one call of a mod may queue (a quiet payload's
@@ -230,6 +242,30 @@ impl Runs {
     }
 }
 
+/// One change to a mod's entities, by the mod's own handle.
+#[derive(Clone, Debug, PartialEq)]
+pub enum EntityOp {
+    Spawn {
+        handle: u32,
+        dimension: String,
+        pos: [f64; 3],
+        yaw: f32,
+        item: String,
+    },
+    Move {
+        handle: u32,
+        pos: [f64; 3],
+        yaw: f32,
+    },
+    SetItem {
+        handle: u32,
+        item: String,
+    },
+    Remove {
+        handle: u32,
+    },
+}
+
 /// What mods asked the game to show since the last [`Mods::drain`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum Output {
@@ -294,6 +330,8 @@ pub enum Output {
         player: Option<String>,
         data: Vec<u8>,
     },
+    /// `entities.*`: a change to the mod's entities, applied in order.
+    Entity { mod_id: String, op: EntityOp },
     /// `recipes.give`: a stack for a creative player.
     Give {
         item: String,
@@ -500,6 +538,10 @@ struct State {
     block_cursor: usize,
     /// A server mod: `net.send` may name a player.
     server: bool,
+    /// Capability `entities`: the handles of the mod's live entities, and
+    /// the next one to hand out.
+    entity_handles: std::collections::HashSet<u32>,
+    next_handle: u32,
 }
 
 fn block_pos(p: BlockPos) -> block_bindings::exports::horizon::mods::block_events::Pos {
@@ -634,6 +676,8 @@ impl Mods {
                 .map_err(|e| e.to_string())?;
             NetHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
+            EntitiesHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             RenderHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
@@ -726,6 +770,8 @@ impl Mods {
                 .chain(m.namespaces.iter().cloned())
                 .collect(),
             server,
+            entity_handles: Default::default(),
+            next_handle: 1,
         };
         let mut store = Store::new(engine, state);
         store.limiter(|s| &mut s.limits);
@@ -1966,6 +2012,81 @@ impl block_entities::Host for State {
                 data: None,
             });
         }
+    }
+}
+impl State {
+    /// Queues an entity change, within the per-call cap.
+    fn entity_op(&mut self, op: EntityOp) -> bool {
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Entity { .. }))
+            .count();
+        if queued >= ENTITY_OPS_PER_CALL {
+            return false;
+        }
+        self.out.push(Output::Entity {
+            mod_id: self.id.clone(),
+            op,
+        });
+        true
+    }
+}
+impl entities::Host for State {
+    fn spawn(
+        &mut self,
+        dimension: String,
+        x: f64,
+        y: f64,
+        z: f64,
+        yaw: f32,
+        item: String,
+    ) -> Result<u32, String> {
+        if self.entity_handles.len() >= ENTITIES_PER_MOD {
+            return Err(format!("at most {ENTITIES_PER_MOD} entities"));
+        }
+        if ![x, y, z, f64::from(yaw)].iter().all(|v| v.is_finite()) {
+            return Err("a position that is not a number".into());
+        }
+        if item.len() > 128 {
+            return Err("an item id too long".into());
+        }
+        if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref())
+            && !view.has_dimension(&dimension)
+        {
+            return Err(format!("no dimension {dimension}"));
+        }
+        let handle = self.next_handle;
+        let op = EntityOp::Spawn {
+            handle,
+            dimension,
+            pos: [x, y, z],
+            yaw,
+            item,
+        };
+        if !self.entity_op(op) {
+            return Err(format!("at most {ENTITY_OPS_PER_CALL} changes a call"));
+        }
+        self.next_handle += 1;
+        self.entity_handles.insert(handle);
+        Ok(handle)
+    }
+    fn move_to(&mut self, handle: u32, x: f64, y: f64, z: f64, yaw: f32) -> bool {
+        self.entity_handles.contains(&handle)
+            && [x, y, z, f64::from(yaw)].iter().all(|v| v.is_finite())
+            && self.entity_op(EntityOp::Move {
+                handle,
+                pos: [x, y, z],
+                yaw,
+            })
+    }
+    fn set_item(&mut self, handle: u32, item: String) -> bool {
+        self.entity_handles.contains(&handle)
+            && item.len() <= 128
+            && self.entity_op(EntityOp::SetItem { handle, item })
+    }
+    fn remove(&mut self, handle: u32) -> bool {
+        self.entity_handles.remove(&handle) && self.entity_op(EntityOp::Remove { handle })
     }
 }
 impl net::Host for State {

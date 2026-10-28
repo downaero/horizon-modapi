@@ -21,6 +21,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
 | `recipes` | [`recipes`](#recipes) | read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items |
 | `block-entities` | [`block-entities`](#block-entities) | keep data at the positions of its own blocks and tick them |
 | `net` | [`net`](#net) | send messages between the game and the server it plays on |
+| `entities` | [`entities`](#entities) | place and move small entities in your worlds |
 
 ## World `horizon-mod`
 
@@ -40,7 +41,7 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `log`, `storage`, `players`, `world`
+- Imports (what the game offers): `block-entities`, `net`, `entities`, `log`, `storage`, `players`, `world`
 - Exports (what the mod provides): `block-events`, `server-net-events`, `server-events`
 
 ## World `block-host`
@@ -56,6 +57,13 @@ The game's side of capability `net` for client mods (it adds the `net` import fo
 
 - Imports (what the game offers): `net`
 - Exports (what the mod provides): `net-events`
+
+## World `entities-host`
+
+The game's side of capability `entities` (imports only).
+
+- Imports (what the game offers): `entities`
+- Exports (what the mod provides): 
 
 ## World `server-net-host`
 
@@ -860,3 +868,16 @@ The same for a server mod (a separate interface: the SDK builds client and serve
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `message` | `func(player: string, data: list<u8>)` | A message from the mod's client half on `player` (their id). |
+
+## `entities`
+
+Access: capability `entities`.
+
+Capability `entities`, server mods only (manifest `api = "0.3"`, experimental): small marker entities a mod places and moves, drawn as an item (a mod's own item included) held where the entity stands. A first step: no hitbox, no AI, no saving; a mod keeps what it needs in `block-entities` or `storage` and places them again after a restart. They exist in the dimension the world is simulating (the overworld at first).
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `spawn` | `func(dimension: string, x: f64, y: f64, z: f64, yaw: f32, item: string) -> result<u32, string>` | Places one at a position, facing `yaw` degrees, drawn as `item` (`mymod:gear`). Returns the mod's own handle for it (at most 1024 live at once). |
+| `move-to` | `func(handle: u32, x: f64, y: f64, z: f64, yaw: f32) -> bool` | Moves one of the mod's entities; false for a handle it does not hold. |
+| `set-item` | `func(handle: u32, item: string) -> bool` | Changes the item an entity is drawn as. |
+| `remove` | `func(handle: u32) -> bool` | Removes one of the mod's entities. |

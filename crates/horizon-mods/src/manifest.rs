@@ -110,9 +110,11 @@ pub enum Capability {
     /// Messages between the mod's client half and its server half (interface
     /// `net`).
     Net,
+    /// Marker entities a server mod places and moves (interface `entities`).
+    Entities,
 }
 impl Capability {
-    pub const ALL: [Capability; 14] = [
+    pub const ALL: [Capability; 15] = [
         Capability::GameRead,
         Capability::Chat,
         Capability::Hud,
@@ -127,6 +129,7 @@ impl Capability {
         Capability::Recipes,
         Capability::BlockEntities,
         Capability::Net,
+        Capability::Entities,
     ];
     /// Whether a server mod may have it: the others act on a local player.
     pub fn on_server(self) -> bool {
@@ -137,6 +140,7 @@ impl Capability {
                 | Capability::World
                 | Capability::BlockEntities
                 | Capability::Net
+                | Capability::Entities
         )
     }
     /// The WIT interface it grants, in `horizon:mods`.
@@ -156,6 +160,7 @@ impl Capability {
             Capability::Recipes => "recipes",
             Capability::BlockEntities => "block-entities",
             Capability::Net => "net",
+            Capability::Entities => "entities",
         }
     }
     /// May change in any release: a mod uses it only with
@@ -169,6 +174,7 @@ impl Capability {
                 | Capability::Recipes
                 | Capability::BlockEntities
                 | Capability::Net
+                | Capability::Entities
         )
     }
     /// What the player reads before turning the mod on: "May <this>".
@@ -191,6 +197,7 @@ impl Capability {
                 "keep data at the positions of its own blocks and tick them"
             }
             Capability::Net => "send messages between the game and the server it plays on",
+            Capability::Entities => "place and move small entities in your worlds",
             Capability::Recipes => {
                 "read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items"
             }
@@ -237,6 +244,7 @@ impl fmt::Display for Capability {
             Capability::Recipes => "recipes",
             Capability::BlockEntities => "block-entities",
             Capability::Net => "net",
+            Capability::Entities => "entities",
         };
         f.write_str(name)
     }

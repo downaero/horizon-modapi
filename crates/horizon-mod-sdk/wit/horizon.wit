@@ -845,6 +845,25 @@ interface server-net-events {
     message: func(player: string, data: list<u8>);
 }
 
+/// Capability `entities`, server mods only (manifest `api = "0.3"`,
+/// experimental): small marker entities a mod places and moves, drawn as an
+/// item (a mod's own item included) held where the entity stands. A first
+/// step: no hitbox, no AI, no saving; a mod keeps what it needs in
+/// `block-entities` or `storage` and places them again after a restart. They
+/// exist in the dimension the world is simulating (the overworld at first).
+interface entities {
+    /// Places one at a position, facing `yaw` degrees, drawn as `item`
+    /// (`mymod:gear`). Returns the mod's own handle for it (at most 1024 live
+    /// at once).
+    spawn: func(dimension: string, x: f64, y: f64, z: f64, yaw: f32, item: string) -> result<u32, string>;
+    /// Moves one of the mod's entities; false for a handle it does not hold.
+    move-to: func(handle: u32, x: f64, y: f64, z: f64, yaw: f32) -> bool;
+    /// Changes the item an entity is drawn as.
+    set-item: func(handle: u32, item: string) -> bool;
+    /// Removes one of the mod's entities.
+    remove: func(handle: u32) -> bool;
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -876,6 +895,7 @@ world horizon-block-mod {
     export block-events;
     import net;
     export server-net-events;
+    import entities;
 }
 
 /// The game's side of `horizon-block-mod` beyond `horizon-server-mod`.
@@ -889,6 +909,11 @@ world block-host {
 world net-host {
     import net;
     export net-events;
+}
+
+/// The game's side of capability `entities` (imports only).
+world entities-host {
+    import entities;
 }
 
 /// The game's side of `server-net-events`.

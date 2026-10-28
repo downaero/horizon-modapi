@@ -1,9 +1,12 @@
 //! Gears: a server mod with its own block. `gears:counter` keeps the seconds
 //! it has stood as four bytes at its position (capability `block-entities`);
-//! the server ticks it and saves the bytes with the world.
+//! the server ticks it and saves the bytes with the world. A gear (an iron
+//! ingot, capability `entities`) floats above each counter placed.
 use horizon_mod_sdk::{
     export_server_mod,
-    server::{BlockPos, Player, Pos, Registration, ServerMod, block_entities, net, players},
+    server::{
+        BlockPos, Player, Pos, Registration, ServerMod, block_entities, entities, net, players,
+    },
 };
 
 const COUNTER: &str = "gears:counter";
@@ -12,16 +15,45 @@ const DIMENSION: &str = "minecraft:overworld";
 struct Gears {
     /// Ticks seen by each counter since its last write.
     ticks: Vec<([i32; 3], u32)>,
+    /// The floating gear above each counter (capability `entities`).
+    gears: Vec<([i32; 3], u32)>,
 }
 
 impl ServerMod for Gears {
     fn init() -> Result<(Self, Registration), String> {
-        Ok((Self { ticks: Vec::new() }, Registration::new().on_blocks()))
+        let this = Self {
+            ticks: Vec::new(),
+            gears: Vec::new(),
+        };
+        Ok((this, Registration::new().on_blocks()))
     }
 
     fn block_placed(&mut self, _player: &Player, pos: BlockPos, state: &str) {
         if state.starts_with(COUNTER) {
             let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &0u32.to_le_bytes());
+            let at = [
+                f64::from(pos.x) + 0.5,
+                f64::from(pos.y) + 1.1,
+                f64::from(pos.z) + 0.5,
+            ];
+            if let Ok(handle) =
+                entities::spawn(DIMENSION, at[0], at[1], at[2], 0.0, "minecraft:iron_ingot")
+            {
+                self.gears.push(([pos.x, pos.y, pos.z], handle));
+            }
+        }
+    }
+
+    fn block_broken(&mut self, _player: &Player, pos: BlockPos, state: &str) {
+        if state.starts_with(COUNTER) {
+            let at = [pos.x, pos.y, pos.z];
+            self.gears.retain(|&(p, handle)| {
+                let gone = p == at;
+                if gone {
+                    entities::remove(handle);
+                }
+                !gone
+            });
         }
     }
 

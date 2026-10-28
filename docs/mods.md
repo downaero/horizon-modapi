@@ -88,6 +88,7 @@ folder, loads no runtime and plays exactly like vanilla 26.3.
 | `hud` | `hud` | `set-panel(corner, lines)`, `clear()`: up to 16 lines of 256 characters |
 | `storage` | `storage` | `get(key)`, `set(key, value)`, `delete(key)`: a per-mod folder of up to 64 files, 4 MiB total, at most 1 MiB written per call |
 | `command` | `command` | `run(line)`: a vanilla command run as the player, with the player's permissions, after the hook returns (8 per call); mods' own commands are not run. `run-quiet(lines)`: up to 256 a call, the same rights, nothing in the chat (single player and Horizon's servers run them 64 a tick and log one line a batch; elsewhere they go as chat commands and their feedback shows) |
+| `entities` | `entities` | server mods: `spawn`, `move-to`, `set-item`, `remove` of small marker entities drawn as an item ([below](#capability-entities)). **Experimental:** `experimental = ["entities"]` |
 | `net` | `net` | `send(player, data)`: messages between a mod's client half and its server half ([below](#capability-net)). **Experimental:** `experimental = ["net"]` |
 | `block-entities` | `block-entities` | server mods: `get`, `set`, `remove` of bytes at the positions of the mod's own blocks, and the `block-tick` and `block-used` hooks ([below](#server-mods-api-03-experimental)). **Experimental:** `experimental = ["block-entities"]` |
 | `ui` | `ui` | `open-screen`, `close-screen`, `set-settings`: a screen the mod owns and a page in Options > Mods, of text, button, item and list widgets the game lays out and draws with its own menus' code; `browser.set-items`, `browser.poll`: a recipe viewer's panel of items right of the inventory and container screens (not the creative one), which the game pages and draws with its own slots and search box, and the mod hears its clicks, its searches and the mod's own keys (`input.register-key`) pressed over any item on the screen; `browser.set-recipes`: recipes in the panel's place (crafting grids, cooking, stonecutting, smithing and brewing layouts, their slots cycling through their stacks, a note and an action button each), paged by the game, with clicks on their slots, action buttons, page turns and a back button. **Experimental:** the manifest needs `experimental = ["ui"]` |
@@ -562,6 +563,19 @@ running mods changes. `block-used` runs when a player (the window's own or a
 LAN guest) right-clicks a block of a mod's namespace with an empty-handed
 use, not sneaking with full hands: the mod returns true to take the click,
 and the game then does nothing else with it. Vanilla blocks never reach it.
+
+### Capability `entities`
+
+**API level 10, experimental, server mods.** A first, small step toward mod
+entities: `entities.spawn(dimension, x, y, z, yaw, item)` places a marker
+(returns the mod's own handle, at most 1024 live), `move-to(handle, ...)`,
+`set-item(handle, item)` and `remove(handle)` change it. The game draws it as
+an invisible armor stand holding `item` in its hand (a mod's own item too), so
+it follows the stand's rendering for players and LAN guests. It has no hitbox,
+AI or physics, and is **not saved**: after a restart the mod places its
+entities again (from `block-entities` data or `storage`). Changes apply at
+the tick's end, in the dimension the world is simulating; others are dropped.
+A mod turned off mid-session leaves its entities until the world closes.
 
 ### Capability `net`
 
