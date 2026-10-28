@@ -226,6 +226,9 @@ impl Game<'_> {
                                 ),
                                 saved: uuid.map(|u| Box::new((u, tag.clone()))),
                                 mod_owned: false,
+                                yaw: 0.0,
+                                pitch: 0.0,
+                                solid: false,
                             });
                         }
                     }

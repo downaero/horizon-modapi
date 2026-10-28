@@ -323,6 +323,17 @@ pub enum EntityOp {
         pos: [f64; 3],
         state: String,
     },
+    /// `entities.set-solid`.
+    SetSolid {
+        handle: u32,
+        solid: bool,
+    },
+    /// `entities.rotate`: yaw and pitch, in degrees.
+    Rotate {
+        handle: u32,
+        yaw: f32,
+        pitch: f32,
+    },
     Move {
         handle: u32,
         pos: [f64; 3],
@@ -2872,6 +2883,19 @@ impl entities::Host for State {
         self.next_handle += 1;
         self.entity_handles.insert(handle);
         Ok(handle)
+    }
+    fn set_solid(&mut self, handle: u32, solid: bool) -> bool {
+        self.entity_handles.contains(&handle)
+            && self.entity_op(EntityOp::SetSolid { handle, solid })
+    }
+    fn rotate(&mut self, handle: u32, yaw: f32, pitch: f32) -> bool {
+        let wrap = |v: f32| if v.is_finite() { v % 360.0 } else { 0.0 };
+        self.entity_handles.contains(&handle)
+            && self.entity_op(EntityOp::Rotate {
+                handle,
+                yaw: wrap(yaw),
+                pitch: wrap(pitch),
+            })
     }
     fn move_to(&mut self, handle: u32, x: f64, y: f64, z: f64, yaw: f32) -> bool {
         self.entity_handles.contains(&handle)

@@ -673,8 +673,15 @@ the non-air blocks of a box (at most 1024) out of the world as such entities, `m
 moves them together a fraction of a block at a time, and `disassemble()` puts them back as
 blocks at the nearest whole position (capabilities `world` and `entities`). That is a piston,
 a gantry, an elevator or a simple flying machine; the gears example's `gears:lift` raises the
-3 x 3 x 3 box above it three blocks when used. Players do not stand on or collide with a
-structure while it moves, and it moves without turning.
+3 x 3 x 3 box above it three blocks when used.
+
+`entities.rotate(handle, yaw, pitch)` (API level 25) turns a block entity about its centre, pitch
+about x then yaw about y, so a block with `axis=x` spins about any axis; it reaches clients as the
+entity's rotation. `entities.set-solid(handle, solid)` (API level 26) makes it solid for players as a
+boat is, its full cube: they stand on it and walk into it, though one it moves into is not pushed. It
+reaches clients as a silent falling block with no gravity. `Contraption::set_rotation(yaw, pitch)`
+turns a whole structure about the centre of its box and `set_solid` makes it walkable: the gears
+example's `gears:mill` spins the 1 x 3 x 3 wheel above it, and its lift carries players.
 
 `horizon_mod_sdk::network` walks networks of connected blocks in the mod's own code:
 `propagate(sources, limit, link)` carries a value (a shaft's speed, reversed by a gear, doubled

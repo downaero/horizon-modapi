@@ -900,6 +900,16 @@ interface entities {
     /// with it. Counts toward the same 1024 entities. A moving structure is
     /// its blocks taken out of the world (`world.set-blocks`) and put back.
     spawn-block: func(dimension: string, x: f64, y: f64, z: f64, state: string) -> result<u32, string>;
+    /// Turns an entity, in degrees: a block entity (`spawn-block`) about its
+    /// centre, first `pitch` about x then `yaw` about y, so a block with
+    /// `axis=x` spins about any axis (yaw 90 puts its x along z); a marker
+    /// (`spawn`) by its yaw only. Sent to every client as the entity's
+    /// rotation.
+    rotate: func(handle: u32, yaw: f32, pitch: f32) -> bool;
+    /// Makes a block entity (`spawn-block`) solid for players, as a boat is:
+    /// they stand on it and walk into it as on its full cube. A player it
+    /// moves into is not pushed. Sent to clients as the entity being silent.
+    set-solid: func(handle: u32, solid: bool) -> bool;
 }
 
 /// Capability `containers`, server mods only (manifest `api = "0.3"`,

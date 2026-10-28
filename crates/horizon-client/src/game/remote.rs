@@ -1499,6 +1499,9 @@ impl Game<'_> {
             }
             if let Some(f) = self.falling.iter_mut().find(|f| f.id == id as u32) {
                 f.position = at;
+                if let Some((yaw, pitch)) = rotation {
+                    (f.yaw, f.pitch) = (yaw, pitch);
+                }
                 return;
             }
             if let Some(t) = self.tnts.iter_mut().find(|t| t.id == id as u32) {

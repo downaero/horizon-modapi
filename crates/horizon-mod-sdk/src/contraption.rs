@@ -17,6 +17,10 @@ pub struct Contraption {
     offset: [f64; 3],
     /// Each block: its place in the box, its state and its entity.
     blocks: Vec<([i32; 3], String, u32)>,
+    /// The size of the box, for the centre it turns about.
+    size: [i32; 3],
+    /// Its turn, in degrees: pitch about x, then yaw about y.
+    rotation: [f32; 2],
 }
 
 impl Contraption {
@@ -63,6 +67,12 @@ impl Contraption {
             origin: min,
             offset: [0.0; 3],
             blocks,
+            size: [
+                max[0] - min[0] + 1,
+                max[1] - min[1] + 1,
+                max[2] - min[2] + 1,
+            ],
+            rotation: [0.0; 2],
         })
     }
 
@@ -87,11 +97,62 @@ impl Contraption {
         for i in 0..3 {
             self.offset[i] += delta[i];
         }
+        self.place();
+    }
+
+    /// Turns the whole structure about the centre of its box, in degrees:
+    /// first `pitch` about x, then `yaw` about y (a mill's sails, a door
+    /// swinging, a ship turning). Each block turns with it.
+    pub fn set_rotation(&mut self, yaw: f32, pitch: f32) {
+        self.rotation = [yaw, pitch];
+        for (_, _, handle) in &self.blocks {
+            entities::rotate(*handle, yaw, pitch);
+        }
+        self.place();
+    }
+
+    /// Makes every block solid for players, or not (`entities::set_solid`).
+    pub fn set_solid(&self, solid: bool) {
+        for (_, _, handle) in &self.blocks {
+            entities::set_solid(*handle, solid);
+        }
+    }
+
+    /// Puts each block entity where its place in the box is now, moved and
+    /// turned about the box's centre.
+    fn place(&self) {
+        let (yaw, pitch) = (
+            f64::from(-self.rotation[0]).to_radians(),
+            f64::from(self.rotation[1]).to_radians(),
+        );
+        let half = self.size.map(|s| f64::from(s) / 2.0);
+        let pivot = [
+            f64::from(self.origin[0]) + half[0] + self.offset[0],
+            f64::from(self.origin[1]) + half[1] + self.offset[1],
+            f64::from(self.origin[2]) + half[2] + self.offset[2],
+        ];
         for (rel, _, handle) in &self.blocks {
-            let x = f64::from(self.origin[0] + rel[0]) + 0.5 + self.offset[0];
-            let y = f64::from(self.origin[1] + rel[1]) + self.offset[1];
-            let z = f64::from(self.origin[2] + rel[2]) + 0.5 + self.offset[2];
-            entities::move_to(*handle, x, y, z, 0.0);
+            // The block's centre from the pivot, turned about x, then y.
+            let v = [
+                f64::from(rel[0]) + 0.5 - half[0],
+                f64::from(rel[1]) + 0.5 - half[1],
+                f64::from(rel[2]) + 0.5 - half[2],
+            ];
+            let (y1, z1) = (
+                v[1] * pitch.cos() - v[2] * pitch.sin(),
+                v[1] * pitch.sin() + v[2] * pitch.cos(),
+            );
+            let (x2, z2) = (
+                v[0] * yaw.cos() + z1 * yaw.sin(),
+                -v[0] * yaw.sin() + z1 * yaw.cos(),
+            );
+            entities::move_to(
+                *handle,
+                pivot[0] + x2,
+                pivot[1] + y1 - 0.5,
+                pivot[2] + z2,
+                self.rotation[0],
+            );
         }
     }
 
@@ -99,6 +160,7 @@ impl Contraption {
     /// and takes the entities away. The blocks go where the world is;
     /// whatever stands there is replaced.
     pub fn disassemble(self) -> Result<[i32; 3], String> {
+        // Put back unturned: a turned structure lands as it was assembled.
         let shift = self.offset.map(|o| o.round() as i32);
         let changes: Vec<BlockChange> = self
             .blocks

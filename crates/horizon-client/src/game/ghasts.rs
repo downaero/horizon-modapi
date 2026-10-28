@@ -31,6 +31,11 @@ impl Game<'_> {
                     .filter(|b| Some(b.id) != self.riding)
                     .map(super::boats::Boat::bounds),
             )
+            // A server mod's solid blocks (`entities.set-solid`): their full cube.
+            .chain(self.falling.iter().filter(|f| f.solid).map(|f| {
+                let min = Vec3::new(f.position.x - 0.5, f.position.y, f.position.z - 0.5);
+                Aabb::new(min, Vec3::new(min.x + 1.0, min.y + 1.0, min.z + 1.0))
+            }))
             .collect()
     }
     /// `HappyGhast.mobInteract`. Returns whether the click was used.

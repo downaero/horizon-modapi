@@ -346,12 +346,23 @@ impl Game<'_> {
             out.push(e);
         }
         for f in self.falling.iter().filter(|f| f.id != 0) {
-            let mut e = state(f.id, "minecraft:falling_block", at(f.position), 0.0, false);
+            let mut e = state(
+                f.id,
+                "minecraft:falling_block",
+                at(f.position),
+                f.yaw,
+                false,
+            );
+            e.pitch = f.pitch;
             e.velocity = at(f.velocity);
             // getAddEntityPacket: the block state; DATA_START_POS.
             e.data = f.state.0 as i32;
             if f.no_gravity {
                 e.meta.push((5, serializer::BOOLEAN, Value::Bool(true)));
+            }
+            // Entity.DATA_SILENT: a server mod's solid block.
+            if f.solid {
+                e.meta.push((4, serializer::BOOLEAN, Value::Bool(true)));
             }
             let start = [f.start_pos.x, f.start_pos.y, f.start_pos.z];
             if start != [0; 3] {

@@ -1103,10 +1103,33 @@ mod run {
                             damage: Default::default(),
                             saved: None,
                             mod_owned: true,
+                            yaw: 0.0,
+                            pitch: 0.0,
+                            solid: false,
                         });
                         self.mods
                             .mod_entities
                             .insert((mod_id, handle), self.next_entity);
+                    }
+                    horizon_mods::EntityOp::SetSolid { handle, solid } => {
+                        if let Some(&id) = self.mods.mod_entities.get(&(mod_id, handle))
+                            && let Some(f) =
+                                self.falling.iter_mut().find(|f| f.mod_owned && f.id == id)
+                        {
+                            f.solid = solid;
+                        }
+                    }
+                    horizon_mods::EntityOp::Rotate { handle, yaw, pitch } => {
+                        let Some(&id) = self.mods.mod_entities.get(&(mod_id, handle)) else {
+                            continue;
+                        };
+                        if let Some(a) = self.armor_stands.iter_mut().find(|a| a.id == id) {
+                            a.yaw = yaw;
+                        } else if let Some(f) =
+                            self.falling.iter_mut().find(|f| f.mod_owned && f.id == id)
+                        {
+                            (f.yaw, f.pitch) = (yaw, pitch);
+                        }
                     }
                     horizon_mods::EntityOp::Move { handle, pos, yaw } => {
                         let Some(&id) = self.mods.mod_entities.get(&(mod_id, handle)) else {

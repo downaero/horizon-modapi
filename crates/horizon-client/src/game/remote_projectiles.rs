@@ -204,6 +204,9 @@ impl Game<'_> {
                 damage: Default::default(),
                 saved: None,
                 mod_owned: false,
+                yaw,
+                pitch,
+                solid: false,
             }),
             "minecraft:trident" => {
                 let mut t = super::trident::ThrownTrident::remote(id, at, yaw, pitch);
@@ -342,9 +345,12 @@ impl Game<'_> {
                     t.fuse = *fuse;
                 }
             } else if let Some(f) = self.falling.iter_mut().find(|f| f.id == id) {
-                // FallingBlockEntity.DATA_START_POS (the model's seed).
-                if let (8, Value::Pos(p)) = (index, value) {
-                    f.start_pos = BlockPos::new(p[0], p[1], p[2]);
+                // FallingBlockEntity.DATA_START_POS (the model's seed); a silent
+                // one is a server mod's solid block.
+                match (index, value) {
+                    (8, Value::Pos(p)) => f.start_pos = BlockPos::new(p[0], p[1], p[2]),
+                    (4, Value::Bool(silent)) => f.solid = *silent,
+                    _ => {}
                 }
             } else if let Some(c) = self.crystals.iter_mut().find(|c| c.id == id) {
                 // EndCrystal.DATA_BEAM_TARGET and DATA_SHOW_BOTTOM.

@@ -16,6 +16,7 @@ const CRATE: &str = "gears:crate";
 const BELT: &str = "gears:belt";
 const GAUGE: &str = "gears:gauge";
 const LIFT: &str = "gears:lift";
+const MILL: &str = "gears:mill";
 /// Ticks a lift takes to raise its load three blocks.
 const LIFT_TICKS: u32 = 60;
 const DIMENSION: &str = "minecraft:overworld";
@@ -50,6 +51,8 @@ struct Gears {
     press: Vec<(String, String, u32)>,
     /// Each lift on its way up: its position, the load and the ticks gone.
     lifts: Vec<([i32; 3], Contraption, u32)>,
+    /// Each mill turning: its position, its wheel and the wheel's turn.
+    mills: Vec<([i32; 3], Contraption, f32)>,
 }
 
 impl ServerMod for Gears {
@@ -60,6 +63,7 @@ impl ServerMod for Gears {
             spin: 0.0,
             press: read_press(),
             lifts: Vec::new(),
+            mills: Vec::new(),
         };
         // The crate holds items (capability `containers`) and opens as a chest.
         containers::register(CRATE)?;
@@ -67,7 +71,11 @@ impl ServerMod for Gears {
     }
 
     fn block_placed(&mut self, _player: &Player, pos: BlockPos, state: &str) {
-        if state.starts_with(BELT) || state.starts_with(GAUGE) || state.starts_with(LIFT) {
+        if state.starts_with(BELT)
+            || state.starts_with(GAUGE)
+            || state.starts_with(LIFT)
+            || state.starts_with(MILL)
+        {
             // Data under it, so the server ticks it.
             let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &[0]);
         }
@@ -122,10 +130,25 @@ impl ServerMod for Gears {
     }
 
     fn ticking_blocks(&self) -> Vec<String> {
-        vec![COUNTER.into(), BELT.into(), GAUGE.into(), LIFT.into()]
+        vec![
+            COUNTER.into(),
+            BELT.into(),
+            GAUGE.into(),
+            LIFT.into(),
+            MILL.into(),
+        ]
     }
 
     fn block_tick(&mut self, dimension: &str, pos: Pos, state: &str) {
+        if state.starts_with(MILL) {
+            // A mill turns its wheel 3 degrees a tick about x.
+            let at = [pos.x, pos.y, pos.z];
+            if let Some((_, wheel, turn)) = self.mills.iter_mut().find(|(p, _, _)| *p == at) {
+                *turn = (*turn + 3.0) % 360.0;
+                wheel.set_rotation(0.0, *turn);
+            }
+            return;
+        }
         if state.starts_with(LIFT) {
             // A lift on its way raises its load 3/60 of a block a tick, then
             // sets it down as blocks (`horizon_mod_sdk::contraption`).
@@ -253,6 +276,26 @@ impl ServerMod for Gears {
     }
 
     fn block_used(&mut self, player: &str, dimension: &str, pos: Pos, state: &str) -> bool {
+        if state.starts_with(MILL) {
+            // The wheel above (one block across x, 3 x 3 in y and z) turns,
+            // or is set down again as blocks.
+            let at = [pos.x, pos.y, pos.z];
+            if let Some(i) = self.mills.iter().position(|(p, _, _)| *p == at) {
+                let (_, wheel, _) = self.mills.remove(i);
+                let _ = wheel.disassemble();
+                return true;
+            }
+            let min = [pos.x, pos.y + 1, pos.z - 1];
+            let max = [pos.x, pos.y + 3, pos.z + 1];
+            match Contraption::assemble(dimension, min, max) {
+                Ok(wheel) if !wheel.is_empty() => self.mills.push((at, wheel, 0.0)),
+                Ok(_) => {}
+                Err(e) => {
+                    players::tell(player, &format!("The mill is stuck: {e}"));
+                }
+            }
+            return true;
+        }
         if state.starts_with(LIFT) {
             // The 3 x 3 x 3 box above the lift goes up three blocks.
             let at = [pos.x, pos.y, pos.z];
@@ -262,7 +305,11 @@ impl ServerMod for Gears {
             let min = [pos.x - 1, pos.y + 1, pos.z - 1];
             let max = [pos.x + 1, pos.y + 3, pos.z + 1];
             match Contraption::assemble(dimension, min, max) {
-                Ok(load) if !load.is_empty() => self.lifts.push((at, load, 0)),
+                Ok(load) if !load.is_empty() => {
+                    // Players ride it: its blocks are solid.
+                    load.set_solid(true);
+                    self.lifts.push((at, load, 0));
+                }
                 Ok(_) => {}
                 Err(e) => {
                     players::tell(player, &format!("The lift is stuck: {e}"));

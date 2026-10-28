@@ -1146,6 +1146,13 @@ struct FallingBlock {
     /// A server mod's block (`entities.spawn-block`): it neither falls nor
     /// lands, moves only when the mod moves it and is never saved.
     mod_owned: bool,
+    /// The entity's rotation, in degrees: a mod's block is drawn turned by
+    /// it about its centre (vanilla's falling blocks keep 0).
+    yaw: f32,
+    pitch: f32,
+    /// Solid for players as a boat is (a server mod's block, sent as a
+    /// silent falling block with no gravity).
+    solid: bool,
 }
 /// The data loaded once at startup and never changed: blocks, items,
 /// recipes, biomes, mobs, collision and motion. Read-only and `Send + Sync`,
@@ -3486,6 +3493,9 @@ impl Game<'_> {
                         ),
                         saved: None,
                         mod_owned: false,
+                        yaw: 0.0,
+                        pitch: 0.0,
+                        solid: false,
                     });
                 }
                 LevelEvent::Player { pos, effect, .. } => match effect {
@@ -8184,10 +8194,20 @@ impl Game<'_> {
             );
             let packed = (u32::from(light >> 4) * 16) | ((u32::from(light & 15) * 16) << 8);
             let start = out.len();
+            // A mod's block turns about its centre: pitch about x, then yaw.
+            let transform = if f.yaw != 0.0 || f.pitch != 0.0 {
+                let centre = glam::Vec3::splat(0.5);
+                glam::Mat4::from_translation(o + centre)
+                    * glam::Mat4::from_rotation_y(-f.yaw.to_radians())
+                    * glam::Mat4::from_rotation_x(f.pitch.to_radians())
+                    * glam::Mat4::from_translation(-centre)
+            } else {
+                glam::Mat4::from_translation(o)
+            };
             self.block_model_vertices(
                 f.state,
                 horizon_core::random::position_seed(f.start_pos),
-                glam::Mat4::from_translation(o),
+                transform,
                 packed,
                 false,
                 &mut out,
