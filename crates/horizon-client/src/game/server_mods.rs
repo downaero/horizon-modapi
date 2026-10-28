@@ -493,7 +493,7 @@ mod run {
             self.apply_mod_signals();
             self.apply_mod_drops();
             self.apply_mod_effects();
-            if self.mods.block_data_dirty && self.ticks % 200 == 0 {
+            if self.mods.block_data_dirty && self.ticks.is_multiple_of(200) {
                 self.flush_mod_block_data();
             }
         }

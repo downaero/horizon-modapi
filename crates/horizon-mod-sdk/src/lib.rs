@@ -203,30 +203,30 @@ pub mod server {
     });
 
     pub use exports::horizon::mods::block_events::{Guest as __BlockGuest, Pos};
+    pub use exports::horizon::mods::neighbor_events::Guest as __NeighborGuest;
     pub use exports::horizon::mods::server_events::{
         Argument, ArgumentKind, ArgumentValue, BlockPos, Guest as __Guest, Registration,
         ServerCommand,
     };
-    pub use exports::horizon::mods::neighbor_events::Guest as __NeighborGuest;
     pub use exports::horizon::mods::server_net_events::Guest as __NetGuest;
     /// Capability `block-entities`: bytes kept at the positions of the
     /// mod's own blocks.
     pub use horizon::mods::block_entities;
     /// Capability `containers`: the mod's blocks that hold items.
     pub use horizon::mods::containers;
-    /// Capability `redstone`: the signal reaching the mod's blocks.
-    pub use horizon::mods::redstone;
-    /// Capability `items`: item entities dropped into the world.
-    pub use horizon::mods::items;
     /// Capability `effects`: sounds and particles.
     pub use horizon::mods::effects;
-    /// The files in the mod's own package, read only.
-    pub use horizon::mods::files;
     /// Capability `entities`: small marker entities.
     pub use horizon::mods::entities;
+    /// The files in the mod's own package, read only.
+    pub use horizon::mods::files;
+    /// Capability `items`: item entities dropped into the world.
+    pub use horizon::mods::items;
     /// Capability `net`: messages to and from the mod's client half.
     pub use horizon::mods::net;
     pub use horizon::mods::players::{self, GameMode, Player};
+    /// Capability `redstone`: the signal reaching the mod's blocks.
+    pub use horizon::mods::redstone;
     pub use horizon::mods::world::{self, BlockChange};
 
     /// The server's calls into a mod. Only the hooks [`Registration`] asks
