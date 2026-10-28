@@ -171,6 +171,8 @@ mod run {
 
     /// Positions whose redstone signal is read for mods each tick.
     const MAX_POWER_READS: usize = 4096;
+    /// Item entities lent to mods each tick.
+    const MAX_LENT_ITEMS: usize = 4096;
     /// `net` messages waiting for a tick are kept up to this many.
     const MAX_QUEUED_NET: usize = 4096;
     /// Entity changes waiting for a tick are kept up to this many.
@@ -190,12 +192,21 @@ mod run {
         /// `containers`) as of the call's start, by position.
         containers: std::collections::HashMap<[i32; 3], Vec<Option<horizon_mods::SlotStack>>>,
         container_dim: &'static str,
+        /// The item entities lying in the simulated dimension at the call's
+        /// start (capability `items`).
+        dropped: Vec<horizon_mods::DroppedStack>,
         /// The redstone signal at the positions of the mod blocks that keep
         /// data or items in the simulated dimension, as of the call's start
         /// (capability `redstone`).
         power: std::collections::HashMap<[i32; 3], u8>,
     }
     impl WorldView for LentWorld {
+        fn dropped(&self, dimension: &str) -> Vec<horizon_mods::DroppedStack> {
+            if dimension != self.container_dim {
+                return Vec::new();
+            }
+            self.dropped.clone()
+        }
         fn power(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<u8> {
             if dimension != self.container_dim {
                 return None;
@@ -456,6 +467,7 @@ mod run {
             self.apply_mod_block_writes();
             self.apply_mod_entities();
             self.apply_mod_containers();
+            self.apply_mod_takes();
             self.apply_mod_drops();
             self.apply_mod_effects();
             if self.mods.block_data_dirty && self.ticks % 200 == 0 {
@@ -611,6 +623,17 @@ mod run {
                 }
             }
             let power = self.mod_block_power(containers.keys().copied());
+            let dropped = self
+                .dropped
+                .iter()
+                .take(MAX_LENT_ITEMS)
+                .map(|e| horizon_mods::DroppedStack {
+                    id: e.id,
+                    item: e.stack.item.to_string(),
+                    count: e.stack.count,
+                    pos: [e.position.x, e.position.y, e.position.z],
+                })
+                .collect();
             let mut dims = vec![(self.dim.id(), std::mem::take(&mut self.world.chunks))];
             for (dim, chunks) in self.levels.parked_chunks() {
                 dims.push((dim.id(), std::mem::take(chunks)));
@@ -623,6 +646,7 @@ mod run {
                 dims,
                 containers,
                 container_dim: self.dim.id(),
+                dropped,
                 power,
             }));
         }
@@ -854,6 +878,14 @@ mod run {
             }
             if let Err(e) = self.process_level_events() {
                 log::debug!("Horizon: a mod's effects: {e:?}");
+            }
+        }
+
+        /// Removes the item entities server mods took.
+        pub(in crate::game) fn apply_mod_takes(&mut self) {
+            let takes = std::mem::take(&mut self.mods.takes);
+            if !takes.is_empty() {
+                self.dropped.retain(|e| !takes.contains(&e.id));
             }
         }
 
@@ -1268,6 +1300,12 @@ mod run {
                     let queue = &mut self.mods.effects;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((dimension, pos, effect));
+                    }
+                }
+                Output::Take { id, .. } => {
+                    let queue = &mut self.mods.takes;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push(id);
                     }
                 }
                 Output::Drop {

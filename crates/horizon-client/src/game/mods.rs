@@ -74,6 +74,9 @@ pub(super) struct ModsState {
     /// the tick's end.
     #[cfg(feature = "mods")]
     pub(super) drops: Vec<(String, [f64; 3], String, u32)>,
+    /// Item entities server mods took, by id, for the tick's end.
+    #[cfg(feature = "mods")]
+    pub(super) takes: Vec<u32>,
     /// Sounds and level events server mods queued, for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) effects: Vec<(String, [i32; 3], horizon_mods::EffectOp)>,
@@ -751,6 +754,7 @@ impl Game<'_> {
                 | Output::BlockData { .. }
                 | Output::Entity { .. }
                 | Output::Drop { .. }
+                | Output::Take { .. }
                 | Output::Effect { .. }
                 | Output::Container { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);

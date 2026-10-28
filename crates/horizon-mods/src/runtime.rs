@@ -199,6 +199,8 @@ pub const CONTAINER_SLOTS: u32 = 27;
 const CONTAINER_OPS_PER_CALL: usize = 4096;
 /// Item drops (capability `items`) a mod may queue in one call.
 const DROPS_PER_CALL: usize = 64;
+/// Item entities `items.nearby` lists, and `items.take`s a call.
+const NEARBY_ITEMS: usize = 256;
 /// Sounds and level events (capability `effects`) a mod may queue in one call.
 const EFFECTS_PER_CALL: usize = 64;
 /// The vanilla level events capability `effects` allows.
@@ -313,6 +315,15 @@ pub enum EntityOp {
 
 /// A stack in a mod container slot: the item and its count.
 pub type SlotStack = (String, u32);
+
+/// An item entity as capability `items` sees it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DroppedStack {
+    pub id: u32,
+    pub item: String,
+    pub count: u32,
+    pub pos: [f64; 3],
+}
 
 /// What an `effects` call asks for.
 #[derive(Clone, Debug, PartialEq)]
@@ -429,6 +440,8 @@ pub enum Output {
         pos: [i32; 3],
         effect: EffectOp,
     },
+    /// `items.take`: remove this item entity.
+    Take { mod_id: String, id: u32 },
     /// `items.drop`: a stack to drop as an item entity.
     Drop {
         mod_id: String,
@@ -467,6 +480,11 @@ pub trait WorldView: std::any::Any + Send {
         _z: i32,
     ) -> Option<Vec<Option<SlotStack>>> {
         None
+    }
+    /// The item entities in the simulated dimension, as of the tick's start
+    /// (capability `items`).
+    fn dropped(&self, _dimension: &str) -> Vec<DroppedStack> {
+        Vec::new()
     }
     /// The redstone signal reaching a block of the mod's, as of the tick's
     /// start (capability `redstone`); `None` where it is not known.
@@ -2318,6 +2336,62 @@ impl effects::Host for State {
     }
 }
 impl items::Host for State {
+    fn nearby(
+        &mut self,
+        dimension: String,
+        x: f64,
+        y: f64,
+        z: f64,
+        radius: f32,
+    ) -> Vec<items::DroppedItem> {
+        let Ok(guard) = self.world.lock() else {
+            return Vec::new();
+        };
+        let Some(view) = guard.as_ref() else {
+            return Vec::new();
+        };
+        let r = f64::from(if radius.is_finite() {
+            radius.clamp(0.0, 16.0)
+        } else {
+            0.0
+        });
+        let dist = |s: &DroppedStack| {
+            (s.pos[0] - x).powi(2) + (s.pos[1] - y).powi(2) + (s.pos[2] - z).powi(2)
+        };
+        let mut found: Vec<_> = view
+            .dropped(&dimension)
+            .into_iter()
+            .filter(|s| dist(s) <= r * r)
+            .collect();
+        found.sort_by(|a, b| dist(a).total_cmp(&dist(b)));
+        found.truncate(NEARBY_ITEMS);
+        found
+            .into_iter()
+            .map(|s| items::DroppedItem {
+                id: s.id,
+                item: s.item,
+                count: s.count,
+                x: s.pos[0],
+                y: s.pos[1],
+                z: s.pos[2],
+            })
+            .collect()
+    }
+    fn take(&mut self, id: u32) -> bool {
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Take { .. }))
+            .count();
+        if queued >= NEARBY_ITEMS {
+            return false;
+        }
+        self.out.push(Output::Take {
+            mod_id: self.id.clone(),
+            id,
+        });
+        true
+    }
     fn drop(
         &mut self,
         dimension: String,

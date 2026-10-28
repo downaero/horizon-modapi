@@ -87,6 +87,30 @@ impl ServerMod for Gears {
             .and_then(|d| <[u8; 4]>::try_from(d).ok())
             .map_or(0, u32::from_le_bytes);
         let _ = block_entities::set(dimension, pos.x, pos.y, pos.z, &(seconds + 1).to_le_bytes());
+        // The counter swallows iron ingots lying next to it (capability
+        // `items`): it counts them in the nuggets it gives back.
+        let mut swallowed = 0;
+        for item in items::nearby(
+            dimension,
+            f64::from(pos.x) + 0.5,
+            f64::from(pos.y) + 0.5,
+            f64::from(pos.z) + 0.5,
+            2.0,
+        ) {
+            if item.item == "minecraft:iron_ingot" && items::take(item.id) {
+                swallowed += item.count;
+            }
+        }
+        if swallowed > 0 {
+            let _ = items::drop(
+                dimension,
+                f64::from(pos.x) + 0.5,
+                f64::from(pos.y) + 1.0,
+                f64::from(pos.z) + 0.5,
+                "minecraft:iron_nugget",
+                (swallowed * 9).min(99),
+            );
+        }
         // A minute of running makes an iron nugget (capability `items`).
         if (seconds + 1).is_multiple_of(60) {
             let _ = effects::play_sound(

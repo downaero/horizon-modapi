@@ -972,9 +972,24 @@ Access: capability `items`.
 
 Capability `items`, server mods only (manifest `api = "0.3"`, experimental): items a mod's blocks put into the world.
 
+### record `dropped-item`
+
+An item entity lying in the world.
+
+| Field | Type | |
+| --- | --- | --- |
+| `id` | `u32` | The entity's id, for `take`; it lasts while the entity does. |
+| `item` | `string` |  |
+| `count` | `u32` |  |
+| `x` | `f64` |  |
+| `y` | `f64` |  |
+| `z` | `f64` |  |
+
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `drop` | `func(dimension: string, x: f64, y: f64, z: f64, item: string, count: u32) -> result<_, string>` | Drops a stack as an item entity at a position (blocks, so x + 0.5 is a block's middle), after the call, in the dimension the world simulates; count 1 to 99. At most 64 drops a call. The item is any item id, a mod's own too. |
+| `nearby` | `func(dimension: string, x: f64, y: f64, z: f64, radius: f32) -> list<dropped-item>` | The item entities within `radius` blocks (at most 16) of a point, as of the start of this tick, nearest first, at most 256; only in the dimension the world is simulating. |
+| `take` | `func(id: u32) -> bool` | Removes an item entity (one `nearby` showed) after the call, to carry it into a machine; false when over the 256 takes a call. |
 
 ## `effects`
 

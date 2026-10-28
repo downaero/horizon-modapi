@@ -613,6 +613,12 @@ entity at a position, at the tick's end, with a short pickup delay; at most 64
 a call. Only the dimension the world is simulating drops; others are ignored.
 The game does not check the item id: an unknown one drops as an unknown item.
 
+`items.nearby(dimension, x, y, z, radius)` (API level 17) lists the item
+entities within 16 blocks of a point (id, item, count, position; nearest
+first, at most 256) as of the tick's start, and `items.take(id)` removes one
+at the tick's end, so a mod's machine can carry items in. Only the simulated
+dimension has item entities to list.
+
 ### Capability `entities`
 
 **API level 10, experimental, server mods.** A first, small step toward mod

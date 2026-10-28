@@ -930,6 +930,24 @@ interface items {
     /// world simulates; count 1 to 99. At most 64 drops a call. The item is
     /// any item id, a mod's own too.
     drop: func(dimension: string, x: f64, y: f64, z: f64, item: string, count: u32) -> result<_, string>;
+
+    /// An item entity lying in the world.
+    record dropped-item {
+        /// The entity's id, for `take`; it lasts while the entity does.
+        id: u32,
+        item: string,
+        count: u32,
+        x: f64,
+        y: f64,
+        z: f64,
+    }
+    /// The item entities within `radius` blocks (at most 16) of a point, as
+    /// of the start of this tick, nearest first, at most 256; only in the
+    /// dimension the world is simulating.
+    nearby: func(dimension: string, x: f64, y: f64, z: f64, radius: f32) -> list<dropped-item>;
+    /// Removes an item entity (one `nearby` showed) after the call, to carry
+    /// it into a machine; false when over the 256 takes a call.
+    take: func(id: u32) -> bool;
 }
 
 /// Capability `effects`, server mods only (manifest `api = "0.3"`,
