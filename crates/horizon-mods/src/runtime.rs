@@ -337,6 +337,15 @@ pub enum EntityOp {
 /// A stack in a mod container slot: the item and its count.
 pub type SlotStack = (String, u32);
 
+/// What a push moves.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PushTarget {
+    /// The player with this UUID.
+    Player(String),
+    /// The item entity with this id.
+    Item(u32),
+}
+
 /// An item entity as capability `items` sees it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DroppedStack {
@@ -364,7 +373,7 @@ pub enum EffectOp {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ContainerOp {
     /// `containers.register`: the block now holds items.
-    Register { block: String },
+    Register { block: String, slots: u32 },
     /// `containers.open`: for this player, at a position.
     Open {
         player: String,
@@ -460,6 +469,12 @@ pub enum Output {
         dimension: String,
         pos: [i32; 3],
         effect: EffectOp,
+    },
+    /// `players.push` and `items.push`: add a velocity.
+    Push {
+        mod_id: String,
+        target: PushTarget,
+        velocity: [f64; 3],
     },
     /// `items.take`: remove this item entity.
     Take { mod_id: String, id: u32 },
@@ -705,7 +720,7 @@ struct State {
     entity_handles: std::collections::HashSet<u32>,
     next_handle: u32,
     /// Capability `containers`: the blocks the mod registered.
-    container_blocks: Vec<String>,
+    container_blocks: Vec<(String, u32)>,
 }
 
 fn block_pos(p: BlockPos) -> block_bindings::exports::horizon::mods::block_events::Pos {
@@ -2467,6 +2482,9 @@ impl items::Host for State {
             })
             .collect()
     }
+    fn push(&mut self, id: u32, x: f64, y: f64, z: f64) -> bool {
+        State::push(self, PushTarget::Item(id), [x, y, z])
+    }
     fn take(&mut self, id: u32) -> bool {
         let queued = self
             .out
@@ -2523,10 +2541,16 @@ impl redstone::Host for State {
 }
 impl containers::Host for State {
     fn register(&mut self, block: String) -> Result<(), String> {
+        self.register_sized(block, CONTAINER_SLOTS)
+    }
+    fn register_sized(&mut self, block: String, slots: u32) -> Result<(), String> {
+        if !matches!(slots, 5 | 9 | 27) {
+            return Err(format!("{slots} slots: 5, 9 or 27"));
+        }
         if block.contains('[') || !self.owns_container_block(&block) {
             return Err(format!("{block} is not a block of this mod"));
         }
-        if self.container_blocks.contains(&block) {
+        if self.container_blocks.iter().any(|(b, _)| *b == block) {
             return Ok(());
         }
         if self.container_blocks.len() >= CONTAINER_BLOCKS {
@@ -2534,10 +2558,11 @@ impl containers::Host for State {
         }
         if !self.container_op(ContainerOp::Register {
             block: block.clone(),
+            slots,
         }) {
             return Err(format!("at most {CONTAINER_OPS_PER_CALL} changes a call"));
         }
-        self.container_blocks.push(block);
+        self.container_blocks.push((block, slots));
         Ok(())
     }
     fn open(&mut self, player: String, dimension: String, x: i32, y: i32, z: i32) -> bool {
@@ -2736,7 +2761,37 @@ impl net::Host for State {
         Ok(())
     }
 }
+impl State {
+    /// Queues a push, within the per-call cap and with each component clamped.
+    fn push(&mut self, target: PushTarget, v: [f64; 3]) -> bool {
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Push { .. } | Output::Take { .. }))
+            .count();
+        if queued >= NEARBY_ITEMS {
+            return false;
+        }
+        let clamp = |c: f64| {
+            if c.is_finite() {
+                c.clamp(-4.0, 4.0)
+            } else {
+                0.0
+            }
+        };
+        self.out.push(Output::Push {
+            mod_id: self.id.clone(),
+            target,
+            velocity: [clamp(v[0]), clamp(v[1]), clamp(v[2])],
+        });
+        true
+    }
+}
 impl players::Host for State {
+    fn push(&mut self, player: String, x: f64, y: f64, z: f64) -> bool {
+        self.snapshot.players.iter().any(|p| p.id == player)
+            && State::push(self, PushTarget::Player(player), [x, y, z])
+    }
     fn online(&mut self) -> Vec<ServerPlayer> {
         self.snapshot.players.clone()
     }

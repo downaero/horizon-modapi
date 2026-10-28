@@ -1,0 +1,3 @@
+{ "template": "minecraft:polished_andesite",
+  "properties": { "hardness": 1.5, "sounds": "minecraft:polished_andesite" },
+  "item": true }

@@ -12,6 +12,7 @@ use horizon_mod_sdk::{
 
 const COUNTER: &str = "gears:counter";
 const CRATE: &str = "gears:crate";
+const BELT: &str = "gears:belt";
 const DIMENSION: &str = "minecraft:overworld";
 
 struct Gears {
@@ -36,6 +37,10 @@ impl ServerMod for Gears {
     }
 
     fn block_placed(&mut self, _player: &Player, pos: BlockPos, state: &str) {
+        if state.starts_with(BELT) {
+            // Data under it, so the server ticks it.
+            let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &[0]);
+        }
         if state.starts_with(COUNTER) {
             let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &0u32.to_le_bytes());
             let at = [
@@ -87,10 +92,32 @@ impl ServerMod for Gears {
     }
 
     fn ticking_blocks(&self) -> Vec<String> {
-        vec![COUNTER.into()]
+        vec![COUNTER.into(), BELT.into()]
     }
 
-    fn block_tick(&mut self, dimension: &str, pos: Pos, _state: &str) {
+    fn block_tick(&mut self, dimension: &str, pos: Pos, state: &str) {
+        if state.starts_with(BELT) {
+            // A belt moves what stands on it east (capabilities `items`
+            // and `players`).
+            let (x, y, z) = (
+                f64::from(pos.x) + 0.5,
+                f64::from(pos.y) + 1.2,
+                f64::from(pos.z) + 0.5,
+            );
+            for item in items::nearby(dimension, x, y, z, 0.8) {
+                items::push(item.id, 0.04, 0.0, 0.0);
+            }
+            for p in players::online() {
+                let on = p.dimension == dimension
+                    && (p.x - x).abs() < 0.6
+                    && (p.z - z).abs() < 0.6
+                    && (p.y - (y - 0.2)).abs() < 0.6;
+                if on {
+                    players::push(&p.id, 0.06, 0.0, 0.0);
+                }
+            }
+            return;
+        }
         // A redstone signal stops the counter (capability `redstone`).
         if redstone::power(dimension, pos.x, pos.y, pos.z).is_some_and(|p| p > 0) {
             return;

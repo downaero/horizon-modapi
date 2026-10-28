@@ -576,7 +576,8 @@ and the game then does nothing else with it. Vanilla blocks never reach it.
 ### Capability `containers`
 
 **API level 11, experimental, server mods.** A block of the mod's own that
-holds items and opens as a chest. `containers.register(block)` (`mymod:crate`,
+holds items and opens as a chest. `containers.register(block)` (or `register-sized(block, slots)`, API level 20, with
+5, 9 or 27 slots opening as a hopper, a dispenser or a chest) (`mymod:crate`,
 no properties; at most 64 blocks) makes it one; `open(player, dimension, x, y,
 z)` opens it for a player (the window's own or a LAN guest) after the call,
 from `block-used` for instance; `slots(dimension, x, y, z)` reads its 27 slots
@@ -598,6 +599,15 @@ mod's own). It comes at the start of the next server tick, at most 1024 calls
 a tick to a mod; built before this, a mod simply hears nothing. A block that
 should send a redstone signal can be two blocks of the mod, one with template
 `minecraft:redstone_block`, swapped with `world.set-blocks`.
+
+### Pushing players and items
+
+`players.push(player, x, y, z)` and `items.push(id, x, y, z)` (API level 19)
+add a velocity, in blocks per tick, at the tick's end, each component clamped
+to -4 to 4, at most 256 together with `items.take` a call. A guest of the
+world is sent the motion as vanilla sends a knockback. With `items.nearby` and
+`players.online` a ticking block moves whatever stands above it: the gears
+example's `gears:belt` carries items and players east.
 
 ### Capability `redstone`
 

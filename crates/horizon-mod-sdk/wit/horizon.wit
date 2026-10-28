@@ -662,6 +662,10 @@ interface players {
     /// A system message to every player and the server's log, after the
     /// mod's name. Counts toward the same 8 per call.
     broadcast: func(text: string);
+    /// Adds a velocity, in blocks per tick, to a player after the call (a
+    /// conveyor, a fan): false when no player with that id is online. Each
+    /// component is clamped to -4 to 4. At most 256 pushes a call.
+    push: func(player: string, x: f64, y: f64, z: f64) -> bool;
 }
 
 /// Capability `world`, server mods only (manifest `api = "0.3"`,
@@ -904,6 +908,10 @@ interface containers {
     /// container: the game gives its positions a chest's slots when opened
     /// or written. At most 64 blocks per mod.
     register: func(block: string) -> result<_, string>;
+    /// `register` with a size: 27 slots opens as a chest, 9 as a dispenser's
+    /// 3 x 3 and 5 as a hopper's row. A block registered twice keeps its first
+    /// size.
+    register-sized: func(block: string, slots: u32) -> result<_, string>;
     /// Opens the container at a position for the player with this id, after
     /// the call; false when the player is not online.
     open: func(player: string, dimension: string, x: s32, y: s32, z: s32) -> bool;
@@ -957,6 +965,10 @@ interface items {
     /// Removes an item entity (one `nearby` showed) after the call, to carry
     /// it into a machine; false when over the 256 takes a call.
     take: func(id: u32) -> bool;
+    /// Adds a velocity, in blocks per tick, to an item entity (one `nearby`
+    /// showed) after the call: a belt moving what lies on it. Clamped as
+    /// `players.push` is; counts toward the same 256 a call as `take`.
+    push: func(id: u32, x: f64, y: f64, z: f64) -> bool;
 }
 
 /// Capability `effects`, server mods only (manifest `api = "0.3"`,

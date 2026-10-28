@@ -77,6 +77,9 @@ pub(super) struct ModsState {
     /// Item entities server mods took, by id, for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) takes: Vec<u32>,
+    /// Pushes server mods asked for, for the tick's end.
+    #[cfg(feature = "mods")]
+    pub(super) pushes: Vec<(horizon_mods::PushTarget, [f64; 3])>,
     /// Sounds and level events server mods queued, for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) effects: Vec<(String, [i32; 3], horizon_mods::EffectOp)>,
@@ -106,7 +109,7 @@ pub(super) struct ModsState {
     #[cfg(feature = "mods")]
     pub(super) container_ops: Vec<(String, horizon_mods::ContainerOp)>,
     #[cfg(feature = "mods")]
-    pub(super) container_blocks: std::collections::HashSet<String>,
+    pub(super) container_blocks: std::collections::HashMap<String, usize>,
     /// `block_data` changed since it was written.
     #[cfg(feature = "mods")]
     pub(super) block_data_dirty: bool,
@@ -755,6 +758,7 @@ impl Game<'_> {
                 | Output::Entity { .. }
                 | Output::Drop { .. }
                 | Output::Take { .. }
+                | Output::Push { .. }
                 | Output::Effect { .. }
                 | Output::Container { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);

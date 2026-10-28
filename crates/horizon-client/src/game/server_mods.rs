@@ -489,6 +489,7 @@ mod run {
             self.apply_mod_entities();
             self.apply_mod_containers();
             self.apply_mod_takes();
+            self.apply_mod_pushes();
             self.apply_mod_drops();
             self.apply_mod_effects();
             if self.mods.block_data_dirty && self.ticks % 200 == 0 {
@@ -629,7 +630,7 @@ mod run {
                 for p in positions {
                     let block = self.world.block(p.0, p.1, p.2);
                     let name = &self.res.facts().get(block).name;
-                    if !self.mods.container_blocks.contains(&**name) {
+                    if !self.mods.container_blocks.contains_key(&**name) {
                         continue;
                     }
                     if let Some(horizon_client::containers::BlockEntity::Chest(items)) =
@@ -763,8 +764,8 @@ mod run {
         ) -> Option<horizon_client::containers::BlockEntity> {
             self.mods
                 .container_blocks
-                .contains(block)
-                .then(|| horizon_client::containers::BlockEntity::Chest(vec![None; 27]))
+                .get(block)
+                .map(|&slots| horizon_client::containers::BlockEntity::Chest(vec![None; slots]))
         }
 
         /// Makes the changes server mods queued for their containers:
@@ -899,6 +900,51 @@ mod run {
             }
             if let Err(e) = self.process_level_events() {
                 log::debug!("Horizon: a mod's effects: {e:?}");
+            }
+        }
+
+        /// Applies the pushes server mods asked for: to item entities, and to
+        /// players (the window's own, or a guest, whose client is sent the
+        /// motion).
+        pub(in crate::game) fn apply_mod_pushes(&mut self) {
+            use horizon_core::geometry::Vec3;
+            for (target, v) in std::mem::take(&mut self.mods.pushes) {
+                let delta = Vec3::new(v[0], v[1], v[2]);
+                match target {
+                    horizon_mods::PushTarget::Item(id) => {
+                        if let Some(e) = self.dropped.iter_mut().find(|e| e.id == id) {
+                            e.velocity = e.velocity.add_vector(delta);
+                        }
+                    }
+                    horizon_mods::PushTarget::Player(uuid) => {
+                        if self.options.execution_role.is_client()
+                            && self.remote.is_none()
+                            && self.player_uuid_string() == uuid
+                        {
+                            if let Some(p) = self.player.as_mut() {
+                                p.velocity = p.velocity.add_vector(delta);
+                            }
+                            continue;
+                        }
+                        let Some(mut host) = self.lan.take() else {
+                            continue;
+                        };
+                        let conn = host
+                            .hub
+                            .guests
+                            .iter()
+                            .find(|g| uuid_string(g.uuid) == uuid)
+                            .map(|g| g.conn);
+                        if let Some(conn) = conn {
+                            self.guest_hit_by(&mut host, conn, |g| {
+                                if let Some(p) = g.player.as_mut() {
+                                    p.velocity = p.velocity.add_vector(delta);
+                                }
+                            });
+                        }
+                        self.lan = Some(host);
+                    }
+                }
             }
         }
 
@@ -1357,10 +1403,13 @@ mod run {
                     data,
                 } => self.store_mod_block_data(mod_id, dimension, pos, data),
                 Output::Container {
-                    op: horizon_mods::ContainerOp::Register { block },
+                    op: horizon_mods::ContainerOp::Register { block, slots },
                     ..
                 } => {
-                    self.mods.container_blocks.insert(block);
+                    self.mods
+                        .container_blocks
+                        .entry(block)
+                        .or_insert(slots as usize);
                 }
                 Output::Container { mod_id, op } => {
                     let queue = &mut self.mods.container_ops;
@@ -1377,6 +1426,14 @@ mod run {
                     let queue = &mut self.mods.effects;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((dimension, pos, effect));
+                    }
+                }
+                Output::Push {
+                    target, velocity, ..
+                } => {
+                    let queue = &mut self.mods.pushes;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push((target, velocity));
                     }
                 }
                 Output::Take { id, .. } => {

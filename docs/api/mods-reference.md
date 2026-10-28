@@ -742,6 +742,7 @@ Capability `players`, server mods only (manifest `api = "0.3"`, experimental): t
 | `online` | `func() -> list<player>` | The players online, in the order they joined. |
 | `tell` | `func(player: string, text: string) -> bool` | A system message to one player, after the mod's name; false when no player with that id is online. Up to 8 messages per call. |
 | `broadcast` | `func(text: string)` | A system message to every player and the server's log, after the mod's name. Counts toward the same 8 per call. |
+| `push` | `func(player: string, x: f64, y: f64, z: f64) -> bool` | Adds a velocity, in blocks per tick, to a player after the call (a conveyor, a fan): false when no player with that id is online. Each component is clamped to -4 to 4. At most 256 pushes a call. |
 
 ## `world`
 
@@ -960,6 +961,7 @@ Capability `containers`, server mods only (manifest `api = "0.3"`, experimental)
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `register` | `func(block: string) -> result<_, string>` | Makes a block of the mod's (`mymod:crate`, no properties) a container: the game gives its positions a chest's slots when opened or written. At most 64 blocks per mod. |
+| `register-sized` | `func(block: string, slots: u32) -> result<_, string>` | `register` with a size: 27 slots opens as a chest, 9 as a dispenser's 3 x 3 and 5 as a hopper's row. A block registered twice keeps its first size. |
 | `open` | `func(player: string, dimension: string, x: s32, y: s32, z: s32) -> bool` | Opens the container at a position for the player with this id, after the call; false when the player is not online. |
 | `slots` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<option<item-stack>>>` | The 27 slots of a container in a loaded chunk, as of the start of this tick; none where there is no container with items yet or none loaded. (Item components are not shown.) |
 | `set-slot` | `func(dimension: string, x: s32, y: s32, z: s32, slot: u32, stack: option<item-stack>) -> result<_, string>` | Puts a stack in slot 0 to 26 (none empties it), after the call, in a registered container; count 1 to 99. Components of what was there go. |
@@ -999,6 +1001,7 @@ An item entity lying in the world.
 | `drop` | `func(dimension: string, x: f64, y: f64, z: f64, item: string, count: u32) -> result<_, string>` | Drops a stack as an item entity at a position (blocks, so x + 0.5 is a block's middle), after the call, in the dimension the world simulates; count 1 to 99. At most 64 drops a call. The item is any item id, a mod's own too. |
 | `nearby` | `func(dimension: string, x: f64, y: f64, z: f64, radius: f32) -> list<dropped-item>` | The item entities within `radius` blocks (at most 16) of a point, as of the start of this tick, nearest first, at most 256; only in the dimension the world is simulating. |
 | `take` | `func(id: u32) -> bool` | Removes an item entity (one `nearby` showed) after the call, to carry it into a machine; false when over the 256 takes a call. |
+| `push` | `func(id: u32, x: f64, y: f64, z: f64) -> bool` | Adds a velocity, in blocks per tick, to an item entity (one `nearby` showed) after the call: a belt moving what lies on it. Clamped as `players.push` is; counts toward the same 256 a call as `take`. |
 
 ## `effects`
 
