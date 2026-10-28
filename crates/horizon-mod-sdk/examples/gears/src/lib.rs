@@ -6,8 +6,8 @@ use horizon_mod_sdk::{
     contraption::{Contraption, ROTATION_STEP},
     export_server_mod,
     server::{
-        BlockPos, Player, Pos, Registration, ServerMod, block_entities, containers, effects,
-        entities, files, items, net, players, redstone,
+        BlockPos, Player, Pos, Registration, ServerMod, attachments, block_entities, containers,
+        effects, entities, files, items, net, players, redstone, transfer,
     },
 };
 
@@ -70,7 +70,7 @@ impl ServerMod for Gears {
         Ok((this, Registration::new().on_blocks()))
     }
 
-    fn block_placed(&mut self, _player: &Player, pos: BlockPos, state: &str) {
+    fn block_placed(&mut self, player: &Player, pos: BlockPos, state: &str) {
         if state.starts_with(BELT)
             || state.starts_with(GAUGE)
             || state.starts_with(LIFT)
@@ -81,6 +81,15 @@ impl ServerMod for Gears {
         }
         if state.starts_with(COUNTER) {
             let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &0u32.to_le_bytes());
+            // A battery on it, charged each second it runs (capability
+            // `transfer`), and the placer's count of counters, saved on them
+            // (`attachments`).
+            let _ = transfer::add_battery(DIMENSION, pos.x, pos.y, pos.z, 1000);
+            let me = attachments::Target::Player(player.id.clone());
+            let placed = attachments::get(&me, "counters")
+                .and_then(|d| <[u8; 4]>::try_from(d).ok())
+                .map_or(0, u32::from_le_bytes);
+            let _ = attachments::set(&me, "counters", &(placed + 1).to_le_bytes());
             // A gear above it: an iron trapdoor as a block entity, turned
             // each tick (drawn smoothly between ticks on every client).
             let at = [
@@ -232,6 +241,7 @@ impl ServerMod for Gears {
             .and_then(|d| <[u8; 4]>::try_from(d).ok())
             .map_or(0, u32::from_le_bytes);
         let _ = block_entities::set(dimension, pos.x, pos.y, pos.z, &(seconds + 1).to_le_bytes());
+        transfer::receive_energy(dimension, pos.x, pos.y, pos.z, 10, false);
         // The counter swallows iron ingots lying next to it (capability
         // `items`): it counts them in the nuggets it gives back.
         let mut gives: Vec<(String, u32)> = Vec::new();
@@ -249,14 +259,31 @@ impl ServerMod for Gears {
             }
         }
         for (out, count) in gives {
-            let _ = items::drop(
-                dimension,
-                f64::from(pos.x) + 0.5,
-                f64::from(pos.y) + 1.0,
-                f64::from(pos.z) + 0.5,
-                &out,
+            // Into the inventory below through its top, as a hopper would;
+            // what does not fit drops (capability `transfer`).
+            let stack = transfer::ItemStack {
+                item: out.clone(),
                 count,
+            };
+            let left = transfer::insert_item(
+                dimension,
+                pos.x,
+                pos.y - 1,
+                pos.z,
+                Some(transfer::Face::Up),
+                &stack,
+                false,
             );
+            if left > 0 {
+                let _ = items::drop(
+                    dimension,
+                    f64::from(pos.x) + 0.5,
+                    f64::from(pos.y) + 1.0,
+                    f64::from(pos.z) + 0.5,
+                    &out,
+                    left,
+                );
+            }
         }
         // A minute of running makes an iron nugget (capability `items`).
         if (seconds + 1).is_multiple_of(60) {
@@ -337,7 +364,16 @@ impl ServerMod for Gears {
         let seconds = block_entities::get(dimension, pos.x, pos.y, pos.z)
             .and_then(|d| <[u8; 4]>::try_from(d).ok())
             .map_or(0, u32::from_le_bytes);
-        players::tell(player, &format!("This counter has run for {seconds} s"));
+        let charge = transfer::get_battery(dimension, pos.x, pos.y, pos.z).map_or(0, |b| b.stored);
+        let placed = attachments::get(&attachments::Target::Player(player.to_owned()), "counters")
+            .and_then(|d| <[u8; 4]>::try_from(d).ok())
+            .map_or(0, u32::from_le_bytes);
+        players::tell(
+            player,
+            &format!(
+                "This counter has run for {seconds} s, holds {charge} energy; you placed {placed} counters"
+            ),
+        );
         true
     }
 

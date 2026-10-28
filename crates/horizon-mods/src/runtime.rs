@@ -91,6 +91,86 @@ mod file_bindings {
     });
 }
 use file_bindings::{FilesHost, horizon::mods::files};
+/// Data on players, dimensions and chunks.
+mod attachment_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "attachments-host",
+    });
+}
+use attachment_bindings::{AttachmentsHost, horizon::mods::attachments};
+/// Capability `transfer`'s imports.
+mod transfer_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "transfer-host",
+    });
+}
+use transfer_bindings::{TransferHost, horizon::mods::transfer};
+/// The mod id the game saves the mods' tanks and batteries under, among
+/// their block data.
+pub const TRANSFER_ID: &str = "@transfer";
+
+/// A tank and a battery on a block, as capability `transfer` keeps them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Storage {
+    /// The mod whose block it is.
+    pub owner: String,
+    pub fluid: Option<(String, u32)>,
+    pub fluid_capacity: u32,
+    pub energy: u64,
+    pub energy_capacity: u64,
+}
+impl Storage {
+    /// Owner (u16 length, bytes), tank capacity (u32), fluid (u16 length,
+    /// bytes, 0 for none) and amount (u32), energy and capacity (u64 each),
+    /// little-endian.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend((self.owner.len() as u16).to_le_bytes());
+        out.extend(self.owner.as_bytes());
+        out.extend(self.fluid_capacity.to_le_bytes());
+        let (fluid, amount) = self.fluid.clone().unwrap_or_default();
+        out.extend((fluid.len() as u16).to_le_bytes());
+        out.extend(fluid.as_bytes());
+        out.extend(amount.to_le_bytes());
+        out.extend(self.energy.to_le_bytes());
+        out.extend(self.energy_capacity.to_le_bytes());
+        out
+    }
+    pub fn decode(mut b: &[u8]) -> Option<Self> {
+        fn take<'a>(b: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
+            let (h, r) = b.split_at_checked(n)?;
+            *b = r;
+            Some(h)
+        }
+        let n = u16::from_le_bytes(take(&mut b, 2)?.try_into().ok()?) as usize;
+        let owner = String::from_utf8(take(&mut b, n)?.to_vec()).ok()?;
+        let fluid_capacity = u32::from_le_bytes(take(&mut b, 4)?.try_into().ok()?);
+        let n = u16::from_le_bytes(take(&mut b, 2)?.try_into().ok()?) as usize;
+        let fluid = String::from_utf8(take(&mut b, n)?.to_vec()).ok()?;
+        let amount = u32::from_le_bytes(take(&mut b, 4)?.try_into().ok()?);
+        let energy = u64::from_le_bytes(take(&mut b, 8)?.try_into().ok()?);
+        let energy_capacity = u64::from_le_bytes(take(&mut b, 8)?.try_into().ok()?);
+        Some(Self {
+            owner,
+            fluid: (!fluid.is_empty() && amount > 0).then_some((fluid, amount)),
+            fluid_capacity,
+            energy,
+            energy_capacity,
+        })
+    }
+}
+/// Every mod's tanks and batteries, by dimension and position, shared.
+type StorageSlot = Arc<Mutex<std::collections::HashMap<(String, [i32; 3]), Storage>>>;
+/// Most tanks and batteries all mods keep.
+const STORAGES: usize = 1 << 16;
+/// Marks an attachment among a mod's saved block data: the game keeps both
+/// in one file per mod, an attachment's target in the dimension's place.
+pub const ATTACHMENT_MARK: char = '\u{1}';
+/// Largest attachment value, and most values a mod keeps.
+const ATTACHMENT_BYTES: usize = 64 << 10;
+const ATTACHMENTS: usize = 1 << 16;
 /// Capability `effects`' imports.
 mod effect_bindings {
     wasmtime::component::bindgen!({
@@ -562,6 +642,39 @@ pub trait WorldView: std::any::Any + Send {
     fn dropped(&self, _dimension: &str) -> Vec<DroppedStack> {
         Vec::new()
     }
+    /// The reachable slots of the inventory at a position, through `face`
+    /// (0 down, 1 up, 2 north, 3 south, 4 west, 5 east; none: all of them).
+    fn item_slots(
+        &self,
+        _dimension: &str,
+        _pos: [i32; 3],
+        _face: Option<u8>,
+    ) -> Option<Vec<Option<SlotStack>>> {
+        None
+    }
+    /// Puts `count` of `item` in: how many did not fit.
+    fn insert_item(
+        &mut self,
+        _dimension: &str,
+        _pos: [i32; 3],
+        _face: Option<u8>,
+        _item: &str,
+        count: u32,
+        _simulate: bool,
+    ) -> u32 {
+        count
+    }
+    /// Takes up to `count` of the first reachable stack.
+    fn extract_item(
+        &mut self,
+        _dimension: &str,
+        _pos: [i32; 3],
+        _face: Option<u8>,
+        _count: u32,
+        _simulate: bool,
+    ) -> Option<SlotStack> {
+        None
+    }
     /// The redstone signal reaching a block of the mod's, as of the tick's
     /// start (capability `redstone`); `None` where it is not known.
     fn power(&self, _dimension: &str, _x: i32, _y: i32, _z: i32) -> Option<u8> {
@@ -737,6 +850,10 @@ struct State {
     browser: BrowserState,
     /// Capability `storage`'s folder; made on first `set`.
     data_dir: PathBuf,
+    /// Capability `transfer`'s tanks and batteries, shared by every mod.
+    storage: StorageSlot,
+    /// Capability-free `attachments`: (target and key, chunk position) to bytes.
+    attachments: std::collections::HashMap<(String, [i32; 3]), Vec<u8>>,
     /// The mod's own `.hmod` or folder, for `files`.
     package_path: PathBuf,
     /// Bytes `storage::set` may still write before this hook call ends
@@ -788,6 +905,8 @@ pub struct Mods {
     snapshot: Arc<Snapshot>,
     out: Vec<Output>,
     world: WorldSlot,
+    /// Capability `transfer`'s tanks and batteries, every mod's.
+    storage: StorageSlot,
     /// Moves on whenever a mod starts or stops: the game resends the server
     /// mods' commands to players when it changes.
     generation: u64,
@@ -808,6 +927,7 @@ impl Mods {
                         || m.capabilities.contains(&crate::Capability::BlockEntities)
                         || m.capabilities.contains(&crate::Capability::Containers)
                         || m.capabilities.contains(&crate::Capability::Redstone)
+                        || m.capabilities.contains(&crate::Capability::Transfer)
                 })
         })
     }
@@ -919,6 +1039,10 @@ impl Mods {
                 .map_err(|e| e.to_string())?;
             FilesHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
+            AttachmentsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
+            TransferHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
             EffectsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
@@ -966,6 +1090,7 @@ impl Mods {
             .collect();
         let snapshot = self.snapshot.clone();
         let world = self.world.clone();
+        let storage = self.storage.clone();
         let (engine, linker) = self.engine()?;
         let component =
             Component::new(engine, wasm).map_err(|e| format!("not a component: {e}"))?;
@@ -1002,6 +1127,8 @@ impl Mods {
             browser: BrowserState::default(),
             data_dir,
             package_path: path.to_owned(),
+            attachments: Default::default(),
+            storage,
             storage_budget: STORAGE_WRITE_BUDGET,
             limits: StoreLimitsBuilder::new()
                 .memory_size(MEMORY)
@@ -1479,6 +1606,15 @@ impl Mods {
     /// Gives a mod back the bytes the game saved at a block position
     /// (`Output::BlockData` when they were set), as a chunk loads.
     pub fn load_block_data(&mut self, mod_id: &str, dimension: &str, pos: [i32; 3], data: Vec<u8>) {
+        // The mods' tanks and batteries, saved under one id.
+        if mod_id == TRANSFER_ID {
+            if let (Ok(mut map), Some(storage)) = (self.storage.lock(), Storage::decode(&data))
+                && map.len() < STORAGES
+            {
+                map.insert((dimension.to_owned(), pos), storage);
+            }
+            return;
+        }
         if data.len() > BLOCK_DATA_BYTES {
             return;
         }
@@ -1488,6 +1624,14 @@ impl Mods {
             .filter_map(|e| e.run.as_mut())
             .find(|r| r.store.data().id == mod_id)
         {
+            // An attachment saved among the block data.
+            if let Some(target) = dimension.strip_prefix(ATTACHMENT_MARK) {
+                let map = &mut run.store.data_mut().attachments;
+                if map.len() < ATTACHMENTS {
+                    map.insert((target.to_owned(), pos), data);
+                }
+                return;
+            }
             let map = &mut run.store.data_mut().block_data;
             if map.len() < BLOCK_DATA_POSITIONS {
                 map.insert((dimension.to_owned(), pos), data);
@@ -2495,6 +2639,398 @@ fn package_file_ok(path: &str) -> bool {
 /// Largest file `files.read` gives, and most paths `files.paths` gives.
 const PACKAGE_FILE_BYTES: u64 = 1 << 20;
 const PACKAGE_LIST: usize = 1024;
+/// An attachment's target as the key it is kept under: kind, name and key
+/// apart by NULs, a chunk's coordinates in the position.
+fn attachment_key(target: &attachments::Target, key: &str) -> (String, [i32; 3]) {
+    use attachments::Target;
+    match target {
+        Target::Player(id) => (format!("player\0{id}\0{key}"), [0; 3]),
+        Target::Dimension(d) => (format!("dimension\0{d}\0{key}"), [0; 3]),
+        Target::Chunk(c) => (format!("chunk\0{}\0{key}", c.dimension), [c.x, 0, c.z]),
+    }
+}
+fn face_index(face: Option<transfer::Face>) -> Option<u8> {
+    use transfer::Face;
+    face.map(|f| match f {
+        Face::Down => 0,
+        Face::Up => 1,
+        Face::North => 2,
+        Face::South => 3,
+        Face::West => 4,
+        Face::East => 5,
+    })
+}
+impl State {
+    /// The storage at a position, while the block there is still its
+    /// owner's: one whose block went is forgotten (and its save with it).
+    fn storage_at(&mut self, dimension: &str, pos: [i32; 3]) -> Option<Storage> {
+        let key = (dimension.to_owned(), pos);
+        let found = self.storage.lock().ok()?.get(&key).cloned()?;
+        let standing = self
+            .world
+            .lock()
+            .ok()
+            .and_then(|v| {
+                v.as_ref()
+                    .map(|v| v.block(dimension, pos[0], pos[1], pos[2]))
+            })
+            .flatten();
+        if let Some(state) = standing {
+            let id = state.split('[').next().unwrap_or(&state);
+            let ns = id.split_once(':').map_or("", |(ns, _)| ns);
+            if ns != found.owner && !self.block_namespaces.iter().any(|n| n == ns) {
+                // Not this mod's view of its own: keep it only while some
+                // block of its owner's namespace stands there.
+                if !id.starts_with(&format!("{}:", found.owner)) {
+                    if let Ok(mut map) = self.storage.lock() {
+                        map.remove(&key);
+                    }
+                    self.save_storage(dimension, pos, None);
+                    return None;
+                }
+            }
+        }
+        Some(found)
+    }
+    fn put_storage(&mut self, dimension: &str, pos: [i32; 3], storage: Storage) {
+        self.save_storage(dimension, pos, Some(&storage));
+        if let Ok(mut map) = self.storage.lock() {
+            map.insert((dimension.to_owned(), pos), storage);
+        }
+    }
+    fn save_storage(&mut self, dimension: &str, pos: [i32; 3], storage: Option<&Storage>) {
+        self.out.push(Output::BlockData {
+            mod_id: TRANSFER_ID.to_owned(),
+            dimension: dimension.to_owned(),
+            pos,
+            data: storage.map(Storage::encode),
+        });
+    }
+    /// Whether one of this mod's blocks stands at a position (true with no
+    /// world to ask).
+    fn owns_block_at(&self, dimension: &str, pos: [i32; 3]) -> bool {
+        let Some(state) = self.world.lock().ok().and_then(|v| {
+            v.as_ref()
+                .map(|v| v.block(dimension, pos[0], pos[1], pos[2]))
+        }) else {
+            return true;
+        };
+        state.is_some_and(|s| {
+            let id = s.split('[').next().unwrap_or(&s);
+            id.split_once(':')
+                .is_some_and(|(ns, _)| self.block_namespaces.iter().any(|n| n == ns))
+        })
+    }
+    fn new_storage(&mut self, dimension: &str, pos: [i32; 3]) -> Result<Storage, String> {
+        if !self.owns_block_at(dimension, pos) {
+            return Err(format!(
+                "({}, {}, {}) is not a block of this mod",
+                pos[0], pos[1], pos[2]
+            ));
+        }
+        let existing = self
+            .storage
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&(dimension.to_owned(), pos)).cloned());
+        if existing.is_none() && self.storage.lock().map_or(0, |m| m.len()) >= STORAGES {
+            return Err(format!("at most {STORAGES} tanks and batteries"));
+        }
+        Ok(existing.unwrap_or_else(|| Storage {
+            owner: self.id.clone(),
+            ..Storage::default()
+        }))
+    }
+}
+impl transfer::Host for State {
+    fn item_slots(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        face: Option<transfer::Face>,
+    ) -> Option<Vec<Option<transfer::ItemStack>>> {
+        let view = self.world.lock().ok()?;
+        let slots = view
+            .as_ref()?
+            .item_slots(&dimension, [x, y, z], face_index(face))?;
+        Some(
+            slots
+                .into_iter()
+                .map(|s| s.map(|(item, count)| transfer::ItemStack { item, count }))
+                .collect(),
+        )
+    }
+    fn insert_item(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        face: Option<transfer::Face>,
+        stack: transfer::ItemStack,
+        simulate: bool,
+    ) -> u32 {
+        if stack.count == 0 || stack.item.is_empty() || stack.item.len() > 128 {
+            return stack.count;
+        }
+        let Ok(mut view) = self.world.lock() else {
+            return stack.count;
+        };
+        let Some(view) = view.as_mut() else {
+            return stack.count;
+        };
+        view.insert_item(
+            &dimension,
+            [x, y, z],
+            face_index(face),
+            &stack.item,
+            stack.count.min(99 * 64),
+            simulate,
+        ) + stack.count.saturating_sub(99 * 64)
+    }
+    fn extract_item(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        face: Option<transfer::Face>,
+        count: u32,
+        simulate: bool,
+    ) -> Option<transfer::ItemStack> {
+        if count == 0 {
+            return None;
+        }
+        let mut view = self.world.lock().ok()?;
+        let (item, count) = view.as_mut()?.extract_item(
+            &dimension,
+            [x, y, z],
+            face_index(face),
+            count,
+            simulate,
+        )?;
+        Some(transfer::ItemStack { item, count })
+    }
+    fn add_tank(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        capacity: u32,
+    ) -> Result<(), String> {
+        let mut s = self.new_storage(&dimension, [x, y, z])?;
+        s.fluid_capacity = capacity;
+        if let Some((_, amount)) = &mut s.fluid {
+            *amount = (*amount).min(capacity);
+        }
+        if s.fluid.as_ref().is_some_and(|(_, a)| *a == 0) {
+            s.fluid = None;
+        }
+        self.put_storage(&dimension, [x, y, z], s);
+        Ok(())
+    }
+    fn get_tank(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<transfer::Tank> {
+        let s = self.storage_at(&dimension, [x, y, z])?;
+        (s.fluid_capacity > 0).then(|| transfer::Tank {
+            content: s
+                .fluid
+                .map(|(fluid, amount)| transfer::FluidStack { fluid, amount }),
+            capacity: s.fluid_capacity,
+        })
+    }
+    fn fill(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        stack: transfer::FluidStack,
+        simulate: bool,
+    ) -> u32 {
+        let Some(mut s) = self.storage_at(&dimension, [x, y, z]) else {
+            return 0;
+        };
+        if s.fluid_capacity == 0
+            || stack.amount == 0
+            || stack.fluid.is_empty()
+            || stack.fluid.len() > 128
+        {
+            return 0;
+        }
+        let held = match &s.fluid {
+            Some((f, a)) if *f == stack.fluid => *a,
+            Some(_) => return 0,
+            None => 0,
+        };
+        let took = stack.amount.min(s.fluid_capacity.saturating_sub(held));
+        if took > 0 && !simulate {
+            s.fluid = Some((stack.fluid, held + took));
+            self.put_storage(&dimension, [x, y, z], s);
+        }
+        took
+    }
+    fn drain(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        amount: u32,
+        simulate: bool,
+    ) -> Option<transfer::FluidStack> {
+        let mut s = self.storage_at(&dimension, [x, y, z])?;
+        let (fluid, held) = s.fluid.clone()?;
+        let out = amount.min(held);
+        if out == 0 {
+            return None;
+        }
+        if !simulate {
+            s.fluid = (held > out).then(|| (fluid.clone(), held - out));
+            self.put_storage(&dimension, [x, y, z], s);
+        }
+        Some(transfer::FluidStack { fluid, amount: out })
+    }
+    fn add_battery(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        capacity: u64,
+    ) -> Result<(), String> {
+        let mut s = self.new_storage(&dimension, [x, y, z])?;
+        s.energy_capacity = capacity;
+        s.energy = s.energy.min(capacity);
+        self.put_storage(&dimension, [x, y, z], s);
+        Ok(())
+    }
+    fn get_battery(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+    ) -> Option<transfer::Battery> {
+        let s = self.storage_at(&dimension, [x, y, z])?;
+        (s.energy_capacity > 0).then_some(transfer::Battery {
+            stored: s.energy,
+            capacity: s.energy_capacity,
+        })
+    }
+    fn receive_energy(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        amount: u64,
+        simulate: bool,
+    ) -> u64 {
+        let Some(mut s) = self.storage_at(&dimension, [x, y, z]) else {
+            return 0;
+        };
+        let took = amount.min(s.energy_capacity.saturating_sub(s.energy));
+        if took > 0 && !simulate {
+            s.energy += took;
+            self.put_storage(&dimension, [x, y, z], s);
+        }
+        took
+    }
+    fn extract_energy(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        amount: u64,
+        simulate: bool,
+    ) -> u64 {
+        let Some(mut s) = self.storage_at(&dimension, [x, y, z]) else {
+            return 0;
+        };
+        let out = amount.min(s.energy);
+        if out > 0 && !simulate {
+            s.energy -= out;
+            self.put_storage(&dimension, [x, y, z], s);
+        }
+        out
+    }
+    fn remove_storage(&mut self, dimension: String, x: i32, y: i32, z: i32) {
+        let key = (dimension.clone(), [x, y, z]);
+        let owned = self
+            .storage
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&key).map(|s| s.owner == self.id))
+            .unwrap_or(false);
+        if owned {
+            if let Ok(mut map) = self.storage.lock() {
+                map.remove(&key);
+            }
+            self.save_storage(&dimension, [x, y, z], None);
+        }
+    }
+}
+impl attachments::Host for State {
+    fn get(&mut self, target: attachments::Target, key: String) -> Option<Vec<u8>> {
+        self.attachments
+            .get(&attachment_key(&target, &key))
+            .cloned()
+    }
+    fn set(
+        &mut self,
+        target: attachments::Target,
+        key: String,
+        data: Vec<u8>,
+    ) -> Result<(), String> {
+        if key.is_empty() || key.len() > 64 || key.contains('\0') {
+            return Err("a key of 1 to 64 characters".into());
+        }
+        if data.len() > ATTACHMENT_BYTES {
+            return Err(format!("{} bytes: at most {ATTACHMENT_BYTES}", data.len()));
+        }
+        let k = attachment_key(&target, &key);
+        if self.attachments.len() >= ATTACHMENTS && !self.attachments.contains_key(&k) {
+            return Err(format!("at most {ATTACHMENTS} values"));
+        }
+        if self.attachments.get(&k) == Some(&data) {
+            return Ok(());
+        }
+        self.attachments.insert(k.clone(), data.clone());
+        self.out.push(Output::BlockData {
+            mod_id: self.id.clone(),
+            dimension: format!("{ATTACHMENT_MARK}{}", k.0),
+            pos: k.1,
+            data: Some(data),
+        });
+        Ok(())
+    }
+    fn remove(&mut self, target: attachments::Target, key: String) {
+        let k = attachment_key(&target, &key);
+        if self.attachments.remove(&k).is_some() {
+            self.out.push(Output::BlockData {
+                mod_id: self.id.clone(),
+                dimension: format!("{ATTACHMENT_MARK}{}", k.0),
+                pos: k.1,
+                data: None,
+            });
+        }
+    }
+    fn keys(&mut self, target: attachments::Target) -> Vec<String> {
+        let (prefix, pos) = attachment_key(&target, "");
+        let mut keys: Vec<String> = self
+            .attachments
+            .keys()
+            .filter(|(t, p)| *p == pos && t.starts_with(&prefix))
+            .map(|(t, _)| t[prefix.len()..].to_owned())
+            .collect();
+        keys.sort();
+        keys
+    }
+}
 impl files::Host for State {
     fn read(&mut self, path: String) -> Option<Vec<u8>> {
         if !package_file_ok(&path) {

@@ -5,5 +5,5 @@ description = "Adds a counter block that keeps the seconds it has stood in the w
 authors = ["Horizon"]
 api = "0.3"
 side = "server"
-capabilities = ["block-entities", "registries", "players", "world", "net", "entities", "containers", "redstone", "items", "effects"]
-experimental = ["block-entities", "net", "entities", "containers", "redstone", "items", "effects"]
+capabilities = ["block-entities", "registries", "players", "world", "net", "entities", "containers", "redstone", "items", "effects", "transfer"]
+experimental = ["block-entities", "net", "entities", "containers", "redstone", "items", "effects", "transfer"]

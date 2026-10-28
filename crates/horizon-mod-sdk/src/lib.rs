@@ -225,6 +225,10 @@ pub mod server {
     pub use horizon::mods::entities;
     /// The files in the mod's own package, read only.
     pub use horizon::mods::files;
+    /// Data on players, dimensions and chunks, saved with the world.
+    pub use horizon::mods::attachments;
+    /// Capability `transfer`: items, fluids and energy between blocks.
+    pub use horizon::mods::transfer;
     /// Capability `items`: item entities dropped into the world.
     pub use horizon::mods::items;
     /// Capability `net`: messages to and from the mod's client half.

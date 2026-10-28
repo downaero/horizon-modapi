@@ -26,6 +26,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
 | `redstone` | [`redstone`](#redstone) | see the redstone signal reaching its own blocks |
 | `items` | [`items`](#items) | drop items into your worlds |
 | `effects` | [`effects`](#effects) | play sounds and particles in your worlds |
+| `transfer` | [`transfer`](#transfer) | move items, fluids and energy in and out of blocks |
 
 ## World `horizon-mod`
 
@@ -45,8 +46,22 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `log`, `storage`, `players`, `world`
+- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `log`, `storage`, `players`, `world`
 - Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `server-events`
+
+## World `transfer-host`
+
+The game's side of capability `transfer` (imports only).
+
+- Imports (what the game offers): `transfer`
+- Exports (what the mod provides): 
+
+## World `attachments-host`
+
+The game's side of `attachments` (imports only).
+
+- Imports (what the game offers): `attachments`
+- Exports (what the mod provides): 
 
 ## World `files-host`
 
@@ -1046,3 +1061,94 @@ The files a mod carries in its own package (`data/` and `assets/`), read only: e
 | --- | --- | --- |
 | `read` | `func(path: string) -> option<list<u8>>` | A file of the mod's package by its path in it (`data/mymod/press.json`), at most 1 MiB; none where there is no such file. Only `data/` and `assets/` are readable. |
 | `paths` | `func(prefix: string) -> list<string>` | The paths in the package that start with `prefix` (`data/mymod/recipes/`), in order, at most 1024. |
+
+## `attachments`
+
+Access: not granted by any capability.
+
+Data a server mod attaches to a player, a dimension or a chunk, saved with the world beside its block data (as NeoForge's data attachments): a player's mana, a dimension's weather machine, a chunk's pollution. Every server mod has it, with no capability; each mod sees only its own.
+
+### record `chunk`
+
+| Field | Type | |
+| --- | --- | --- |
+| `dimension` | `string` |  |
+| `x` | `s32` | Chunk coordinates: a block's x and z shifted right by 4. |
+| `z` | `s32` |  |
+
+### variant `target`
+
+| Case | Payload | |
+| --- | --- | --- |
+| `player` | `string` | A player, by UUID, whether online or not. |
+| `dimension` | `string` | A dimension, `minecraft:overworld`. |
+| `chunk` | `chunk` |  |
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `get` | `func(target: target, key: string) -> option<list<u8>>` | The bytes under `key` (at most 64 characters) on `target`. |
+| `set` | `func(target: target, key: string, data: list<u8>) -> result<_, string>` | Keeps `data` (at most 64 KiB) under `key` on `target`; at most 65536 values a mod. |
+| `remove` | `func(target: target, key: string)` | Forgets the value under `key` on `target`. |
+| `keys` | `func(target: target) -> list<string>` | The keys the mod keeps on `target`. |
+
+## `transfer`
+
+Access: capability `transfer`.
+
+Capability `transfer`, server mods only (experimental): moving items, fluids and energy between blocks, as NeoForge's capabilities (`IItemHandler`, `IFluidHandler`, `IEnergyStorage`) do between mods. Items go in and out of any inventory there is: chests, barrels, shulker boxes, hoppers, dispensers, droppers, mod containers, and furnaces by face as a hopper reaches them. Fluid tanks and batteries are the mods' own: a mod puts one on its block and every mod fills and drains it. What is moved is moved at once, during the call; `simulate` only asks.
+
+### record `item-stack`
+
+| Field | Type | |
+| --- | --- | --- |
+| `item` | `string` |  |
+| `count` | `u32` |  |
+
+### enum `face`
+
+The face of the block reached through, as a hopper or pipe touches it; none for the block as a whole.
+
+| Case | |
+| --- | --- |
+| `down` |  |
+| `up` |  |
+| `north` |  |
+| `south` |  |
+| `west` |  |
+| `east` |  |
+
+### record `fluid-stack`
+
+| Field | Type | |
+| --- | --- | --- |
+| `fluid` | `string` | `minecraft:water`, `minecraft:lava` or a mod's own fluid id. |
+| `amount` | `u32` | In millibuckets: 1000 is a bucket. |
+
+### record `tank`
+
+| Field | Type | |
+| --- | --- | --- |
+| `content` | `option<fluid-stack>` |  |
+| `capacity` | `u32` |  |
+
+### record `battery`
+
+| Field | Type | |
+| --- | --- | --- |
+| `stored` | `u64` |  |
+| `capacity` | `u64` |  |
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `item-slots` | `func(dimension: string, x: s32, y: s32, z: s32, face: option<face>) -> option<list<option<item-stack>>>` | The slots reachable through `face` of the inventory at a position in the simulated dimension; none where there is none. |
+| `insert-item` | `func(dimension: string, x: s32, y: s32, z: s32, face: option<face>, stack: item-stack, simulate: bool) -> u32` | Puts a stack in (merged with like stacks first, then into empty slots): how many did not fit. |
+| `extract-item` | `func(dimension: string, x: s32, y: s32, z: s32, face: option<face>, count: u32, simulate: bool) -> option<item-stack>` | Takes up to `count` of the first stack reachable: what was taken. |
+| `add-tank` | `func(dimension: string, x: s32, y: s32, z: s32, capacity: u32) -> result<_, string>` | Gives one of the mod's own blocks a tank of `capacity` millibuckets (keeping what it holds when it had one). Saved with the world. |
+| `get-tank` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<tank>` | The tank on a block: what it holds and how much it can. |
+| `fill` | `func(dimension: string, x: s32, y: s32, z: s32, stack: fluid-stack, simulate: bool) -> u32` | Pours in (one fluid a tank): how much went in. |
+| `drain` | `func(dimension: string, x: s32, y: s32, z: s32, amount: u32, simulate: bool) -> option<fluid-stack>` | Takes out up to `amount`: what came out. |
+| `add-battery` | `func(dimension: string, x: s32, y: s32, z: s32, capacity: u64) -> result<_, string>` | Gives one of the mod's own blocks a battery of `capacity` units (any unit the mods agree on, as Forge Energy). Saved with the world. |
+| `get-battery` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<battery>` | The battery on a block: what it stores and how much it can. |
+| `receive-energy` | `func(dimension: string, x: s32, y: s32, z: s32, amount: u64, simulate: bool) -> u64` | Charges: how much it took. |
+| `extract-energy` | `func(dimension: string, x: s32, y: s32, z: s32, amount: u64, simulate: bool) -> u64` | Discharges: how much came out. |
+| `remove-storage` | `func(dimension: string, x: s32, y: s32, z: s32)` | Takes the tank and battery off one of the mod's own blocks. |

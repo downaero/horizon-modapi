@@ -209,8 +209,158 @@ mod run {
         /// data or items in the simulated dimension, as of the call's start
         /// (capability `redstone`).
         power: std::collections::HashMap<[i32; 3], u8>,
+        /// The simulated dimension's block entities, moved out of the game
+        /// for the call (capability `transfer` moves items in and out).
+        entities: horizon_client::block_entities::BlockEntities,
+        res: std::sync::Arc<crate::game::Resources>,
+        /// Chunks whose block entities `transfer` changed, to save.
+        touched: Vec<(i32, i32)>,
+    }
+    /// The slots of an inventory a hopper reaches through `face` (0 down,
+    /// 1 up, 2 to 5 the sides; none: all), to put in or to take out, as
+    /// `WorldlyContainer.getSlotsForFace` and its checks have them for a
+    /// furnace; every slot of any other.
+    fn reachable(
+        entity: &mut horizon_client::containers::BlockEntity,
+        face: Option<u8>,
+        insert: bool,
+    ) -> Option<(&mut [Option<horizon_client::items::ItemStack>], Vec<usize>)> {
+        use horizon_client::containers::BlockEntity;
+        match entity {
+            BlockEntity::Chest(items) => {
+                let all = (0..items.len()).collect();
+                Some((items.as_mut_slice(), all))
+            }
+            BlockEntity::Furnace(f) => {
+                let slots = match (insert, face) {
+                    (true, Some(1)) => vec![0],
+                    (true, Some(0)) => vec![],
+                    (true, Some(_)) => vec![1],
+                    (true, None) => vec![0, 1],
+                    (false, Some(0) | None) => vec![2],
+                    (false, Some(_)) => vec![],
+                };
+                Some((f.items.as_mut_slice(), slots))
+            }
+            _ => None,
+        }
     }
     impl WorldView for LentWorld {
+        fn item_slots(
+            &self,
+            dimension: &str,
+            pos: [i32; 3],
+            face: Option<u8>,
+        ) -> Option<Vec<Option<horizon_mods::SlotStack>>> {
+            if dimension != self.container_dim {
+                return None;
+            }
+            // `reachable` wants it mutable; a copy keeps this a read. The
+            // slots reachable are those to put in and those to take from.
+            let mut entity = self.entities.get(&(pos[0], pos[1], pos[2]))?.clone();
+            let mut open = reachable(&mut entity, face, true)?.1;
+            let (slots, out) = reachable(&mut entity, face, false)?;
+            open.extend(out);
+            open.sort_unstable();
+            open.dedup();
+            Some(
+                open.into_iter()
+                    .map(|i| slots[i].as_ref().map(|s| (s.item.to_string(), s.count)))
+                    .collect(),
+            )
+        }
+        fn insert_item(
+            &mut self,
+            dimension: &str,
+            pos: [i32; 3],
+            face: Option<u8>,
+            item: &str,
+            count: u32,
+            simulate: bool,
+        ) -> u32 {
+            if dimension != self.container_dim {
+                return count;
+            }
+            let items = self.res.items();
+            let Some(kind) = items.get(item) else {
+                return count;
+            };
+            let max = kind.max_stack.max(1);
+            let fuel = kind.fuel.is_some();
+            let Some(entity) = self.entities.get_mut(&(pos[0], pos[1], pos[2])) else {
+                return count;
+            };
+            let furnace = matches!(entity, horizon_client::containers::BlockEntity::Furnace(_));
+            let Some((slots, open)) = reachable(entity, face, true) else {
+                return count;
+            };
+            let mut left = count;
+            // Like stacks first, then empty slots (`HopperBlockEntity.addItem`).
+            for merge in [true, false] {
+                for &i in &open {
+                    if left == 0 {
+                        break;
+                    }
+                    // A furnace's fuel slot takes fuel only.
+                    if furnace && i == 1 && !fuel {
+                        continue;
+                    }
+                    match &mut slots[i] {
+                        Some(s)
+                            if merge && &*s.item == item && s.damage == 0 && s.extra.is_none() =>
+                        {
+                            let put = left.min(max.saturating_sub(s.count));
+                            if !simulate {
+                                s.count += put;
+                            }
+                            left -= put;
+                        }
+                        cell @ None if !merge => {
+                            let put = left.min(max);
+                            if !simulate {
+                                *cell = Some(horizon_client::items::ItemStack::new(item, put));
+                            }
+                            left -= put;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if left != count && !simulate {
+                self.touched.push((pos[0] >> 4, pos[2] >> 4));
+            }
+            left
+        }
+        fn extract_item(
+            &mut self,
+            dimension: &str,
+            pos: [i32; 3],
+            face: Option<u8>,
+            count: u32,
+            simulate: bool,
+        ) -> Option<horizon_mods::SlotStack> {
+            if dimension != self.container_dim {
+                return None;
+            }
+            let entity = self.entities.get_mut(&(pos[0], pos[1], pos[2]))?;
+            let (slots, open) = reachable(entity, face, false)?;
+            for i in open {
+                let Some(s) = &mut slots[i] else {
+                    continue;
+                };
+                let take = count.min(s.count);
+                let out = (s.item.to_string(), take);
+                if !simulate {
+                    s.count -= take;
+                    if s.count == 0 {
+                        slots[i] = None;
+                    }
+                    self.touched.push((pos[0] >> 4, pos[2] >> 4));
+                }
+                return Some(out);
+            }
+            None
+        }
         fn dropped(&self, dimension: &str) -> Vec<horizon_mods::DroppedStack> {
             if dimension != self.container_dim {
                 return Vec::new();
@@ -657,6 +807,7 @@ mod run {
                     pos: [e.position.x, e.position.y, e.position.z],
                 })
                 .collect();
+            let entities = std::mem::take(&mut self.world.block_entities);
             let mut dims = vec![(self.dim.id(), std::mem::take(&mut self.world.chunks))];
             for (dim, chunks) in self.levels.parked_chunks() {
                 dims.push((dim.id(), std::mem::take(chunks)));
@@ -671,6 +822,9 @@ mod run {
                 container_dim: self.dim.id(),
                 dropped,
                 power,
+                entities,
+                res: self.res.clone(),
+                touched: Vec::new(),
             }));
         }
 
@@ -715,6 +869,11 @@ mod run {
             let Ok(lent) = view.downcast::<LentWorld>() else {
                 return;
             };
+            let lent = *lent;
+            self.world.block_entities = lent.entities;
+            for chunk in lent.touched {
+                self.world.modified.insert(chunk);
+            }
             let mut dims = lent.dims;
             if let Some(i) = dims.iter().position(|(d, _)| *d == self.dim.id()) {
                 self.world.chunks = dims.swap_remove(i).1;

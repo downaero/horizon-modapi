@@ -120,9 +120,11 @@ pub enum Capability {
     Items,
     /// Sounds and particles at the mod's blocks (interface `effects`).
     Effects,
+    /// Items, fluids and energy between blocks (interface `transfer`).
+    Transfer,
 }
 impl Capability {
-    pub const ALL: [Capability; 19] = [
+    pub const ALL: [Capability; 20] = [
         Capability::GameRead,
         Capability::Chat,
         Capability::Hud,
@@ -142,6 +144,7 @@ impl Capability {
         Capability::Redstone,
         Capability::Items,
         Capability::Effects,
+        Capability::Transfer,
     ];
     /// Whether a server mod may have it: the others act on a local player.
     pub fn on_server(self) -> bool {
@@ -157,6 +160,7 @@ impl Capability {
                 | Capability::Redstone
                 | Capability::Items
                 | Capability::Effects
+                | Capability::Transfer
         )
     }
     /// The WIT interface it grants, in `horizon:mods`.
@@ -181,6 +185,7 @@ impl Capability {
             Capability::Redstone => "redstone",
             Capability::Items => "items",
             Capability::Effects => "effects",
+            Capability::Transfer => "transfer",
         }
     }
     /// May change in any release: a mod uses it only with
@@ -199,6 +204,7 @@ impl Capability {
                 | Capability::Redstone
                 | Capability::Items
                 | Capability::Effects
+                | Capability::Transfer
         )
     }
     /// What the player reads before turning the mod on: "May <this>".
@@ -226,6 +232,7 @@ impl Capability {
             Capability::Redstone => "see the redstone signal reaching its own blocks",
             Capability::Items => "drop items into your worlds",
             Capability::Effects => "play sounds and particles in your worlds",
+            Capability::Transfer => "move items, fluids and energy in and out of blocks",
             Capability::Recipes => {
                 "read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items"
             }
@@ -240,7 +247,7 @@ impl Capability {
         if !version.starts_with("0.1.") {
             return Err(format!("needs API {version}; this Horizon runs {API}"));
         }
-        if interface == "log" || interface == "files" {
+        if matches!(interface, "log" | "files" | "attachments") {
             return Ok(None);
         }
         // A recipe viewer's panel is part of capability `ui`.
@@ -277,6 +284,7 @@ impl fmt::Display for Capability {
             Capability::Redstone => "redstone",
             Capability::Items => "items",
             Capability::Effects => "effects",
+            Capability::Transfer => "transfer",
         };
         f.write_str(name)
     }

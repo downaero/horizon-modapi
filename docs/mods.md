@@ -89,6 +89,7 @@ folder, loads no runtime and plays exactly like vanilla 26.3.
 | `storage` | `storage` | `get(key)`, `set(key, value)`, `delete(key)`: a per-mod folder of up to 64 files, 4 MiB total, at most 1 MiB written per call |
 | `command` | `command` | `run(line)`: a vanilla command run as the player, with the player's permissions, after the hook returns (8 per call); mods' own commands are not run. `run-quiet(lines)`: up to 256 a call, the same rights, nothing in the chat (single player and Horizon's servers run them 64 a tick and log one line a batch; elsewhere they go as chat commands and their feedback shows) |
 | `containers` | `containers` | server mods: `register`, `open`, `slots`, `set-slot` for the mod's own blocks that hold items and open as a chest ([below](#capability-containers)). **Experimental:** `experimental = ["containers"]` |
+| `transfer` | `transfer` | server mods: items into and out of any inventory, fluid tanks and batteries on the mod's blocks ([below](#capability-transfer-items-fluids-and-energy-between-blocks)). **Experimental:** `experimental = ["transfer"]` |
 | `effects` | `effects` | server mods: `play-sound` and `level-event` at the mod's blocks ([below](#capability-effects)). **Experimental:** `experimental = ["effects"]` |
 | `items` | `items` | server mods: `drop` puts item entities into the world ([below](#capability-items)). **Experimental:** `experimental = ["items"]` |
 | `redstone` | `redstone` | server mods: `power` reads the redstone signal reaching the mod's own blocks ([below](#capability-redstone)). **Experimental:** `experimental = ["redstone"]` |
@@ -690,6 +691,33 @@ example's `gears:mill` spins the 1 x 3 x 3 wheel above it, and its lift carries 
 by a cog) from each source to each member and marks a conflict where two disagree;
 `members(start, limit, connects)` lists one pipe or cable network. A mod keeps what flows
 (stress, fluid amounts) in `block-entities` data and shows it with entities and effects.
+
+### Capability `transfer`: items, fluids and energy between blocks
+
+**API level 28, experimental, server mods.** What NeoForge's capabilities (`IItemHandler`,
+`IFluidHandler`, `IEnergyStorage`) are to Forge mods: a way for one mod's machine to move things
+in and out of another's blocks and vanilla's, at once, during the call (`simulate` only asks).
+
+- Items: `item-slots`, `insert-item` (like stacks first, then empty slots; returns what did not fit)
+  and `extract-item` reach any inventory in the simulated dimension: chests, barrels, shulker boxes,
+  hoppers, dispensers, droppers, mod containers, and a furnace by `face` as a hopper does (its top
+  takes what it smelts, its sides fuel only, its bottom gives the result).
+- Fluids: `add-tank(pos, capacity)` gives one of the mod's own blocks a tank (millibuckets, one
+  fluid at a time); any mod reads it with `get-tank` and moves fluid with `fill` and `drain`.
+- Energy: `add-battery(pos, capacity)`, `get-battery`, `receive-energy`, `extract-energy`, in any
+  unit the mods agree on.
+
+Tanks and batteries are saved with the world (among the mods' block data, as `@transfer`) and
+go when their block does; `remove-storage` takes them off. The gears example's counter charges
+a battery and puts what it presses into the inventory under it, dropping what does not fit.
+
+### Data attachments
+
+Every server mod, with no capability, can keep bytes on a player (by UUID, online or not), a
+dimension or a chunk (API level 27): `attachments.get(target, key)`, `set` (at most 64 KiB, 65536
+values a mod), `remove` and `keys`, as NeoForge's data attachments. They are saved with the world
+beside the mod's block data; a mod sees only its own, and sends what clients need with `net`. The
+gears example counts on each player the counters they placed.
 
 ### Reading the mod's own files
 
