@@ -444,6 +444,81 @@ fn a_block_of_its_own_states_loads_in_every_table() {
     fs::remove_dir_all(&scratch).unwrap();
 }
 
+/// NeoForge's model loaders: an OBJ model's faces, and a composite's
+/// children (one inline, one an OBJ model) baked as one model.
+#[test]
+#[ignore = "full content root: CI and pr_ready run it"]
+fn neoforge_obj_and_composite_models_bake() {
+    let Some(base) = prepared() else {
+        return;
+    };
+    let scratch = std::env::temp_dir().join(format!("horizon-mod-loaders-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let block = |template: &str| format!(r#"{{"template": "{template}", "item": false}}"#);
+    let wheel_block = block("minecraft:iron_block");
+    let box_block = block("minecraft:iron_block");
+    let m = folder_mod(
+        &scratch.join("loaders"),
+        &[
+            ("horizon-mod.toml", &manifest("loaders", "")),
+            ("data/loaders/horizon/block/wheel.json", &wheel_block),
+            ("data/loaders/horizon/block/box.json", &box_block),
+            (
+                "assets/loaders/blockstates/wheel.json",
+                r#"{"variants": {"": {"model": "loaders:block/wheel"}}}"#,
+            ),
+            (
+                "assets/loaders/blockstates/box.json",
+                r#"{"variants": {"": {"model": "loaders:block/box", "y": 90}}}"#,
+            ),
+            (
+                "assets/loaders/models/block/wheel.json",
+                r##"{"parent": "block/block", "loader": "neoforge:obj", "flip_v": true,
+                    "model": "loaders:models/block/wheel.obj",
+                    "textures": {"0": "minecraft:block/stone", "particle": "minecraft:block/stone"}}"##,
+            ),
+            (
+                "assets/loaders/models/block/wheel.mtl",
+                "newmtl m_0\nmap_Kd #0\n",
+            ),
+            (
+                "assets/loaders/models/block/wheel.obj",
+                "mtllib wheel.mtl\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 1 1\n\
+                 vt 0 1\nusemtl m_0\nf 1/1 2/2 3/3 4/4\nf 1/1 3/3 4/4\n",
+            ),
+            (
+                "assets/loaders/models/block/box.json",
+                r##"{"parent": "block/block", "loader": "neoforge:composite",
+                    "textures": {"particle": "minecraft:block/stone"},
+                    "children": {
+                        "slab": {"textures": {"0": "minecraft:block/oak_planks"},
+                            "elements": [{"from": [0, 0, 0], "to": [16, 8, 16],
+                                "faces": {"up": {"texture": "#0"}, "down": {"texture": "#0"}}}]},
+                        "wheel": "loaders:block/wheel"}}"##,
+            ),
+        ],
+    );
+    let root = resource_root(&base, std::slice::from_ref(&m), &scratch.join("cache")).unwrap();
+    let assets = Assets::load(&root).unwrap();
+    let render = crate::assets::RenderAssets::load(&root, &assets).unwrap();
+    let faces = |name: &str| {
+        let state = assets.registry.default_state(name).unwrap();
+        let models = render.model_catalog.collect_seeded(state, 0).unwrap();
+        models.iter().map(|(_, m)| m.faces.len()).sum::<usize>()
+    };
+    // A quad, and a triangle drawn as a quad with a corner twice.
+    assert_eq!(faces("loaders:wheel"), 2);
+    // The slab's two faces and the wheel's two.
+    assert_eq!(faces("loaders:box"), 4);
+    let state = assets.registry.default_state("loaders:wheel").unwrap();
+    let models = render.model_catalog.collect_seeded(state, 0).unwrap();
+    let quad = &models[0].1.faces[0].quad;
+    assert_eq!(quad.material.sprite, "minecraft:block/stone");
+    // `flip_v`: the OBJ's bottom-up coordinates turned top-down.
+    assert_eq!(quad.uv[0], [0.0, 1.0]);
+    fs::remove_dir_all(&scratch).unwrap();
+}
+
 #[test]
 fn refuses_unknown_templates_and_vanilla_ids() {
     let Some(base) = prepared() else {

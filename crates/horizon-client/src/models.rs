@@ -1,6 +1,7 @@
 //! A blockstate-driven inspection gallery, separate from gameplay simulation.
 pub mod catalog;
 mod cube;
+mod neoforge;
 use crate::{Result, sprites::Sprites};
 pub use catalog::StateModels;
 use catalog::descriptor;

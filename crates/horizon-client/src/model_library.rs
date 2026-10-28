@@ -71,13 +71,38 @@ impl ParsedModels {
     ) -> Result<ModelLibrary> {
         self.block_models(root, pending, true)
     }
+    /// [`Self::block_library_or_missing`] for model `name` and its parents,
+    /// `name` being `model` when given (a composite's inline child) instead
+    /// of a model file.
+    pub(crate) fn library_with(
+        &self,
+        root: &Path,
+        name: &str,
+        model: Option<CuboidModel>,
+    ) -> Result<ModelLibrary> {
+        let mut seed = BTreeMap::new();
+        let mut pending = vec![name.to_owned()];
+        if let Some(model) = model {
+            pending = model.parent.iter().cloned().collect();
+            seed.insert(name.to_owned(), Arc::new(model));
+        }
+        self.block_models_from(root, pending, true, seed)
+    }
     fn block_models(
+        &self,
+        root: &Path,
+        pending: Vec<String>,
+        or_missing: bool,
+    ) -> Result<ModelLibrary> {
+        self.block_models_from(root, pending, or_missing, BTreeMap::new())
+    }
+    fn block_models_from(
         &self,
         root: &Path,
         mut pending: Vec<String>,
         or_missing: bool,
+        mut models: BTreeMap<String, Arc<CuboidModel>>,
     ) -> Result<ModelLibrary> {
-        let mut models = BTreeMap::new();
         let mut skipped = std::collections::BTreeSet::new();
         while let Some(name) = pending.pop() {
             if models.contains_key(&name) || skipped.contains(&name) {

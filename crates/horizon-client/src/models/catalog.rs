@@ -224,20 +224,29 @@ impl StateModels {
                 .material("particle")?
                 .map(|material| sprites.insert(root, &material.sprite))
                 .transpose()?;
-            let faces: Vec<BakedFace> =
-                bake_block_model(&model, BlockModelTransform::new(turns, lock))?
-                    .into_iter()
-                    .map(|quad| {
-                        let layer = sprites.insert(root, &quad.material.sprite)?;
-                        Ok(BakedFace {
-                            translucent: quad.material.force_translucent
-                                || sprites.translucent[layer as usize],
-                            opaque: sprites.region_opaque(layer, &quad.uv),
-                            quad,
-                            layer,
-                        })
+            let transform = BlockModelTransform::new(turns, lock);
+            // A mod's model may name one of NeoForge's loaders instead.
+            let quads = match super::neoforge::loader(root, &name) {
+                Some(json) => super::neoforge::bake(root, &json, &model, models, transform)
+                    .unwrap_or_else(|e| {
+                        log::warn!("Horizon: model {name} not baked: {e}");
+                        Vec::new()
+                    }),
+                None => bake_block_model(&model, transform)?,
+            };
+            let faces: Vec<BakedFace> = quads
+                .into_iter()
+                .map(|quad| {
+                    let layer = sprites.insert(root, &quad.material.sprite)?;
+                    Ok(BakedFace {
+                        translucent: quad.material.force_translucent
+                            || sprites.translucent[layer as usize],
+                        opaque: sprites.region_opaque(layer, &quad.uv),
+                        quad,
+                        layer,
                     })
-                    .collect::<Result<_>>()?;
+                })
+                .collect::<Result<_>>()?;
             let cube = super::cube::cube_styles(&faces);
             index.insert((name.clone(), turns, lock), baked.len() as u32);
             let variant = Variant {

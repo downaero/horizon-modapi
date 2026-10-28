@@ -454,6 +454,18 @@ draws them by these properties; without one every state is drawn as the
 template's default state. Up to 16 properties and 4096 states a block. The
 gears example's `gears:clutch` has an axis and is powered or not.
 
+A mod's block models may name two of NeoForge's model loaders, as many
+NeoForge mods' do: `"loader": "neoforge:obj"` draws a Wavefront OBJ file
+(`"model": "mymod:models/block/wheel.obj"`, in block units) whose faces are
+textured through its `.mtl`'s `map_Kd`, a `#slot` of the model's textures (its
+parents' too) or a texture id, with `"flip_v": true` turning its texture
+coordinates top-down; `"loader": "neoforge:composite"` draws its `children`
+(each a model inline, with elements or a loader of its own, or a model's id)
+as one model. Both turn with their blockstate variant as any model does, and
+so do visual parts drawing their states. Their other keys (`render_type`,
+OBJ normals, `emissive_ambient`) are not read; items draw such models only
+through a model file of their own.
+
 The fence: files go in the mod's own namespaces (`assets/<id>/`,
 `data/<id>/`, and those its manifest lists), plus additions to vanilla tags
 (`data/minecraft/tags/`) and to the convention tags NeoForge and Fabric mods
