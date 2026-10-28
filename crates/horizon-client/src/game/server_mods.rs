@@ -60,6 +60,9 @@ impl Game<'_> {
         false
     }
     pub(super) fn apply_mod_block_writes(&mut self) {}
+    pub(super) fn is_mod_entity(&self, _id: u32) -> bool {
+        false
+    }
     pub(super) fn flush_mod_block_data(&mut self) {}
 }
 
@@ -162,6 +165,8 @@ mod run {
 
     /// `net` messages waiting for a tick are kept up to this many.
     const MAX_QUEUED_NET: usize = 4096;
+    /// Entity changes waiting for a tick are kept up to this many.
+    const MAX_QUEUED_ENTITY_OPS: usize = 1 << 16;
 
     /// Blocks queued for levels that don't tick (another dimension, in-frame)
     /// are kept up to this many; the oldest go first.
@@ -415,6 +420,7 @@ mod run {
             self.mods.players = players;
             self.show_mod_output();
             self.apply_mod_block_writes();
+            self.apply_mod_entities();
             if self.mods.block_data_dirty && self.ticks % 200 == 0 {
                 self.flush_mod_block_data();
             }
@@ -601,6 +607,69 @@ mod run {
                         b.y,
                         b.z
                     );
+                }
+            }
+        }
+
+        /// Whether this armor stand is a mod's entity (`entities`): those are
+        /// never saved with the world; the mod places them again.
+        pub(in crate::game) fn is_mod_entity(&self, id: u32) -> bool {
+            self.mods.mod_entities.values().any(|&s| s == id)
+        }
+
+        /// Makes the changes server mods queued for their entities, as armor
+        /// stands (invisible markers holding the item). Only the dimension the
+        /// window simulates is there to change; others are dropped.
+        pub(in crate::game) fn apply_mod_entities(&mut self) {
+            use horizon_client::{entities::ArmorStand, items::ItemStack};
+            use horizon_core::geometry::Vec3;
+            for (mod_id, op) in std::mem::take(&mut self.mods.entity_ops) {
+                match op {
+                    horizon_mods::EntityOp::Spawn {
+                        handle,
+                        dimension,
+                        pos,
+                        yaw,
+                        item,
+                    } => {
+                        if dimension != self.dim.id() {
+                            log::debug!(
+                                "Horizon: mod {mod_id} placed an entity in {dimension}, which is not simulated"
+                            );
+                            continue;
+                        }
+                        self.next_entity += 1;
+                        let mut stand = ArmorStand::new(
+                            self.next_entity,
+                            Vec3::new(pos[0], pos[1], pos[2]),
+                            yaw,
+                        );
+                        stand.invisible = true;
+                        stand.marker = true;
+                        stand.equipment[0] = Some(ItemStack::new(item.as_str(), 1));
+                        self.mods.mod_entities.insert((mod_id, handle), stand.id);
+                        self.armor_stands.push(stand);
+                    }
+                    horizon_mods::EntityOp::Move { handle, pos, yaw } => {
+                        if let Some(&id) = self.mods.mod_entities.get(&(mod_id, handle))
+                            && let Some(a) = self.armor_stands.iter_mut().find(|a| a.id == id)
+                        {
+                            a.position = Vec3::new(pos[0], pos[1], pos[2]);
+                            a.yaw = yaw;
+                        }
+                    }
+                    horizon_mods::EntityOp::SetItem { handle, item } => {
+                        if let Some(&id) = self.mods.mod_entities.get(&(mod_id, handle))
+                            && let Some(a) = self.armor_stands.iter_mut().find(|a| a.id == id)
+                        {
+                            a.equipment[0] = Some(ItemStack::new(item.as_str(), 1));
+                        }
+                    }
+                    horizon_mods::EntityOp::Remove { handle } => {
+                        if let Some(id) = self.mods.mod_entities.remove(&(mod_id, handle)) {
+                            self.armor_stands.retain(|a| a.id != id);
+                        }
+                    }
                 }
             }
         }
@@ -920,6 +989,12 @@ mod run {
                     pos,
                     data,
                 } => self.store_mod_block_data(mod_id, dimension, pos, data),
+                Output::Entity { mod_id, op } => {
+                    let queue = &mut self.mods.entity_ops;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push((mod_id, op));
+                    }
+                }
                 _ => {}
             }
         }

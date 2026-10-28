@@ -82,6 +82,12 @@ pub(super) struct ModsState {
     pub(super) net_to_client: Vec<(String, Vec<u8>)>,
     #[cfg(feature = "mods")]
     pub(super) net_to_server: Vec<(String, String, Vec<u8>)>,
+    /// Capability `entities`: changes waiting for the tick's end, and the
+    /// armor stand each live (mod id, handle) is.
+    #[cfg(feature = "mods")]
+    pub(super) entity_ops: Vec<(String, horizon_mods::EntityOp)>,
+    #[cfg(feature = "mods")]
+    pub(super) mod_entities: std::collections::HashMap<(String, u32), u32>,
     /// `block_data` changed since it was written.
     #[cfg(feature = "mods")]
     pub(super) block_data_dirty: bool,
@@ -725,7 +731,8 @@ impl Game<'_> {
                 | Output::Broadcast { .. }
                 | Output::Reply { .. }
                 | Output::SetBlocks { .. }
-                | Output::BlockData { .. }) => {
+                | Output::BlockData { .. }
+                | Output::Entity { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);
                     continue;
                 }

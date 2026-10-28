@@ -153,8 +153,10 @@ impl Game<'_> {
             );
             e.head_yaw = a.yaw;
             e.velocity = [a.velocity.x, a.velocity.y, a.velocity.z];
-            if a.fire_ticks > 0 {
-                e.meta.push((0, serializer::BYTE, Value::Byte(1)));
+            // Entity.DATA_SHARED_FLAGS_ID: on fire 1, invisible 0x20.
+            let shared = i8::from(a.fire_ticks > 0) | i8::from(a.invisible) << 5;
+            if shared != 0 {
+                e.meta.push((0, serializer::BYTE, Value::Byte(shared)));
             }
             // LivingEntity.DATA_HEALTH_ID: 1 until the stand's max health is set.
             e.meta.push((9, serializer::FLOAT, Value::Float(a.health)));
