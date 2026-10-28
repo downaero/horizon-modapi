@@ -271,6 +271,18 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
             } => {
                 format!("set {} block(s) in {dimension}", blocks.len())
             }
+            Output::BlockData { dimension, pos, .. } => {
+                format!(
+                    "kept block data at {} {} {} in {dimension}",
+                    pos[0], pos[1], pos[2]
+                )
+            }
+            Output::Net { data, .. } => format!("sent a {}-byte net message", data.len()),
+            Output::Container { .. } => "changed a container".to_string(),
+            Output::Entity { .. } => "changed an entity".to_string(),
+            Output::Effect { .. } => "played an effect".to_string(),
+            Output::Take { .. } => "took an item entity".to_string(),
+            Output::Drop { item, count, .. } => format!("dropped {count} {item}"),
             Output::OpenScreen { .. } => "opened a screen".to_string(),
             Output::CloseScreen { .. } => "closed its screen".to_string(),
             Output::PlaceRecipe { book_id, all } => {
