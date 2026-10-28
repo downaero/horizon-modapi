@@ -431,6 +431,29 @@ properties the shape is keyed by and that hides nothing (a chain, an end
 rod, iron bars) fits a small shape best. The gears example's `gears:shaft`
 is a chain with a thicker shape along its axis.
 
+A block may have state properties of its own instead of its template's, as
+NeoForge's `createBlockStateDefinition` gives them: `states` lists each
+property with its values in order, `default_state` the values of its default
+state (left out: each property's first value):
+
+```json
+{ "template": "minecraft:iron_block",
+  "states": { "axis": ["x", "y", "z"], "powered": ["false", "true"] },
+  "default_state": { "axis": "y" } }
+```
+
+Its states are every combination, in vanilla's order (properties by name,
+the last one varying fastest), each behaving as the template's default
+state does: its sounds, light, hardness, shape and whatever its class does
+(a template whose behaviour reads a property of the same name, `powered` on
+a lever, changes that property as it would its own; a plain template such as
+`minecraft:iron_block` does nothing). `/setblock`, saves and the mod's own
+`set-blocks` take them by name (`mymod:clutch[axis=x,powered=true]`), and a
+`shape` keys on them. The mod's blockstate file (`assets/<id>/blockstates/`)
+draws them by these properties; without one every state is drawn as the
+template's default state. Up to 16 properties and 4096 states a block. The
+gears example's `gears:clutch` has an axis and is powered or not.
+
 The fence: files go in the mod's own namespaces (`assets/<id>/`,
 `data/<id>/`, and those its manifest lists), plus additions to vanilla tags
 (`data/minecraft/tags/`) and to the convention tags NeoForge and Fabric mods

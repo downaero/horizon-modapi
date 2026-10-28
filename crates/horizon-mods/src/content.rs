@@ -149,7 +149,12 @@ struct BlockFile {
     item: bool,
     shape: Option<Shape>,
     collision_shape: Option<Shape>,
+    states: Option<std::collections::BTreeMap<String, Vec<String>>>,
+    default_state: Option<std::collections::BTreeMap<String, String>>,
 }
+
+/// The most states one block's own properties make.
+pub const MAX_BLOCK_STATES: usize = 4096;
 fn yes() -> bool {
     true
 }
@@ -168,6 +173,12 @@ pub struct Block {
     pub shape: Option<Shape>,
     /// What entities collide with (`getCollisionShape`); `[]` for nothing.
     pub collision_shape: Option<Shape>,
+    /// Its own state properties, each with its values in order, in place of
+    /// the template's (NeoForge's `createBlockStateDefinition`): every state
+    /// behaves as the template's default state does.
+    pub states: Option<std::collections::BTreeMap<String, Vec<String>>>,
+    /// The values of `states` its default state has; left out, the first.
+    pub default_state: Option<std::collections::BTreeMap<String, String>>,
     /// Also add a block item with the same id.
     pub item: bool,
 }
@@ -402,6 +413,8 @@ impl Content {
                 properties: file.properties,
                 shape: file.shape,
                 collision_shape: file.collision_shape,
+                states: file.states,
+                default_state: file.default_state,
                 item: file.item,
             });
         }
@@ -463,6 +476,42 @@ fn check_block(file: &BlockFile) -> Result<(), String> {
     }
     for shape in [&file.shape, &file.collision_shape].into_iter().flatten() {
         shape.check()?;
+    }
+    let word = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 32
+            && s.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    };
+    if let Some(states) = &file.states {
+        let mut count = 1usize;
+        for (name, values) in states {
+            let unique: BTreeSet<&String> = values.iter().collect();
+            if !word(name) || values.is_empty() || !values.iter().all(|v| word(v)) {
+                return Err(format!(
+                    "states: {name:?} is a property of [a-z0-9_] with values of [a-z0-9_]"
+                ));
+            }
+            if unique.len() != values.len() {
+                return Err(format!("states: {name} has a value twice"));
+            }
+            count = count.saturating_mul(values.len());
+        }
+        if states.is_empty() || states.len() > 16 || count > MAX_BLOCK_STATES {
+            return Err(format!(
+                "states: 1 to 16 properties making at most {MAX_BLOCK_STATES} states"
+            ));
+        }
+    }
+    if let Some(default) = &file.default_state {
+        let states = file.states.as_ref().ok_or("default_state needs states")?;
+        for (name, value) in default {
+            if !states.get(name).is_some_and(|v| v.contains(value)) {
+                return Err(format!(
+                    "default_state: {name}={value} is not one of states"
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -555,6 +604,8 @@ capabilities = ["registries"]
                 },
                 shape: None,
                 collision_shape: None,
+                states: None,
+                default_state: None,
                 item: true,
             }]
         );

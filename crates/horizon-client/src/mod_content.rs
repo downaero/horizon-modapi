@@ -234,6 +234,115 @@ struct NewBlock<'a> {
     /// template's order; `None` keeps the template's.
     outline: Vec<Option<VoxelShape>>,
     collision: Vec<Option<VoxelShape>>,
+    /// The template state each of its states copies the rows of, in order.
+    sources: Vec<u32>,
+    /// Its own properties (`states` in its JSON), or `None` for the
+    /// template's states.
+    own: Option<OwnStates>,
+    /// The template's default state's properties (for a blockstate of its
+    /// own properties' block that names none).
+    template_default: Vec<(String, String)>,
+}
+
+/// A block's own properties: each with its values in order, every state's
+/// values in `StateDefinition` order (properties by name, the last one
+/// varying fastest), and which of them is the default.
+struct OwnStates {
+    properties: Vec<(String, Vec<String>)>,
+    states: Vec<Vec<(String, String)>>,
+    default: usize,
+}
+
+impl OwnStates {
+    fn new(decl: &Block) -> Option<Self> {
+        let declared = decl.states.as_ref()?;
+        let properties: Vec<(String, Vec<String>)> = declared
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let mut states: Vec<Vec<(String, String)>> = vec![Vec::new()];
+        for (name, values) in &properties {
+            states = states
+                .into_iter()
+                .flat_map(|s| {
+                    values.iter().map(move |v| {
+                        let mut s = s.clone();
+                        s.push((name.clone(), v.clone()));
+                        s
+                    })
+                })
+                .collect();
+        }
+        let wanted: Vec<(String, String)> = properties
+            .iter()
+            .map(|(name, values)| {
+                let chosen = decl.default_state.as_ref().and_then(|d| d.get(name));
+                (name.clone(), chosen.unwrap_or(&values[0]).clone())
+            })
+            .collect();
+        let default = states.iter().position(|s| *s == wanted).unwrap_or(0);
+        Some(Self {
+            properties,
+            states,
+            default,
+        })
+    }
+    /// `Block{mymod:x}[a=1,b=2]`, as `facts.json` writes a state.
+    fn text(&self, id: &str, i: usize) -> String {
+        let props: Vec<String> = self.states[i]
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
+        format!("Block{{{id}}}[{}]", props.join(","))
+    }
+    fn json(&self, i: usize) -> J {
+        J::Obj(
+            self.states[i]
+                .iter()
+                .map(|(k, v)| (k.clone(), J::Str(v.clone())))
+                .collect(),
+        )
+    }
+}
+
+/// A blockstate file that draws every state as `blockstate` draws the state
+/// with `default` properties: its variant whose key matches them, or the
+/// parts of its multipart that apply to them with no condition.
+fn default_variant(blockstate: &[u8], default: &[(String, String)]) -> Option<serde_json::Value> {
+    use serde_json::{Value, json};
+    let doc: Value = serde_json::from_slice(blockstate).ok()?;
+    let matches = |key: &str| {
+        key.split(',')
+            .filter(|c| !c.is_empty())
+            .filter_map(|c| c.split_once('='))
+            .all(|(k, v)| default.iter().any(|(dk, dv)| dk == k && dv == v))
+    };
+    if let Some(variants) = doc.get("variants").and_then(Value::as_object) {
+        let (_, variant) = variants.iter().find(|(k, _)| matches(k))?;
+        return Some(json!({ "variants": { "": variant } }));
+    }
+    let parts = doc.get("multipart")?.as_array()?;
+    let unconditional: Vec<Value> = parts
+        .iter()
+        .filter(|p| p.get("when").is_none())
+        .cloned()
+        .collect();
+    let chosen = if unconditional.is_empty() {
+        parts.first()?.get("apply")?.clone()
+    } else {
+        return Some(json!({ "multipart": unconditional }));
+    };
+    Some(json!({ "variants": { "": chosen } }))
+}
+
+/// Every whole number in `row` set to `id`: a state that rotates and
+/// mirrors to itself (`structure-blocks.json`).
+fn ids_to(row: &mut J, id: u32) {
+    match row {
+        J::Num(n) if n.is_u64() => *row = J::Num(id.into()),
+        J::Arr(a) => a.iter_mut().for_each(|v| ids_to(v, id)),
+        _ => {}
+    }
 }
 
 /// A declared shape's boxes, in pixels, as one shape: `Shapes.or` of each
@@ -343,8 +452,19 @@ impl<'a> Plan<'a> {
                 })?;
                 let mut rename = Rename::new(&decl.template, &decl.id);
                 rename.first = next;
-                next += states.len() as u32;
-                rename.states = states;
+                let template_default = defaults
+                    .get(&decl.template)
+                    .copied()
+                    .unwrap_or(states.start);
+                // Its own properties: every state copies the template's
+                // default, and no template id maps onto its states.
+                let own = OwnStates::new(decl);
+                let sources: Vec<u32> = match &own {
+                    Some(o) => vec![template_default; o.states.len()],
+                    None => states.clone().collect(),
+                };
+                next += sources.len() as u32;
+                rename.states = if own.is_some() { 0..0 } else { states };
                 if let Some(s) = &decl.properties.sounds {
                     if !defaults.contains_key(s) {
                         return Err(format!("{}: sounds {s} is not a block", decl.id).into());
@@ -353,8 +473,11 @@ impl<'a> Plan<'a> {
                 }
                 let mut outline = Vec::new();
                 let mut collision = Vec::new();
-                for id in rename.states.clone() {
-                    let props = state_properties(&state_rows[id as usize]);
+                for (i, id) in sources.iter().enumerate() {
+                    let props = match &own {
+                        Some(o) => o.states[i].clone(),
+                        None => state_properties(&state_rows[*id as usize]),
+                    };
                     let props: Vec<(&str, &str)> = props
                         .iter()
                         .map(|(k, v)| (k.as_str(), v.as_str()))
@@ -378,6 +501,9 @@ impl<'a> Plan<'a> {
                     item: None,
                     outline,
                     collision,
+                    sources,
+                    own,
+                    template_default: state_properties(&state_rows[template_default as usize]),
                 });
             }
         }
@@ -386,7 +512,7 @@ impl<'a> Plan<'a> {
             for b in &blocks {
                 *by_mod
                     .entry(&b.decl.id[..b.decl.id.find(':').unwrap_or(0)])
-                    .or_default() += b.rename.states.len() as u32;
+                    .or_default() += b.sources.len() as u32;
             }
             let list: Vec<String> = by_mod.iter().map(|(m, n)| format!("{m} {n}")).collect();
             return Err(format!(
@@ -410,7 +536,7 @@ impl<'a> Plan<'a> {
         }
         let mut items = Vec::new();
         for b in &mut blocks {
-            let row = &rows[b.rename.states.start as usize];
+            let row = &rows[b.sources[0] as usize];
             b.item = match row.get("item") {
                 Some(J::Str(i)) if i != "minecraft:air" => Some(i.clone()),
                 _ => None,
@@ -465,10 +591,13 @@ impl<'a> Plan<'a> {
         }
         for b in &self.blocks {
             let renames = self.renames(b);
-            for (i, id) in b.rename.states.clone().enumerate() {
-                let mut row = list[id as usize].clone();
+            for (i, id) in b.sources.iter().enumerate() {
+                let mut row = list[*id as usize].clone();
                 for r in &renames {
                     row.rename(r, ids);
+                }
+                if ids && b.own.is_some() {
+                    ids_to(&mut row, b.rename.first + i as u32);
                 }
                 if gameplay {
                     row.set("id", J::Num((b.rename.first + i as u32).into()));
@@ -590,10 +719,34 @@ impl<'a> Plan<'a> {
         match name {
             "facts.json" => {
                 states(doc, "states", false, false)?;
+                // Its own properties' states say so: the text form and the
+                // properties the registry reads.
+                if let Some(J::Arr(rows)) = doc.at("states") {
+                    for b in &self.blocks {
+                        let Some(own) = &b.own else { continue };
+                        for i in 0..own.states.len() {
+                            let Some(J::Arr(row)) = rows.get_mut(b.rename.first as usize + i)
+                            else {
+                                continue;
+                            };
+                            if let Some(text) = row.get_mut(3) {
+                                *text = J::Str(own.text(&b.decl.id, i));
+                            }
+                            if let Some(state) = row.get_mut(4) {
+                                state.set("properties", own.json(i));
+                            }
+                        }
+                    }
+                }
                 let defaults = doc.at("defaults").ok_or("no defaults")?;
                 for b in &self.blocks {
-                    let default = self.defaults[&b.decl.template];
-                    let id = b.rename.id(default).ok_or("a default outside its block")?;
+                    let id = match &b.own {
+                        Some(own) => b.rename.first + own.default as u32,
+                        None => {
+                            let default = self.defaults[&b.decl.template];
+                            b.rename.id(default).ok_or("a default outside its block")?
+                        }
+                    };
                     defaults.set(&b.decl.id, J::Num(id.into()));
                 }
             }
@@ -624,10 +777,44 @@ impl<'a> Plan<'a> {
                     }
                 }
             }
-            "model-states.json"
-            | "landing-definitions.json"
-            | "worldgen/blocks/survival-rules.json" => self.names(doc, false),
-            "render-definitions.json" => self.names(doc, true),
+            "model-states.json" => {
+                self.names(doc, false);
+                // Its own properties' schema, and its states in order.
+                for b in &self.blocks {
+                    let Some(own) = &b.own else { continue };
+                    let schema = own
+                        .properties
+                        .iter()
+                        .map(|(name, values)| {
+                            let mut sorted = values.clone();
+                            sorted.sort();
+                            let named = J::Arr(sorted.into_iter().map(J::Str).collect());
+                            (name.clone(), J::Obj(vec![("named".into(), named)]))
+                        })
+                        .collect();
+                    let states = (0..own.states.len()).map(|i| own.json(i)).collect();
+                    let entry = J::Obj(vec![
+                        ("schema".into(), J::Obj(schema)),
+                        ("states".into(), J::Arr(states)),
+                    ]);
+                    doc.set(&b.decl.id, entry);
+                }
+            }
+            "landing-definitions.json" | "worldgen/blocks/survival-rules.json" => {
+                self.names(doc, false)
+            }
+            "render-definitions.json" => {
+                self.names(doc, true);
+                for b in &self.blocks {
+                    let (Some(own), Some(entry)) = (&b.own, doc.get_mut(&b.decl.id)) else {
+                        continue;
+                    };
+                    let first = b.rename.first;
+                    entry.set("default", J::Num((first + own.default as u32).into()));
+                    let ids = (0..own.states.len() as u32).map(|i| J::Num((first + i).into()));
+                    entry.set("states", J::Arr(ids.collect()));
+                }
+            }
             "worldgen/blocks/survival-extra-definitions.json" => {
                 if let Some(map) = doc.at("ignition_odds") {
                     self.names(map, false);
@@ -666,7 +853,16 @@ impl<'a> Plan<'a> {
                 }
             }
             "command-registries.json" => {
-                self.names(doc.at("blocks").ok_or("no blocks")?, false);
+                let blocks = doc.at("blocks").ok_or("no blocks")?;
+                self.names(blocks, false);
+                for b in &self.blocks {
+                    let Some(own) = &b.own else { continue };
+                    let properties = own.properties.iter().map(|(name, values)| {
+                        let values = J::Arr(values.iter().cloned().map(J::Str).collect());
+                        J::Arr(vec![J::Str(name.clone()), values])
+                    });
+                    blocks.set(&b.decl.id, J::Arr(properties.collect()));
+                }
                 let new_items = || self.items.iter().map(|i| J::Str(i.rename.to.clone()));
                 let new_blocks = || self.blocks.iter().map(|b| J::Str(b.decl.id.clone()));
                 let Some(J::Arr(items)) = doc.at("items") else {
@@ -687,7 +883,7 @@ impl<'a> Plan<'a> {
                 for key in ["rotate", "mirror", "full_block"] {
                     states(doc, key, true, false)?;
                 }
-                let added: usize = self.blocks.iter().map(|b| b.rename.states.len()).sum();
+                let added: usize = self.blocks.iter().map(|b| b.sources.len()).sum();
                 doc.set("states", J::Num(((self.states + added) as u64).into()));
             }
             _ => return Err("no rule for this table".into()),
@@ -728,10 +924,22 @@ impl<'a> Plan<'a> {
             match (key.to_string_lossy().as_str(), value) {
                 ("states", Tag::List(list)) if list.len() == self.states => {
                     for b in &self.blocks {
-                        for id in b.rename.states.clone() {
-                            let mut state = list[id as usize].clone();
+                        for (i, id) in b.sources.iter().enumerate() {
+                            let mut state = list[*id as usize].clone();
                             if let Some(slot) = state.get_mut("id") {
                                 *slot = Tag::String(b.decl.id.as_str().into());
+                            }
+                            // Its own properties: `{id, properties}` as the registry has it.
+                            if let Some(own) = &b.own {
+                                let mut properties = nbt::Compound::new();
+                                for (k, v) in &own.states[i] {
+                                    properties
+                                        .insert(k.as_str().into(), Tag::String(v.as_str().into()));
+                                }
+                                let mut entry = nbt::Compound::new();
+                                entry.insert("id".into(), Tag::String(b.decl.id.as_str().into()));
+                                entry.insert("properties".into(), Tag::Compound(properties));
+                                state = Tag::Compound(entry);
                             }
                             list.push(state);
                         }
@@ -739,9 +947,8 @@ impl<'a> Plan<'a> {
                 }
                 ("cached_shapes", Tag::IntArray(a)) if a.len() == self.states => {
                     for (n, b) in self.blocks.iter().enumerate() {
-                        let r = &b.rename.states;
-                        for (i, id) in r.clone().enumerate() {
-                            let index = own.get(n).and_then(|o| o[i]).unwrap_or(a[id as usize]);
+                        for (i, id) in b.sources.iter().enumerate() {
+                            let index = own.get(n).and_then(|o| o[i]).unwrap_or(a[*id as usize]);
                             a.push(index);
                         }
                     }
@@ -1341,7 +1548,16 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
             }
             let template = block.template.trim_start_matches("minecraft:");
             let vanilla = base.join(format!("assets/minecraft/blockstates/{template}.json"));
-            overlay.write(&own, &fs::read(&vanilla)?)?;
+            let bytes = fs::read(&vanilla)?;
+            // A block of its own properties looks like its template's default
+            // state in every state: the template's variants are over others.
+            let planned = plan.blocks.iter().find(|b| b.decl.id == block.id);
+            let bytes = match planned.filter(|b| b.own.is_some()) {
+                Some(b) => default_variant(&bytes, &b.template_default)
+                    .map_or(bytes, |v| serde_json::to_vec(&v).unwrap_or_default()),
+                None => bytes,
+            };
+            overlay.write(&own, &bytes)?;
         }
     }
     // Likewise a block's item, or an item, without its own item model draws

@@ -1,0 +1,5 @@
+{ "template": "minecraft:iron_block",
+  "properties": { "hardness": 2.0, "sounds": "minecraft:iron_block" },
+  "states": { "axis": ["x", "y", "z"], "powered": ["false", "true"] },
+  "default_state": { "axis": "y" },
+  "item": true }

@@ -360,6 +360,85 @@ fn a_declared_shape_reaches_outline_and_collision() {
     fs::remove_dir_all(&scratch).unwrap();
 }
 
+/// A block with properties of its own: their every state, in vanilla's
+/// order, behaving as the template's default does, loading in every table,
+/// with a model and its own shape by those properties.
+#[test]
+#[ignore = "full content root: CI and pr_ready run it"]
+fn a_block_of_its_own_states_loads_in_every_table() {
+    let Some(base) = prepared() else {
+        return;
+    };
+    let scratch =
+        std::env::temp_dir().join(format!("horizon-mod-own-states-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let m = folder_mod(
+        &scratch.join("clutches"),
+        &[
+            ("horizon-mod.toml", &manifest("clutches", "")),
+            (
+                "data/clutches/horizon/block/clutch.json",
+                r#"{"template": "minecraft:iron_block",
+                    "states": {"axis": ["x", "y", "z"], "powered": ["false", "true"]},
+                    "default_state": {"axis": "y"},
+                    "shape": {"axis=x": [[0, 4, 4, 16, 12, 12]]}}"#,
+            ),
+        ],
+    );
+    let root = resource_root(&base, std::slice::from_ref(&m), &scratch.join("cache")).unwrap();
+    let assets = Assets::load(&root).unwrap();
+    let registry = assets.registry;
+    let n = Assets::load(&base).unwrap().registry.len() as u32;
+    assert_eq!(registry.len() as u32, n + 6);
+    // Properties by name, the last varying fastest; the declared default.
+    let state = |i: u32| registry.state(BlockStateId(n + i)).unwrap();
+    assert_eq!(state(0).name, "clutches:clutch");
+    let props = |i: u32| {
+        let s = state(i);
+        (
+            s.properties["axis"].clone(),
+            s.properties["powered"].clone(),
+        )
+    };
+    assert_eq!(props(0), ("x".into(), "false".into()));
+    assert_eq!(props(1), ("x".into(), "true".into()));
+    assert_eq!(props(5), ("z".into(), "true".into()));
+    assert_eq!(
+        registry.default_state("clutches:clutch"),
+        Some(BlockStateId(n + 2))
+    );
+    let mut wanted = horizon_world::chunk::BlockState {
+        name: "clutches:clutch".into(),
+        properties: Default::default(),
+    };
+    wanted.properties.insert("axis".into(), "z".into());
+    wanted.properties.insert("powered".into(), "false".into());
+    assert_eq!(registry.resolve(&wanted).ok(), Some(BlockStateId(n + 4)));
+    // Every loader takes it: behaviours build their state table over it.
+    let facts = BlockFacts::load(&root, registry).unwrap();
+    horizon_world::level::Behaviours::load(registry, &root).unwrap();
+    crate::collisions::load(&root, registry).unwrap();
+    crate::light::LightTables::load(&root, registry, &facts).unwrap();
+    horizon_world::worldgen::generator::GeneratorData::load(&root.join("worldgen"), registry)
+        .unwrap();
+    // Each behaves as an iron block, its own shape where it gives one.
+    let iron = facts.get(registry.default_state("minecraft:iron_block").unwrap());
+    let x = facts.get(BlockStateId(n));
+    assert_eq!(x.hardness, iron.hardness);
+    assert_eq!(&*x.outline, [[0.0, 0.25, 0.25, 1.0, 0.75, 0.75]]);
+    assert_eq!(facts.get(BlockStateId(n + 2)).outline, iron.outline);
+    // A model for every state: the template's default variant.
+    let render = crate::assets::RenderAssets::load(&root, &assets).unwrap();
+    for i in 0..6 {
+        let models = render
+            .model_catalog
+            .collect_seeded(BlockStateId(n + i), 0)
+            .unwrap();
+        assert!(!models.is_empty(), "state {i} has no model");
+    }
+    fs::remove_dir_all(&scratch).unwrap();
+}
+
 #[test]
 fn refuses_unknown_templates_and_vanilla_ids() {
     let Some(base) = prepared() else {
