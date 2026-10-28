@@ -3,8 +3,11 @@
 //! the server ticks it and saves the bytes with the world. A gear (an iron
 //! ingot, capability `entities`) floats above each counter placed.
 use horizon_mod_sdk::{
+    block::{self, Block, BlockEntity, BlockHitResult, InteractionResult},
     contraption::{Contraption, ROTATION_STEP},
-    export_server_mod, player_ops,
+    export_server_mod,
+    level::{BlockState, Level},
+    player_ops,
     server::{
         BlockPos, BlockTarget, Player, Pos, Registration, ServerMod, attachments, block_entities,
         containers, effects, entities, entity_types, items, menus, net, peers, players,
@@ -235,21 +238,85 @@ struct Gears {
     drafts: Vec<(String, String)>,
     /// The players who opened a crate's screen, fed its progress bar.
     viewers: Vec<String>,
-    /// Ticks the drills have seen.
-    drill_ticks: u32,
     /// Each mill turning: its position, its wheel and the wheel's turn.
     mills: Vec<([i32; 3], Contraption, f32)>,
 }
 
+/// A drill's block entity: the ticks since it last mined.
+struct Drill {
+    ticks: u8,
+}
+
+impl BlockEntity for Drill {
+    fn new(_pos: BlockPos, _state: &BlockState) -> Self {
+        Self { ticks: 0 }
+    }
+    fn load_additional(&mut self, data: &[u8]) {
+        self.ticks = data.first().copied().unwrap_or(0);
+    }
+    fn save_additional(&self, out: &mut Vec<u8>) {
+        out.push(self.ticks);
+    }
+    /// Once a second it mines the block under it as an iron pickaxe would,
+    /// the drops into the inventory above it (`world.break-block`).
+    fn tick(&mut self, level: &Level, pos: BlockPos, _state: &BlockState) {
+        self.ticks += 1;
+        if self.ticks < 20 {
+            return;
+        }
+        self.ticks = 0;
+        let under = pos.below();
+        let _ = world::break_block(
+            level.dimension(),
+            under.x,
+            under.y,
+            under.z,
+            Some("minecraft:iron_pickaxe"),
+            &[],
+            Some((pos.x, pos.y + 1, pos.z)),
+        );
+    }
+}
+
+/// Uses cobblestone on the block above as a player would (`world.use-item`):
+/// a lever there flips, else cobblestone goes on top. It tells itself
+/// through `peers`, heard next tick.
+struct Deployer;
+
+impl Block for Deployer {
+    fn use_without_item(
+        &self,
+        _state: &BlockState,
+        level: &Level,
+        pos: BlockPos,
+        _player: &str,
+        _hit: &BlockHitResult,
+    ) -> InteractionResult {
+        let above = pos.above();
+        let _ = world::use_item(
+            level.dimension(),
+            above.x,
+            above.y,
+            above.z,
+            1,
+            "minecraft:cobblestone",
+        );
+        let _ = peers::send("gears", b"deployed");
+        InteractionResult::Success
+    }
+}
+
 impl ServerMod for Gears {
     fn init() -> Result<(Self, Registration), String> {
+        // The drill and the deployer as types of their own (`block`).
+        block::register_entity::<Drill>(DRILL)?;
+        block::register(DEPLOYER, Deployer)?;
         let this = Self {
             ticks: Vec::new(),
             gears: Vec::new(),
             spin: 0.0,
             press: Vec::new(),
             lifts: Vec::new(),
-            drill_ticks: 0,
             viewers: Vec::new(),
             drafts: Vec::new(),
             mills: Vec::new(),
@@ -273,7 +340,6 @@ impl ServerMod for Gears {
             || state.starts_with(GAUGE)
             || state.starts_with(LIFT)
             || state.starts_with(MILL)
-            || state.starts_with(DRILL)
         {
             // Data under it, so the server ticks it.
             let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &[0]);
@@ -532,28 +598,10 @@ impl ServerMod for Gears {
             GAUGE.into(),
             LIFT.into(),
             MILL.into(),
-            DRILL.into(),
         ]
     }
 
     fn block_tick(&mut self, dimension: &str, pos: Pos, state: &str) {
-        if state.starts_with(DRILL) {
-            // Once a second it mines the block under it as an iron pickaxe
-            // would, the drops into the inventory above it (`world.break-block`).
-            self.drill_ticks = self.drill_ticks.wrapping_add(1);
-            if self.drill_ticks.is_multiple_of(20) {
-                let _ = world::break_block(
-                    dimension,
-                    pos.x,
-                    pos.y - 1,
-                    pos.z,
-                    Some("minecraft:iron_pickaxe"),
-                    &[],
-                    Some((pos.x, pos.y + 1, pos.z)),
-                );
-            }
-            return;
-        }
         if state.starts_with(MILL) {
             // A mill turns its wheel 3 degrees a tick about x.
             let at = [pos.x, pos.y, pos.z];
@@ -723,21 +771,6 @@ impl ServerMod for Gears {
     }
 
     fn block_used(&mut self, player: &str, dimension: &str, pos: Pos, state: &str) -> bool {
-        if state.starts_with(DEPLOYER) {
-            // Uses cobblestone on the block above as a player would
-            // (`world.use-item`): a lever there flips, else cobblestone goes
-            // on top. It tells itself through `peers`, heard next tick.
-            let _ = world::use_item(
-                dimension,
-                pos.x,
-                pos.y + 1,
-                pos.z,
-                1,
-                "minecraft:cobblestone",
-            );
-            let _ = peers::send("gears", b"deployed");
-            return true;
-        }
         if state.starts_with(MILL) {
             // The wheel above (one block across x, 3 x 3 in y and z) turns,
             // or is set down again as blocks.

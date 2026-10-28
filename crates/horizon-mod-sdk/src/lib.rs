@@ -189,8 +189,12 @@ macro_rules! export_mod {
 /// type implementing [`ServerMod`](server::ServerMod), exported with
 /// [`export_server_mod!`]. It runs where the world is simulated, and reads
 /// and messages the players with capability `players`.
+/// A server mod's blocks and block entities as types.
+pub mod block;
 /// Moving structures: blocks taken out of the world, moved, put back.
 pub mod contraption;
+/// A dimension's blocks, signals and effects, and block positions and states.
+pub mod level;
 /// Networks of connected blocks: shafts, pipes, cables.
 pub mod network;
 /// What a server mod does to players through capability `console`.
@@ -518,8 +522,10 @@ macro_rules! export_server_mod {
             struct Export;
             impl $crate::server::__Guest for Export {
                 fn init() -> Result<Registration, String> {
-                    let (m, registration) = <$t as ServerMod>::init()?;
+                    let (m, mut registration) = <$t as ServerMod>::init()?;
                     STATE.with(|s| *s.borrow_mut() = Some(m));
+                    // Registered blocks hear their placing and breaking.
+                    registration.blocks |= $crate::block::__any();
                     Ok(registration)
                 }
                 fn tick(tick: u64) {
@@ -546,24 +552,30 @@ macro_rules! export_server_mod {
                     out
                 }
                 fn block_broken(player: Player, pos: BlockPos, state: String) {
-                    with(|m| m.block_broken(&player, pos, &state))
+                    if !$crate::block::__broken(&player, pos, &state) {
+                        with(|m| m.block_broken(&player, pos, &state))
+                    }
                 }
                 fn block_placed(player: Player, pos: BlockPos, state: String) {
-                    with(|m| m.block_placed(&player, pos, &state))
+                    if !$crate::block::__placed(&player, pos, &state) {
+                        with(|m| m.block_placed(&player, pos, &state))
+                    }
                 }
             }
             impl $crate::server::__BlockGuest for Export {
                 fn ticking_blocks() -> Vec<String> {
-                    let mut out = Vec::new();
+                    let mut out = $crate::block::__ticking();
                     STATE.with(|s| {
                         if let Some(m) = s.borrow().as_ref() {
-                            out = m.ticking_blocks()
+                            out.extend(m.ticking_blocks())
                         }
                     });
                     out
                 }
                 fn block_tick(dimension: String, pos: $crate::server::Pos, state: String) {
-                    with(|m| m.block_tick(&dimension, pos, &state))
+                    if !$crate::block::__tick(&dimension, pos, &state) {
+                        with(|m| m.block_tick(&dimension, pos, &state))
+                    }
                 }
                 fn block_used(
                     player: String,
@@ -571,6 +583,9 @@ macro_rules! export_server_mod {
                     pos: $crate::server::Pos,
                     state: String,
                 ) -> bool {
+                    if $crate::block::__used(&player, &dimension, pos, &state) {
+                        return true;
+                    }
                     let mut out = false;
                     with(|m| out = m.block_used(&player, &dimension, pos, &state));
                     out
@@ -615,6 +630,9 @@ macro_rules! export_server_mod {
                     sneaking: bool,
                     target: Option<$crate::server::BlockTarget>,
                 ) -> bool {
+                    if $crate::block::__item_used(&player, &item, target.as_ref()) {
+                        return true;
+                    }
                     let mut out = false;
                     with(|m| out = m.item_used(&player, &item, sneaking, target.as_ref()));
                     out
@@ -632,19 +650,17 @@ macro_rules! export_server_mod {
                     from_z: i32,
                     from_state: String,
                 ) {
-                    with(|m| {
-                        m.block_neighbor_changed(
-                            &dimension,
-                            $crate::server::Pos { x, y, z },
-                            &state,
-                            $crate::server::Pos {
-                                x: from_x,
-                                y: from_y,
-                                z: from_z,
-                            },
-                            &from_state,
-                        )
-                    })
+                    let pos = $crate::server::Pos { x, y, z };
+                    let from = $crate::server::Pos {
+                        x: from_x,
+                        y: from_y,
+                        z: from_z,
+                    };
+                    if $crate::block::__neighbor_changed(&dimension, pos, &state, from, &from_state)
+                    {
+                        return;
+                    }
+                    with(|m| m.block_neighbor_changed(&dimension, pos, &state, from, &from_state))
                 }
             }
             impl $crate::server::__NetGuest for Export {

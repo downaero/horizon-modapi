@@ -695,6 +695,27 @@ by a cog) from each source to each member and marks a conflict where two disagre
 `members(start, limit, connects)` lists one pipe or cable network. A mod keeps what flows
 (stress, fluid amounts) in `block-entities` data and shows it with entities and effects.
 
+### Blocks and block entities as types
+
+The SDK gives a server mod's blocks the shape NeoForge's have, over the interfaces above and with
+no change to them. `horizon_mod_sdk::level` has `BlockPos` (`above`, `relative(direction, n)`, ...),
+`Direction`, `Axis`, `BlockState` (`parse("mymod:gear[axis=x]")`, `get_value`, `set_value`,
+`get_axis`) and `Level`, one dimension: `get_block_state`, `set_block`, `remove_block`,
+`destroy_block`, `get_biome`, `get_best_neighbor_signal`, `play_sound`, `level_event`, `players`,
+`get_block_entity` and `set_block_entity`, each needing the capability of the interface it calls.
+`horizon_mod_sdk::block` has the `Block` trait (`use_without_item`, `use_item_on`, `set_placed_by`,
+`player_will_destroy`, `neighbor_changed`, returning `InteractionResult`) and `BlockEntity` (`new`,
+`load_additional`, `save_additional`, `tick`). A mod registers them at `init`:
+`block::register("mymod:press", Press)` and `block::register_entity::<PressData>("mymod:press")`.
+`export_server_mod!` then calls them for those blocks before the mod's own hooks, which hear every
+other block and the clicks a block passes (`InteractionResult::Pass`).
+
+A block entity is made when a player places its block and kept as the bytes `block-entities` holds
+there, so it is ticked, saved and told of neighbour changes as those are; after its tick it is saved
+again when its bytes changed. A block the mod sets itself gets its entity from `set_block_entity` in
+a later call, once the block stands. The gears example's `gears:drill` (a `BlockEntity` counting
+its ticks) and `gears:deployer` (a `Block`) are written this way.
+
 ### Players: inventories and the console
 
 `players.inventory(player)` (API level 33) is a player's 41 slots as of the tick's start (0 to 8 the
