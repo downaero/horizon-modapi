@@ -1115,11 +1115,11 @@ mod run {
                                 continue;
                             }
                             if let Some(d) = dimension.strip_prefix(super::VISUAL_MARK) {
-                                if let Some((_, _, start, parts)) =
+                                if let Some((_, _, start, set_at, parts)) =
                                     horizon_mods::visual::decode(&data)
                                 {
                                     let key = (id.to_owned(), d.to_owned(), pos);
-                                    self.mods.visuals.insert(key, (start, parts));
+                                    self.mods.visuals.insert(key, (start, set_at, parts));
                                 }
                                 continue;
                             }
@@ -1190,23 +1190,33 @@ mod run {
         ) {
             // In phase, the angles are those at game time 0: the parts turn
             // from there, whenever they were set.
-            let start = if phased { 0 } else { self.world.game_time };
+            let set_at = self.world.game_time;
+            let start = if phased { 0 } else { set_at };
             let key = (mod_id, dimension, pos);
+            // Parts set again as they are change nothing, and keep the angle
+            // and the motion they started from.
             let changed = if parts.is_empty() {
                 self.mods.visuals.remove(&key).is_some()
+            } else if self
+                .mods
+                .visuals
+                .get(&key)
+                .is_some_and(|(s, _, old)| *old == parts && (*s == 0) == phased)
+            {
+                false
             } else {
                 self.mods
                     .visuals
-                    .insert(key.clone(), (start, parts.clone()))
-                    .is_none_or(|old| old.1 != parts || (phased && old.0 != start))
+                    .insert(key.clone(), (start, set_at, parts.clone()));
+                true
             };
             if !changed {
                 return;
             }
             self.mods.block_data_dirty = true;
-            self.send_mod_visual(host, &key, start, &parts);
+            self.send_mod_visual(host, &key, start, set_at, &parts);
             if self.options.execution_role.is_client() && self.remote.is_none() {
-                let bytes = horizon_mods::visual::encode(&key.0, pos, start, &parts);
+                let bytes = horizon_mods::visual::encode(&key.0, pos, start, set_at, &parts);
                 if key.1 == self.dim.id() {
                     self.remote_mod_visual(&bytes);
                 }
@@ -1289,6 +1299,7 @@ mod run {
             host: Option<&mut LanHost>,
             key: &(String, String, [i32; 3]),
             start: i64,
+            set_at: i64,
             parts: &[horizon_mods::visual::VisualPart],
         ) {
             let hub = match host {
@@ -1298,7 +1309,7 @@ mod run {
             let Some(hub) = hub else { return };
             let packet = C::CustomPayload(CustomPayload {
                 channel: super::VISUAL_CHANNEL.into(),
-                data: horizon_mods::visual::encode(&key.0, key.2, start, parts),
+                data: horizon_mods::visual::encode(&key.0, key.2, start, set_at, parts),
             });
             let id = format!("{}{}", key.0, super::VISUAL_MARK);
             hub.hub
@@ -1371,8 +1382,8 @@ mod run {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
-            for (key, (start, parts)) in visuals {
-                self.send_mod_visual(None, &key, start, &parts);
+            for (key, (start, set_at, parts)) in visuals {
+                self.send_mod_visual(None, &key, start, set_at, &parts);
             }
         }
 
@@ -1398,8 +1409,8 @@ mod run {
                 .mods
                 .visuals
                 .iter()
-                .map(|((id, dimension, pos), (start, parts))| {
-                    let bytes = horizon_mods::visual::encode(id, *pos, *start, parts);
+                .map(|((id, dimension, pos), (start, set_at, parts))| {
+                    let bytes = horizon_mods::visual::encode(id, *pos, *start, *set_at, parts);
                     (
                         id.as_str(),
                         format!("{}{dimension}", super::VISUAL_MARK),
@@ -3133,7 +3144,8 @@ mod run {
         /// Parts a server mod draws at a block, from the server this window
         /// plays on (or its own world's server mods, in-frame).
         pub(in crate::game) fn remote_mod_visual(&mut self, data: &[u8]) {
-            let Some((mod_id, pos, start, parts)) = horizon_mods::visual::decode(data) else {
+            let Some((mod_id, pos, start, set_at, parts)) = horizon_mods::visual::decode(data)
+            else {
                 return;
             };
             let registry = self.pack.assets.registry;
@@ -3148,7 +3160,11 @@ mod run {
             if parts.is_empty() {
                 self.mods.client_visuals.remove(&(mod_id, pos));
             } else {
-                let visual = crate::game::mods::ClientVisual { start, parts };
+                let visual = crate::game::mods::ClientVisual {
+                    start,
+                    set_at,
+                    parts,
+                };
                 self.mods.client_visuals.insert((mod_id, pos), visual);
             }
         }
@@ -3256,6 +3272,28 @@ mod run {
             }
         }
 
+        /// The light parts are drawn in at a block: the brightest of its own
+        /// and its neighbours', since an opaque block (a press, a gearbox)
+        /// has none of its own and what turns inside it is lit by what
+        /// surrounds it.
+        fn mod_visual_light(&self, pos: [i32; 3]) -> u8 {
+            const AROUND: [[i32; 3]; 7] = [
+                [0, 0, 0],
+                [1, 0, 0],
+                [-1, 0, 0],
+                [0, 1, 0],
+                [0, -1, 0],
+                [0, 0, 1],
+                [0, 0, -1],
+            ];
+            AROUND.iter().fold(0, |lit, d| {
+                let l = self
+                    .world
+                    .light(pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]);
+                (lit & 0xF0).max(l & 0xF0) | (lit & 15).max(l & 15)
+            })
+        }
+
         /// Draws the parts server mods set at their blocks, each turned by
         /// the ticks since it was set and this frame's fraction of one.
         pub(in crate::game) fn mod_visual_geometry(
@@ -3276,18 +3314,20 @@ mod run {
                 {
                     continue;
                 }
-                let light = self.world.light(pos[0], pos[1], pos[2]);
+                let light = self.mod_visual_light(*pos);
                 let packed = (u32::from(light >> 4) * 16) | ((u32::from(light & 15) * 16) << 8);
                 let ticks = (self.world.game_time - v.start) as f64 + alpha;
+                let moved = (self.world.game_time - v.set_at) as f64 + alpha;
                 let seed = horizon_core::random::position_seed(
                     horizon_core::position::BlockPos::new(pos[0], pos[1], pos[2]),
                 );
                 for (state, part) in &v.parts {
                     let axis = [Vec3::X, Vec3::Y, Vec3::Z][usize::from(part.axis.min(2))];
                     let pivot = Vec3::from(part.pivot);
-                    let transform = Mat4::from_translation(o + pivot)
-                        * Mat4::from_axis_angle(axis, part.angle_at(ticks).to_radians())
-                        * Mat4::from_translation(Vec3::from(part.offset) - pivot);
+                    let transform =
+                        Mat4::from_translation(o + pivot + Vec3::from(part.moved_at(moved)))
+                            * Mat4::from_axis_angle(axis, part.angle_at(ticks).to_radians())
+                            * Mat4::from_translation(Vec3::from(part.offset) - pivot);
                     self.block_model_vertices(*state, seed, transform, packed, false, out);
                 }
             }

@@ -582,7 +582,9 @@ pub struct Expect {
     /// none), in order.
     names: Option<Vec<String>>,
     /// Capability `block-entities`: the parts drawn at the mod's blocks after
-    /// the step, by position, each as `"x y z state speed"` (degrees a tick).
+    /// the step, by position, each as `"x y z state speed"` (degrees a tick),
+    /// then `" offset [x, y, z] velocity [x, y, z]"` when it is off its block's
+    /// corner or moving.
     visuals: Option<Vec<String>>,
     /// The mod is turned off during this step, for a reason holding this text.
     /// Without it, a mod that stops fails the test.
@@ -1011,9 +1013,14 @@ impl Step {
                 .visuals
                 .iter()
                 .flat_map(|((x, y, z), parts)| {
-                    parts
-                        .iter()
-                        .map(move |p| format!("{x} {y} {z} {} {}", p.state, p.speed))
+                    parts.iter().map(move |p| {
+                        let mut line = format!("{x} {y} {z} {} {}", p.state, p.speed);
+                        // What moves is shown by where it stands and where it goes.
+                        if p.offset != [0.0; 3] || p.velocity != [0.0; 3] {
+                            line += &format!(" offset {:?} velocity {:?}", p.offset, p.velocity);
+                        }
+                        line
+                    })
                 })
                 .collect();
             same("visuals", want, &got)?;

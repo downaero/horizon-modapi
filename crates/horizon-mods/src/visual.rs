@@ -22,9 +22,17 @@ pub struct VisualPart {
     pub speed: f32,
     /// Its angle, in degrees, at the tick the parts were set.
     pub angle: f32,
+    /// Blocks a tick the whole part moves, from the tick it was set.
+    pub velocity: [f32; 3],
 }
 
 impl VisualPart {
+    /// How far it has moved `ticks` after the tick it was set (a fraction
+    /// between), kept within the 16 blocks a part may reach.
+    pub fn moved_at(&self, ticks: f64) -> [f32; 3] {
+        self.velocity
+            .map(|v| (f64::from(v) * ticks).clamp(-16.0, 16.0) as f32)
+    }
     /// Its angle `ticks` after the tick it was set (a fraction between).
     pub fn angle_at(&self, ticks: f64) -> f32 {
         ((f64::from(self.angle) + f64::from(self.speed) * ticks) % 360.0) as f32
@@ -42,6 +50,13 @@ impl VisualPart {
         if !self.speed.is_finite() || !self.angle.is_finite() || self.speed.abs() > 360.0 {
             return Err("speed is at most 360 degrees a tick, angle a number".into());
         }
+        if !self
+            .velocity
+            .iter()
+            .all(|c| c.is_finite() && c.abs() <= 16.0)
+        {
+            return Err("velocity is at most 16 blocks a tick".into());
+        }
         if self.state.is_empty() || self.state.len() > 256 {
             return Err("a part names a block state".into());
         }
@@ -50,10 +65,18 @@ impl VisualPart {
 }
 
 /// One position's parts for a client: the mod id (u16 length and bytes),
-/// x y z (i32), the tick they were set (i64), then each part's state (u16
-/// length and bytes), axis (u8), pivot, offset, speed and angle (f32),
-/// little-endian. No parts: none drawn there any more.
-pub fn encode(mod_id: &str, pos: [i32; 3], start: i64, parts: &[VisualPart]) -> Vec<u8> {
+/// x y z (i32), the tick their angles are measured from (i64: the tick they
+/// were set, or 0 for parts set in phase) and the tick they were set
+/// (i64), then each part's state (u16 length and bytes), axis (u8), pivot,
+/// offset, speed, angle and velocity (f32), little-endian. No parts: none
+/// drawn there any more.
+pub fn encode(
+    mod_id: &str,
+    pos: [i32; 3],
+    start: i64,
+    set_at: i64,
+    parts: &[VisualPart],
+) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend((mod_id.len() as u16).to_le_bytes());
     out.extend(mod_id.as_bytes());
@@ -61,11 +84,13 @@ pub fn encode(mod_id: &str, pos: [i32; 3], start: i64, parts: &[VisualPart]) -> 
         out.extend(c.to_le_bytes());
     }
     out.extend(start.to_le_bytes());
+    out.extend(set_at.to_le_bytes());
     for p in parts {
         out.extend((p.state.len() as u16).to_le_bytes());
         out.extend(p.state.as_bytes());
         out.push(p.axis);
-        for v in p.pivot.iter().chain(&p.offset).chain([&p.speed, &p.angle]) {
+        let more = [&p.speed, &p.angle];
+        for v in (p.pivot.iter().chain(&p.offset).chain(more)).chain(&p.velocity) {
             out.extend(v.to_le_bytes());
         }
     }
@@ -73,7 +98,7 @@ pub fn encode(mod_id: &str, pos: [i32; 3], start: i64, parts: &[VisualPart]) -> 
 }
 
 /// [`encode`]'s inverse; none for damaged bytes.
-pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, Vec<VisualPart>)> {
+pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPart>)> {
     fn take<'a>(bytes: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
         let (head, rest) = bytes.split_at_checked(n)?;
         *bytes = rest;
@@ -87,6 +112,7 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, Vec<VisualPart>)> 
         *c = i32::from_le_bytes(take(&mut b, 4)?.try_into().ok()?);
     }
     let start = i64::from_le_bytes(take(&mut b, 8)?.try_into().ok()?);
+    let set_at = i64::from_le_bytes(take(&mut b, 8)?.try_into().ok()?);
     let mut parts = Vec::new();
     while !b.is_empty() {
         if parts.len() == PARTS {
@@ -95,7 +121,7 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, Vec<VisualPart>)> 
         let n = u16::from_le_bytes(take(&mut b, 2)?.try_into().ok()?) as usize;
         let state = std::str::from_utf8(take(&mut b, n)?).ok()?.to_owned();
         let axis = take(&mut b, 1)?[0];
-        let mut f = [0f32; 8];
+        let mut f = [0f32; 11];
         for v in &mut f {
             *v = f32::from_le_bytes(take(&mut b, 4)?.try_into().ok()?);
         }
@@ -106,11 +132,12 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, Vec<VisualPart>)> 
             offset: [f[3], f[4], f[5]],
             speed: f[6],
             angle: f[7],
+            velocity: [f[8], f[9], f[10]],
         };
         part.check().ok()?;
         parts.push(part);
     }
-    Some((id, pos, start, parts))
+    Some((id, pos, start, set_at, parts))
 }
 
 #[cfg(test)]
@@ -125,23 +152,33 @@ mod tests {
             offset: [0.0; 3],
             speed,
             angle: 45.0,
+            velocity: [0.0, -0.25, 0.0],
         }
     }
 
     #[test]
     fn parts_round_trip_and_damage_is_refused() {
         let parts = [shaft(6.0), shaft(-3.0)];
-        let bytes = encode("gears", [1, -60, 9], 1234, &parts);
+        let bytes = encode("gears", [1, -60, 9], 0, 1234, &parts);
         assert_eq!(
             decode(&bytes),
-            Some(("gears".into(), [1, -60, 9], 1234, parts.to_vec()))
+            Some(("gears".into(), [1, -60, 9], 0, 1234, parts.to_vec()))
         );
-        assert_eq!(decode(&encode("gears", [0; 3], 0, &[])).unwrap().3, []);
+        assert_eq!(decode(&encode("gears", [0; 3], 0, 0, &[])).unwrap().4, []);
         assert_eq!(decode(&bytes[..bytes.len() - 1]), None);
         assert_eq!(
-            decode(&encode("gears", [0; 3], 0, &[shaft(f32::NAN)])),
+            decode(&encode("gears", [0; 3], 0, 0, &[shaft(f32::NAN)])),
             None
         );
+    }
+
+    #[test]
+    fn a_part_moves_by_its_velocity_within_its_reach() {
+        assert_eq!(shaft(0.0).moved_at(2.0), [0.0, -0.5, 0.0]);
+        assert_eq!(shaft(0.0).moved_at(1000.0), [0.0, -16.0, 0.0]);
+        let mut p = shaft(0.0);
+        p.velocity = [0.0, 17.0, 0.0];
+        assert!(p.check().is_err());
     }
 
     #[test]

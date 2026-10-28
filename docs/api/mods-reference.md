@@ -1036,6 +1036,7 @@ Capability `block-entities`, server mods: model parts drawn at the mod's own blo
 | `offset` | `tuple<f32, f32, f32>` | Where its model's corner is, in blocks from the position's corner: (0, 1, 0) draws it on top of the block. |
 | `speed` | `f32` | Degrees a tick (360 at most), counterclockwise looking from the axis's positive end; negative turns the other way, 0 not at all. |
 | `angle` | `f32` | Its angle in degrees when set: parts set in one tick at the same speed turn together. |
+| `velocity` | `tuple<f32, f32, f32>` | Blocks a tick the whole part moves, from the tick it was set (0 not at all): a press's head going down. It keeps moving until the mod sets the position's parts again, so a mod animating something sets them each tick, with this tick's offset and the step to the next. |
 
 | Function | Signature | What it does |
 | --- | --- | --- |

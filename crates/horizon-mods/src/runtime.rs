@@ -3403,6 +3403,7 @@ impl State {
                     offset: [p.offset.0, p.offset.1, p.offset.2],
                     speed: p.speed,
                     angle: p.angle,
+                    velocity: [p.velocity.0, p.velocity.1, p.velocity.2],
                 };
                 part.check()?;
                 if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref()) {

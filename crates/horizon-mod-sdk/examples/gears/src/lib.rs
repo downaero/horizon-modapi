@@ -254,6 +254,7 @@ fn gear(dimension: &str, x: i32, y: i32, z: i32, running: bool) {
         offset: (0.0, 1.1, 0.0),
         speed: if running { 2.0 * ROTATION_STEP } else { 0.0 },
         angle: 0.0,
+        velocity: (0.0, 0.0, 0.0),
     };
     let _ = visuals::set(dimension, x, y, z, &[part]);
 }

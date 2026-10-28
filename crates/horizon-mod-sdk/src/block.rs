@@ -137,7 +137,8 @@ impl Visual {
     /// `state`'s model turning about `axis` through the block's centre at
     /// `speed` degrees a tick ([`rpm`] converts), as Flywheel's
     /// `RotatingInstance`; the part is returned to move its pivot, offset
-    /// or angle at game time 0 (its `rotationOffset`).
+    /// or angle at game time 0 (its `rotationOffset`), or to give it a
+    /// `velocity` in blocks a tick, from the offset it has now.
     pub fn rotating(&mut self, state: &str, axis: Axis, speed: f32) -> &mut visuals::Part {
         self.parts.push(visuals::Part {
             state: state.to_owned(),
@@ -146,6 +147,7 @@ impl Visual {
             offset: (0.0, 0.0, 0.0),
             speed,
             angle: 0.0,
+            velocity: (0.0, 0.0, 0.0),
         });
         self.parts.last_mut().expect("just pushed")
     }
@@ -160,8 +162,17 @@ impl Visual {
         &self.parts
     }
     fn same(&self, other: &[visuals::Part]) -> bool {
-        let key =
-            |p: &visuals::Part| (p.state.clone(), p.axis, p.pivot, p.offset, p.speed, p.angle);
+        let key = |p: &visuals::Part| {
+            (
+                p.state.clone(),
+                p.axis,
+                p.pivot,
+                p.offset,
+                p.speed,
+                p.angle,
+                p.velocity,
+            )
+        };
         self.parts.len() == other.len() && self.parts.iter().map(key).eq(other.iter().map(key))
     }
 }

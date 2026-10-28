@@ -39,8 +39,11 @@ use {
 /// Parts drawn at one block position, their states resolved.
 #[cfg(feature = "mods")]
 pub(super) struct ClientVisual {
-    /// The tick they were set.
+    /// The tick their angles are measured from: the tick they were set, or
+    /// 0 for parts set in phase.
     pub(super) start: i64,
+    /// The tick they were set, from which their velocity moves them.
+    pub(super) set_at: i64,
     pub(super) parts: Vec<(
         horizon_world::registry::BlockStateId,
         horizon_mods::visual::VisualPart,
@@ -226,7 +229,7 @@ pub(super) struct ModsState {
     #[cfg(feature = "mods")]
     pub(super) visuals: std::collections::BTreeMap<
         (String, String, [i32; 3]),
-        (i64, Vec<horizon_mods::visual::VisualPart>),
+        (i64, i64, Vec<horizon_mods::visual::VisualPart>),
     >,
     /// The parts this window draws (`Game::mod_visual_geometry`), by mod id
     /// and position in the player's dimension: what its server sent, or in

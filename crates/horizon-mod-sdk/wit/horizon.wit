@@ -921,6 +921,12 @@ interface visuals {
         /// Its angle in degrees when set: parts set in one tick at the same
         /// speed turn together.
         angle: f32,
+        /// Blocks a tick the whole part moves, from the tick it was set (0
+        /// not at all): a press's head going down. It keeps moving until
+        /// the mod sets the position's parts again, so a mod animating
+        /// something sets them each tick, with this tick's offset and the
+        /// step to the next.
+        velocity: tuple<f32,f32,f32>,
     }
     /// Draws `parts` (at most 16) at a block of the mod's own, replacing
     /// what it drew there, after the call; none draws nothing there any more.
