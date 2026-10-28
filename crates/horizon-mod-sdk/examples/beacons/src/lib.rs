@@ -1,7 +1,8 @@
 //! Example Horizon server mod (`docs/mods.md`, "Server mods") with
 //! capability `world` and typed commands: `/beacon [height]` lights a
 //! pillar of glowstone two blocks east of the player, `/ground [pos]` reads
-//! the block under their feet (or at `pos`) and its biome.
+//! the block under their feet (or at `pos`) and its biome, `/around [radius]`
+//! counts the solid blocks in a box around them with `world::scan`.
 use horizon_mod_sdk::server::{
     Args, Argument, BlockChange, Player, Registration, ServerMod, players, world,
 };
@@ -42,7 +43,11 @@ impl ServerMod for Beacons {
                     "beacon",
                     [Argument::integer("height", Some(1), Some(64)).optional()],
                 )
-                .command_with("ground", [Argument::block_pos("pos").optional()]),
+                .command_with("ground", [Argument::block_pos("pos").optional()])
+                .command_with(
+                    "around",
+                    [Argument::integer("radius", Some(1), Some(8)).optional()],
+                ),
         ))
     }
 
@@ -62,6 +67,23 @@ impl ServerMod for Beacons {
                 x + 2
             ));
             return Ok(None);
+        }
+        if name == "around" {
+            let r = args.integer("radius").unwrap_or(2);
+            let region = world::scan(
+                &player.dimension,
+                x - r,
+                y - r,
+                z - r,
+                x + r,
+                y + r,
+                z + r,
+            )?;
+            return Ok(Some(format!(
+                "{} solid blocks of {} kinds within {r}",
+                region.blocks.len(),
+                region.palette.len()
+            )));
         }
         let (bx, by, bz) = match args.block_pos("pos") {
             Some(p) => (p.x, p.y, p.z),

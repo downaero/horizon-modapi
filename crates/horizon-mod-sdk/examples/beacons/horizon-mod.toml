@@ -1,7 +1,7 @@
 id = "beacons"
 name = "Beacons"
 version = "0.1.0"
-description = "/beacon [height] lights a pillar of glowstone beside you; /ground [pos] says what you are standing on (or what is at pos), and in which biome."
+description = "/beacon [height] lights a pillar of glowstone beside you; /around [radius] counts the solid blocks near you; /ground [pos] says what you are standing on (or what is at pos), and in which biome."
 authors = ["Horizon"]
 api = "0.3"
 side = "server"

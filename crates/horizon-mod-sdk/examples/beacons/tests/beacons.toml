@@ -37,3 +37,19 @@ expect.error = "Integer must not be more than 64, found 65"
 [[step]]
 command = "ground ~2 ~1 ~"
 expect.feedback = "7 65 5 is minecraft:glowstone in minecraft:plains"
+
+# /around counts the non-air blocks of a box around the player (world.scan).
+[[step]]
+player = { x = 20.5, y = 64.0, z = 20.5 }
+blocks = [
+    { x = 20, y = 63, z = 20, state = "minecraft:stone" },
+    { x = 21, y = 63, z = 20, state = "minecraft:stone" },
+    { x = 22, y = 64, z = 20, state = "minecraft:glowstone" },
+    { x = 40, y = 64, z = 20, state = "minecraft:stone" },
+]
+command = "around 2"
+expect.feedback = "3 solid blocks of 2 kinds within 2"
+
+[[step]]
+command = "around 9"
+expect.error = "Integer must not be more than 8, found 9"
