@@ -346,6 +346,12 @@ pub enum ContainerOp {
         slot: u32,
         stack: Option<SlotStack>,
     },
+    /// `containers.set-name`.
+    SetName {
+        dimension: String,
+        pos: [i32; 3],
+        name: Option<String>,
+    },
 }
 
 /// What mods asked the game to show since the last [`Mods::drain`].
@@ -2393,6 +2399,28 @@ impl containers::Host for State {
                 .map(|s| s.map(|(item, count)| containers::ItemStack { item, count }))
                 .collect(),
         )
+    }
+    fn set_name(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        name: Option<String>,
+    ) -> Result<(), String> {
+        if name.as_ref().is_some_and(|n| n.chars().count() > 64) {
+            return Err("a name of at most 64 characters".into());
+        }
+        let op = ContainerOp::SetName {
+            dimension,
+            pos: [x, y, z],
+            name,
+        };
+        if self.container_op(op) {
+            Ok(())
+        } else {
+            Err(format!("at most {CONTAINER_OPS_PER_CALL} changes a call"))
+        }
     }
     fn set_slot(
         &mut self,

@@ -905,6 +905,10 @@ interface containers {
     /// Puts a stack in slot 0 to 26 (none empties it), after the call, in a
     /// registered container; count 1 to 99. Components of what was there go.
     set-slot: func(dimension: string, x: s32, y: s32, z: s32, slot: u32, stack: option<item-stack>) -> result<_, string>;
+    /// Names the container at a position (the title its window shows, saved
+    /// with the chunk as a renamed chest's is); none clears it. After the
+    /// call, in a registered container; at most 64 characters.
+    set-name: func(dimension: string, x: s32, y: s32, z: s32, name: option<string>) -> result<_, string>;
 }
 
 /// Capability `redstone`, server mods only (manifest `api = "0.3"`,

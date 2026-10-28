@@ -578,8 +578,8 @@ from `block-used` for instance; `slots(dimension, x, y, z)` reads its 27 slots
 as of the tick's start (item and count, no components) and `set-slot(...,
 slot, stack)` writes one after the call. The game keeps the items in a chest
 block entity at the position, saved with the chunk. In this first step it is
-a 27-slot chest only (no custom title or menu, no hoppers or other machines
-feeding it), and only the dimension the world is simulating is reachable.
+a 27-slot chest only (no custom menu; `set-name` gives it a title; hoppers
+should work with it as with any block entity holding items, untested), and only the dimension the world is simulating is reachable.
 How the chest entity of a block that is not a vanilla chest saves and loads
 is not yet proven: keep what matters in `block-entities` too until it is.
 

@@ -112,6 +112,7 @@ impl ServerMod for Gears {
 
     fn block_used(&mut self, player: &str, dimension: &str, pos: Pos, state: &str) -> bool {
         if state.starts_with(CRATE) {
+            let _ = containers::set_name(dimension, pos.x, pos.y, pos.z, Some("Gear Crate"));
             return containers::open(player, dimension, pos.x, pos.y, pos.z);
         }
         if !state.starts_with(COUNTER) {

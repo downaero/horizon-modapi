@@ -773,6 +773,28 @@ mod run {
                         }
                         self.lan = Some(host);
                     }
+                    horizon_mods::ContainerOp::SetName {
+                        dimension,
+                        pos,
+                        name,
+                    } => {
+                        if dimension != self.dim.id() {
+                            continue;
+                        }
+                        let key = (pos[0], pos[1], pos[2]);
+                        let block = self.world.block(pos[0], pos[1], pos[2]);
+                        if self
+                            .mod_container_entity(&self.res.facts().get(block).name)
+                            .is_none()
+                        {
+                            continue;
+                        }
+                        match name {
+                            Some(n) => self.world.block_names.insert(key, n),
+                            None => self.world.block_names.remove(&key),
+                        };
+                        self.world.modified.insert((pos[0] >> 4, pos[2] >> 4));
+                    }
                     horizon_mods::ContainerOp::SetSlot {
                         dimension,
                         pos,

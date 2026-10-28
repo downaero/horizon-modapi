@@ -954,6 +954,7 @@ Capability `containers`, server mods only (manifest `api = "0.3"`, experimental)
 | `open` | `func(player: string, dimension: string, x: s32, y: s32, z: s32) -> bool` | Opens the container at a position for the player with this id, after the call; false when the player is not online. |
 | `slots` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<option<item-stack>>>` | The 27 slots of a container in a loaded chunk, as of the start of this tick; none where there is no container with items yet or none loaded. (Item components are not shown.) |
 | `set-slot` | `func(dimension: string, x: s32, y: s32, z: s32, slot: u32, stack: option<item-stack>) -> result<_, string>` | Puts a stack in slot 0 to 26 (none empties it), after the call, in a registered container; count 1 to 99. Components of what was there go. |
+| `set-name` | `func(dimension: string, x: s32, y: s32, z: s32, name: option<string>) -> result<_, string>` | Names the container at a position (the title its window shows, saved with the chunk as a renamed chest's is); none clears it. After the call, in a registered container; at most 64 characters. |
 
 ## `redstone`
 
