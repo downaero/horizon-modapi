@@ -3664,7 +3664,9 @@ impl Game<'_> {
             });
         } else if storage::is_shulker_box(&name) && !self.shulker_can_open(pos) {
             // ShulkerBoxBlock.canOpen: the lid has no room; nothing opens.
-        } else if let Some(entity) = BlockEntity::for_block(&name) {
+        } else if let Some(entity) =
+            BlockEntity::for_block(&name).or_else(|| self.mod_container_entity(&name))
+        {
             self.world.block_entities.get_or_insert_with(key, || entity);
             let centre = [
                 f64::from(key.0) + 0.5,

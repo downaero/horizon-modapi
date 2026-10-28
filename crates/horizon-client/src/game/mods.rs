@@ -88,6 +88,12 @@ pub(super) struct ModsState {
     pub(super) entity_ops: Vec<(String, horizon_mods::EntityOp)>,
     #[cfg(feature = "mods")]
     pub(super) mod_entities: std::collections::HashMap<(String, u32), u32>,
+    /// Capability `containers`: changes waiting for the tick's end, and the
+    /// blocks mods made containers.
+    #[cfg(feature = "mods")]
+    pub(super) container_ops: Vec<(String, horizon_mods::ContainerOp)>,
+    #[cfg(feature = "mods")]
+    pub(super) container_blocks: std::collections::HashSet<String>,
     /// `block_data` changed since it was written.
     #[cfg(feature = "mods")]
     pub(super) block_data_dirty: bool,
@@ -732,7 +738,8 @@ impl Game<'_> {
                 | Output::Reply { .. }
                 | Output::SetBlocks { .. }
                 | Output::BlockData { .. }
-                | Output::Entity { .. }) => {
+                | Output::Entity { .. }
+                | Output::Container { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);
                     continue;
                 }

@@ -63,6 +63,12 @@ impl Game<'_> {
     pub(super) fn is_mod_entity(&self, _id: u32) -> bool {
         false
     }
+    pub(super) fn mod_container_entity(
+        &self,
+        _block: &str,
+    ) -> Option<horizon_client::containers::BlockEntity> {
+        None
+    }
     pub(super) fn flush_mod_block_data(&mut self) {}
 }
 
@@ -178,8 +184,24 @@ mod run {
         registry: &'static BlockRegistry,
         biomes: std::sync::Arc<horizon_client::biome::Biomes>,
         dims: Vec<(&'static str, ChunkMap)>,
+        /// The simulated dimension's mod containers (capability
+        /// `containers`) as of the call's start, by position.
+        containers: std::collections::HashMap<[i32; 3], Vec<Option<horizon_mods::SlotStack>>>,
+        container_dim: &'static str,
     }
     impl WorldView for LentWorld {
+        fn container(
+            &self,
+            dimension: &str,
+            x: i32,
+            y: i32,
+            z: i32,
+        ) -> Option<Vec<Option<horizon_mods::SlotStack>>> {
+            if dimension != self.container_dim {
+                return None;
+            }
+            self.containers.get(&[x, y, z]).cloned()
+        }
         fn block(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<String> {
             let (_, chunks) = self.dims.iter().find(|(d, _)| *d == dimension)?;
             let chunk = chunks.get(&(x >> 4, z >> 4))?;
@@ -421,6 +443,7 @@ mod run {
             self.show_mod_output();
             self.apply_mod_block_writes();
             self.apply_mod_entities();
+            self.apply_mod_containers();
             if self.mods.block_data_dirty && self.ticks % 200 == 0 {
                 self.flush_mod_block_data();
             }
@@ -547,6 +570,32 @@ mod run {
             if !self.mods.world {
                 return;
             }
+            // Before the chunks leave: the slots of the mod containers.
+            let mut containers = std::collections::HashMap::new();
+            if !self.mods.container_blocks.is_empty() {
+                let positions: Vec<_> = self
+                    .world
+                    .block_entities
+                    .iter_mut()
+                    .map(|(p, _)| *p)
+                    .collect();
+                for p in positions {
+                    let block = self.world.block(p.0, p.1, p.2);
+                    let name = &self.res.facts().get(block).name;
+                    if !self.mods.container_blocks.contains(&**name) {
+                        continue;
+                    }
+                    if let Some(horizon_client::containers::BlockEntity::Chest(items)) =
+                        self.world.block_entities.get(&p)
+                    {
+                        let slots = items
+                            .iter()
+                            .map(|s| s.as_ref().map(|s| (s.item.to_string(), s.count)))
+                            .collect();
+                        containers.insert([p.0, p.1, p.2], slots);
+                    }
+                }
+            }
             let mut dims = vec![(self.dim.id(), std::mem::take(&mut self.world.chunks))];
             for (dim, chunks) in self.levels.parked_chunks() {
                 dims.push((dim.id(), std::mem::take(chunks)));
@@ -557,6 +606,8 @@ mod run {
                 registry,
                 biomes,
                 dims,
+                containers,
+                container_dim: self.dim.id(),
             }));
         }
 
@@ -607,6 +658,96 @@ mod run {
                         b.y,
                         b.z
                     );
+                }
+            }
+        }
+
+        /// The block entity a mod's container block gets when first opened
+        /// (a chest's 27 slots), none for any other block.
+        pub(in crate::game) fn mod_container_entity(
+            &self,
+            block: &str,
+        ) -> Option<horizon_client::containers::BlockEntity> {
+            self.mods
+                .container_blocks
+                .contains(block)
+                .then(|| horizon_client::containers::BlockEntity::Chest(vec![None; 27]))
+        }
+
+        /// Makes the changes server mods queued for their containers:
+        /// opening one for a player, writing slots. Only the dimension the
+        /// window simulates is there to change; others are dropped.
+        pub(in crate::game) fn apply_mod_containers(&mut self) {
+            use horizon_client::{containers::BlockEntity, items::ItemStack};
+            for (mod_id, op) in std::mem::take(&mut self.mods.container_ops) {
+                match op {
+                    horizon_mods::ContainerOp::Register { .. } => {}
+                    horizon_mods::ContainerOp::Open {
+                        player,
+                        dimension,
+                        pos,
+                    } => {
+                        if dimension != self.dim.id() {
+                            continue;
+                        }
+                        let key = (pos[0], pos[1], pos[2]);
+                        let block = self.world.block(pos[0], pos[1], pos[2]);
+                        let name = self.res.facts().get(block).name.clone();
+                        let Some(entity) = self.mod_container_entity(&name) else {
+                            log::debug!(
+                                "Horizon: mod {mod_id} opened {name}, which is not a container it made"
+                            );
+                            continue;
+                        };
+                        self.world.block_entities.get_or_insert_with(key, || entity);
+                        if self.options.execution_role.is_client()
+                            && self.remote.is_none()
+                            && self.player.is_some()
+                            && self.player_uuid_string() == player
+                        {
+                            self.open_menu(pos);
+                            continue;
+                        }
+                        let Some(mut host) = self.lan.take() else {
+                            continue;
+                        };
+                        let conn = host
+                            .hub
+                            .guests
+                            .iter()
+                            .find(|g| g.placed && uuid_string(g.uuid) == player)
+                            .map(|g| g.conn);
+                        if let Some(conn) = conn {
+                            self.container_opener_event(key, true);
+                            if !self.lan_open_container(&mut host, conn, key) {
+                                self.container_openers_changed(key, false);
+                            }
+                        }
+                        self.lan = Some(host);
+                    }
+                    horizon_mods::ContainerOp::SetSlot {
+                        dimension,
+                        pos,
+                        slot,
+                        stack,
+                    } => {
+                        if dimension != self.dim.id() {
+                            continue;
+                        }
+                        let key = (pos[0], pos[1], pos[2]);
+                        let block = self.world.block(pos[0], pos[1], pos[2]);
+                        let name = self.res.facts().get(block).name.clone();
+                        let Some(entity) = self.mod_container_entity(&name) else {
+                            continue;
+                        };
+                        if let BlockEntity::Chest(items) =
+                            self.world.block_entities.get_or_insert_with(key, || entity)
+                            && let Some(cell) = items.get_mut(slot as usize)
+                        {
+                            *cell = stack.map(|(item, count)| ItemStack::new(item.as_str(), count));
+                            self.world.modified.insert((pos[0] >> 4, pos[2] >> 4));
+                        }
+                    }
                 }
             }
         }
@@ -989,6 +1130,18 @@ mod run {
                     pos,
                     data,
                 } => self.store_mod_block_data(mod_id, dimension, pos, data),
+                Output::Container {
+                    op: horizon_mods::ContainerOp::Register { block },
+                    ..
+                } => {
+                    self.mods.container_blocks.insert(block);
+                }
+                Output::Container { mod_id, op } => {
+                    let queue = &mut self.mods.container_ops;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push((mod_id, op));
+                    }
+                }
                 Output::Entity { mod_id, op } => {
                     let queue = &mut self.mods.entity_ops;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
