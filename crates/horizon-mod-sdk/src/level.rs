@@ -96,6 +96,29 @@ impl Direction {
             Direction::West | Direction::East => Axis::X,
         }
     }
+    /// The horizontal way a yaw (degrees, as F3 shows it) faces, as
+    /// NeoForge's `Direction.fromYRot`: 0 south, 90 west, 180 north, 270 east.
+    pub fn from_y_rot(yaw: f32) -> Self {
+        let quarter = ((f64::from(yaw) / 90.0 + 0.5).floor() as i64).rem_euclid(4);
+        [
+            Direction::South,
+            Direction::West,
+            Direction::North,
+            Direction::East,
+        ][quarter as usize]
+    }
+    /// The way a player with this view looks most nearly, as NeoForge's
+    /// `getNearestLookingDirection`: up or down past 45 degrees of pitch,
+    /// else the horizontal way.
+    pub fn nearest_looking(yaw: f32, pitch: f32) -> Self {
+        if pitch < -45.0 {
+            Direction::Up
+        } else if pitch > 45.0 {
+            Direction::Down
+        } else {
+            Self::from_y_rot(yaw)
+        }
+    }
     /// The step one block this way: north is -z, east +x.
     pub fn get_normal(self) -> [i32; 3] {
         match self {
@@ -384,6 +407,11 @@ mod tests {
         let p = BlockPos::new(1, 2, 3);
         assert_eq!(p.relative(Direction::East, 2), BlockPos::new(3, 2, 3));
         assert_eq!(p.north(), BlockPos::new(1, 2, 2));
+        assert_eq!(Direction::from_y_rot(0.0), Direction::South);
+        assert_eq!(Direction::from_y_rot(-90.0), Direction::East);
+        assert_eq!(Direction::from_y_rot(181.0), Direction::North);
+        assert_eq!(Direction::from_y_rot(-46.0), Direction::East);
+        assert_eq!(Direction::nearest_looking(0.0, 60.0), Direction::Down);
         for d in Direction::ALL {
             assert_eq!(d.get_opposite().get_opposite(), d);
             assert_eq!(

@@ -378,7 +378,7 @@ fn a_block_of_its_own_states_loads_in_every_table() {
             ("horizon-mod.toml", &manifest("clutches", "")),
             (
                 "data/clutches/horizon/block/clutch.json",
-                r#"{"template": "minecraft:iron_block",
+                r#"{"template": "minecraft:iron_block", "properties": {"analog_output": true},
                     "states": {"axis": ["x", "y", "z"], "powered": ["false", "true"]},
                     "default_state": {"axis": "y"},
                     "shape": {"axis=x": [[0, 4, 4, 16, 12, 12]]}}"#,
@@ -416,7 +416,12 @@ fn a_block_of_its_own_states_loads_in_every_table() {
     assert_eq!(registry.resolve(&wanted).ok(), Some(BlockStateId(n + 4)));
     // Every loader takes it: behaviours build their state table over it.
     let facts = BlockFacts::load(&root, registry).unwrap();
-    horizon_world::level::Behaviours::load(registry, &root).unwrap();
+    let behaviours = horizon_world::level::Behaviours::load(registry, &root).unwrap();
+    // Comparators read it, as `analog_output` says; iron blocks not.
+    let analog = horizon_world::level::data::state_flags::ANALOG_OUTPUT;
+    assert_ne!(behaviours.facts(BlockStateId(n + 3)).flags & analog, 0);
+    let iron_block = registry.default_state("minecraft:iron_block").unwrap();
+    assert_eq!(behaviours.facts(iron_block).flags & analog, 0);
     crate::collisions::load(&root, registry).unwrap();
     crate::light::LightTables::load(&root, registry, &facts).unwrap();
     horizon_world::worldgen::generator::GeneratorData::load(&root.join("worldgen"), registry)

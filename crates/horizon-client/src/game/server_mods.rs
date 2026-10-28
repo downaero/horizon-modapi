@@ -2043,10 +2043,12 @@ mod run {
         ) {
             let stack = |s: &Option<horizon_client::items::ItemStack>| s.as_ref().map(stack_info);
             let mut out = std::collections::HashMap::new();
+            let mut rotations = std::collections::HashMap::new();
             if self.options.execution_role.is_client()
                 && self.remote.is_none()
                 && self.player.is_some()
             {
+                rotations.insert(self.player_uuid_string(), (self.yaw, self.pitch));
                 let mut slots: Vec<_> = self.inventory.iter().take(36).map(stack).collect();
                 slots.resize(36, None);
                 // `armor` is head first; mods count feet to head.
@@ -2059,6 +2061,7 @@ mod run {
                 .into_iter()
                 .flat_map(|h| &h.hub.guests);
             for g in guests.filter(|g| g.placed) {
+                rotations.insert(uuid_string(g.uuid), (g.yaw, g.pitch));
                 let mut slots: Vec<_> = g.inventory.iter().take(36).map(stack).collect();
                 slots.resize(36, None);
                 slots.extend(g.armor.iter().rev().map(stack));
@@ -2066,6 +2069,7 @@ mod run {
                 out.insert(uuid_string(g.uuid), (slots, g.selected as u32));
             }
             snapshot.inventories = out;
+            snapshot.rotations = rotations;
         }
 
         /// Puts the stacks server mods asked for in players' slots (0 to 35

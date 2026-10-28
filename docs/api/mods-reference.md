@@ -842,6 +842,7 @@ Capability `players`, server mods only (manifest `api = "0.3"`, experimental): t
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `online` | `func() -> list<player>` | The players online, in the order they joined. |
+| `rotation` | `func(player: string) -> option<tuple<f32, f32>>` | Where a player looks, as of the start of this tick: yaw and pitch in degrees as F3 shows them (-90 pitch looks straight up), for the direction a block is placed facing (NeoForge's `BlockPlaceContext`); none when they are not online. |
 | `tell` | `func(player: string, text: string) -> bool` | A system message to one player, after the mod's name; false when no player with that id is online. Up to 8 messages per call. |
 | `broadcast` | `func(text: string)` | A system message to every player and the server's log, after the mod's name. Counts toward the same 8 per call. |
 | `push` | `func(player: string, x: f64, y: f64, z: f64) -> bool` | Adds a velocity, in blocks per tick, to a player after the call (a conveyor, a fan): false when no player with that id is online. Each component is clamped to -4 to 4. At most 256 pushes a call. |

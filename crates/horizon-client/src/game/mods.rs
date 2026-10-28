@@ -652,6 +652,7 @@ impl Game<'_> {
             player,
             clock,
             inventories: Default::default(),
+            rotations: Default::default(),
             typed_entities: std::sync::Arc::new(self.mods.typed.clone()),
             block_data: self.mod_block_data_view(),
             gui_size: self.gui_size(),

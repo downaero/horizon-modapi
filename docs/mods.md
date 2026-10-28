@@ -302,7 +302,7 @@ A step's parts happen in this order:
 | `chat = "<Steve> hi"` | a chat line the player receives |
 | `command = "where north"` | the player types `/where north`; a command the mod doesn't own fails the step |
 | `break = { x = 1, y = 63, z = 0, state = "minecraft:stone" }`, `place = { ... }` | server mods: the player breaks or places that block |
-| `use = { x = 1, y = 64, z = 0, face = "up" }` | server mods: the player right-clicks the block there with an empty hand, on that face (`down`, `up`, `north`, `south`, `west`, `east`; left out: none) |
+| `use = { x = 1, y = 64, z = 0, face = "up" }` | server mods: the player right-clicks the block there with an empty hand, on that face (`down`, `up`, `north`, `south`, `west`, `east`; left out: none); with `item = "minecraft:stick"` (and `sneaking = true`) they click with that item in their main hand, which reaches `item-used` (face left out: up) |
 | `leave = "Alex"` | server mods: that player leaves |
 
 A server mod starts with nobody on: `join = "Alex"` (after `reload` and `title-screen`) brings a
@@ -458,7 +458,8 @@ The fence: files go in the mod's own namespaces (`assets/<id>/`,
 `data/<id>/`, and those its manifest lists), plus additions to vanilla tags
 (`data/minecraft/tags/`) and to the convention tags NeoForge and Fabric mods
 share (`data/c/tags/`).
-Templates and `sounds` name vanilla blocks; unknown keys are refused.
+Templates and `sounds` name vanilla blocks; unknown keys are refused. `"analog_output": true`
+lets comparators read the block, for what the mod gives with `redstone.set-comparator-signal`.
 
 Some Java mods ship their files under other names than their mod id (Towns
 and Towers, mod id `t_and_t`, under `kaisyn` and `towns_and_towers`). A
@@ -668,8 +669,10 @@ not saved: the mod sets it again after a load. The gears example's
 comparator reads from a block of the mod's (`getAnalogOutputSignal`: a depot's or a
 tank's fullness), 0 to 15, until the mod sets another; none gives back vanilla's (a
 container's fullness). The comparators beside it are told at the tick's end, as when a
-container changes. Comparators read only a block whose template has an analog output (a
-chest, barrel, hopper or composter). Not saved, and gone when the block changes.
+container changes. Comparators read only a block with an analog output: one whose template has one
+(a chest, barrel, hopper or composter), or a content block with `"analog_output": true` in its
+`properties` (a gauge, a depot), which gives 0 until the mod sets its signal. Not saved, and gone
+when the block changes.
 
 ### Pushing players and items
 
@@ -834,7 +837,10 @@ its ticks) and `gears:deployer` (a `Block`) are written this way.
 
 `players.inventory(player)` (API level 33) is a player's 41 slots as of the tick's start (0 to 8 the
 hotbar, 9 to 35 the rest, 36 to 39 the armor from feet to head, 40 the off hand) and
-`players.selected-slot(player)` the hotbar slot they hold.
+`players.selected-slot(player)` the hotbar slot they hold. `players.rotation(player)` (API level 43)
+is where they look, yaw and pitch in degrees as F3 shows them, for the way a block is placed facing
+(NeoForge's `BlockPlaceContext`); the SDK's `Direction::from_y_rot` and `Direction::nearest_looking`
+turn it into a direction as NeoForge's `getHorizontalDirection` and `getNearestLookingDirection` do.
 
 Capability `console` (experimental) runs any command as the server's console, with an operator's
 rights, at the tick's end, as a command block would: `console.run(line)`, at most 256 a call, no

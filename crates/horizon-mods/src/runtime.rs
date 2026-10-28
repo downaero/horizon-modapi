@@ -610,6 +610,8 @@ pub struct Snapshot {
     /// Each online player's 41 inventory slots and selected hotbar slot, by
     /// UUID (`players.inventory`).
     pub inventories: std::collections::HashMap<String, (Vec<Option<StackInfo>>, u32)>,
+    /// Each online player's yaw and pitch, by UUID (`players.rotation`).
+    pub rotations: std::collections::HashMap<String, (f32, f32)>,
     /// Every server mod's typed entities (`entity-types`); each mod sees
     /// its own.
     pub typed_entities: Arc<Vec<TypedEntity>>,
@@ -5118,6 +5120,9 @@ impl State {
     }
 }
 impl players::Host for State {
+    fn rotation(&mut self, player: String) -> Option<(f32, f32)> {
+        self.snapshot.rotations.get(&player).copied()
+    }
     fn inventory(&mut self, player: String) -> Option<Vec<Option<players::SlotStack>>> {
         let (slots, _) = self.snapshot.inventories.get(&player)?;
         Some(

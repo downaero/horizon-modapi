@@ -8,7 +8,8 @@
 //! test written in TOML, `tests/<name>.toml` in the mod's folder: steps, each
 //! saying what happens and what the mod must have shown by then.
 use crate::{
-    BlockPos, Clock, Corner, GameMode, Mods, Output, Panel, Player, ServerPlayer, Snapshot, Status,
+    BlockPos, BlockTarget, Clock, Corner, GameMode, Mods, Output, Panel, Player, ServerPlayer,
+    Snapshot, Status,
 };
 use serde::Deserialize;
 use std::{
@@ -235,6 +236,12 @@ impl TestGame {
             player: self.player.clone(),
             clock: self.clock,
             players: self.players.clone(),
+            // Players look south, level.
+            rotations: self
+                .players
+                .iter()
+                .map(|p| (p.id.clone(), (0.0, 0.0)))
+                .collect(),
             // The GUI of a 1280 x 720 window at scale 3, as the trial run's.
             gui_size: (427.0, 240.0),
             ..Snapshot::default()
@@ -349,6 +356,29 @@ impl TestGame {
         self.snapshot();
         self.mods
             .block_used(player, "minecraft:overworld", pos, face, state)
+    }
+
+    /// `player` right-clicks `state` at `pos` on `face` with `item` in their
+    /// main hand (`item-events`); whether a mod took the click.
+    pub fn use_item_on(
+        &mut self,
+        player: &ServerPlayer,
+        item: &str,
+        sneaking: bool,
+        pos: BlockPos,
+        face: u8,
+        state: &str,
+    ) -> bool {
+        self.snapshot();
+        let target = BlockTarget {
+            dimension: "minecraft:overworld".into(),
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            face,
+            state: state.to_owned(),
+        };
+        self.mods.item_used(player, item, sneaking, Some(&target))
     }
 
     /// The scratch copy the mod runs from; its `storage` is beside it.
@@ -466,6 +496,11 @@ pub struct UseAt {
     y: i32,
     z: i32,
     face: Option<String>,
+    /// The item in their main hand (`item-events`); none: an empty hand.
+    item: Option<String>,
+    /// They sneak as they click (with an item).
+    #[serde(default)]
+    sneaking: bool,
 }
 
 /// An item entity lying in the Overworld (capability `items`).
@@ -795,7 +830,16 @@ impl Step {
                 ),
                 None => None,
             };
-            game.use_block(p, pos, face, &state);
+            match &u.item {
+                // A click with an item reaches `item-used` with the face
+                // clicked (up when the script names none).
+                Some(item) => {
+                    game.use_item_on(p, item, u.sneaking, pos, face.unwrap_or(1), &state);
+                }
+                None => {
+                    game.use_block(p, pos, face, &state);
+                }
+            }
         }
         if let Some(name) = &self.leave
             && !game.leave(name)

@@ -73,6 +73,9 @@ pub struct BlockProperties {
     pub map_color: Option<u8>,
     /// A vanilla block whose sounds this block uses.
     pub sounds: Option<String>,
+    /// Comparators read it (`hasAnalogOutputSignal`): what the mod gives
+    /// with `redstone.set-comparator-signal`, 0 until it does.
+    pub analog_output: Option<bool>,
 }
 
 /// One box of a shape in pixels, `[x0, y0, z0, x1, y1, z1]` with a block 16

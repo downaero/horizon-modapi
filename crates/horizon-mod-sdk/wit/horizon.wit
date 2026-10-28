@@ -656,6 +656,11 @@ interface players {
     }
     /// The players online, in the order they joined.
     online: func() -> list<player>;
+    /// Where a player looks, as of the start of this tick: yaw and pitch in
+    /// degrees as F3 shows them (-90 pitch looks straight up), for the
+    /// direction a block is placed facing (NeoForge's `BlockPlaceContext`);
+    /// none when they are not online.
+    rotation: func(player: string) -> option<tuple<f32, f32>>;
     /// A system message to one player, after the mod's name; false when no
     /// player with that id is online. Up to 8 messages per call.
     tell: func(player: string, text: string) -> bool;

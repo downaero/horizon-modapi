@@ -35,3 +35,8 @@ expect.effects = [
     "event 2000 1 at 5 65 5",
 ]
 expect.drops = ["minecraft:iron_nugget x1 at 5.5 65 5.5"]
+
+# A stick on the counter names it (`item-used`, a click with an item).
+[[step]]
+use = { x = 5, y = 64, z = 5, face = "up", item = "minecraft:stick" }
+expect.told = ["Alex: This is gears:counter"]
