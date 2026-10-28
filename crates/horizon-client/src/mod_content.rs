@@ -1222,6 +1222,26 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
             overlay.write(&own, &fs::read(&vanilla)?)?;
         }
     }
+    // Likewise a block's item, or an item, without its own item model draws
+    // as its template's (when the template has one).
+    for m in mods {
+        let blocks = m.content.blocks.iter().filter(|b| b.item);
+        let ids = blocks
+            .map(|b| (&b.id, &b.template))
+            .chain(m.content.items.iter().map(|i| (&i.id, &i.template)));
+        for (id, template) in ids {
+            let (ns, path) = id.split_once(':').unwrap_or((&m.id, id));
+            let own = format!("assets/{ns}/items/{path}.json");
+            if m.content.files.contains(&own) {
+                continue;
+            }
+            let template = template.trim_start_matches("minecraft:");
+            let vanilla = base.join(format!("assets/minecraft/items/{template}.json"));
+            if vanilla.is_file() {
+                overlay.write(&own, &fs::read(&vanilla)?)?;
+            }
+        }
+    }
     let mut namespaces: Vec<&str> = mods
         .iter()
         .flat_map(|m| m.content.namespaces.iter().map(String::as_str))

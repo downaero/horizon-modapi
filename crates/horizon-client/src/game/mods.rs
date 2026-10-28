@@ -94,6 +94,10 @@ pub(super) struct ModsState {
     /// a close), in the order they did it, for the next tick.
     #[cfg(feature = "mods")]
     pub(super) menu_events: Vec<(String, String, horizon_mods::menu_layout::MenuMessage)>,
+    /// The guests whose click on a block a server mod took, and the tick:
+    /// the click in the air their client sends after it is the same click.
+    #[cfg(feature = "mods")]
+    pub(super) used_on_block: Vec<(u32, u64)>,
     /// Every server mod's typed entities (`entity-types`), the world they
     /// were read from, and whether they changed since saved.
     #[cfg(feature = "mods")]

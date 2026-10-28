@@ -2263,6 +2263,19 @@ mod run {
             if !self.hears_players() {
                 return false;
             }
+            // A client that does not know a mod took its click on a block
+            // follows it with one in the air (as vanilla's does after PASS):
+            // that one was already heard.
+            let now = self.ticks;
+            self.mods
+                .used_on_block
+                .retain(|(_, t)| now.saturating_sub(*t) <= 1);
+            if target.is_none()
+                && let Some(i) = self.mods.used_on_block.iter().position(|(c, _)| *c == conn)
+            {
+                self.mods.used_on_block.swap_remove(i);
+                return true;
+            }
             let Some(g) = host.hub.guests.iter().find(|g| g.conn == conn) else {
                 return false;
             };
@@ -2294,6 +2307,9 @@ mod run {
             self.return_world();
             self.route_mod_output(Some(host));
             self.apply_mod_block_writes();
+            if used && target.is_some() {
+                self.mods.used_on_block.push((conn, now));
+            }
             used
         }
 
