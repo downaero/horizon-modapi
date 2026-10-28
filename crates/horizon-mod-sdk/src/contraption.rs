@@ -8,6 +8,16 @@
 //! Needs capabilities `world` and `entities` (`experimental = ["entities"]`).
 use crate::server::{BlockChange, entities, world};
 
+/// The smallest turn clients are sent (an angle is a byte on the wire):
+/// turns a whole number of these keep every tick's step the same and the
+/// blocks where their turn puts them.
+pub const ROTATION_STEP: f32 = 360.0 / 256.0;
+
+/// `angle` on the grid of [`ROTATION_STEP`].
+pub fn snap_angle(angle: f32) -> f32 {
+    (angle / ROTATION_STEP).round() * ROTATION_STEP
+}
+
 /// A structure taken out of the world.
 pub struct Contraption {
     dimension: String,
@@ -104,6 +114,8 @@ impl Contraption {
     /// first `pitch` about x, then `yaw` about y (a mill's sails, a door
     /// swinging, a ship turning). Each block turns with it.
     pub fn set_rotation(&mut self, yaw: f32, pitch: f32) {
+        // On the grid clients turn blocks by, so places and turns agree.
+        let (yaw, pitch) = (snap_angle(yaw), snap_angle(pitch));
         self.rotation = [yaw, pitch];
         for (_, _, handle) in &self.blocks {
             entities::rotate(*handle, yaw, pitch);

@@ -1138,7 +1138,9 @@ mod run {
                         } else if let Some(f) =
                             self.falling.iter_mut().find(|f| f.mod_owned && f.id == id)
                         {
-                            (f.yaw, f.pitch) = (yaw, pitch);
+                            // The byte clients get: the server keeps the same.
+                            let snap = |a: f32| (a * 256.0 / 360.0).round() * 360.0 / 256.0;
+                            (f.yaw, f.pitch) = (snap(yaw), snap(pitch));
                         }
                     }
                     horizon_mods::EntityOp::Move { handle, pos, yaw } => {

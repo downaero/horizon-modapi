@@ -904,7 +904,8 @@ interface entities {
     /// centre, first `pitch` about x then `yaw` about y, so a block with
     /// `axis=x` spins about any axis (yaw 90 puts its x along z); a marker
     /// (`spawn`) by its yaw only. Sent to every client as the entity's
-    /// rotation.
+    /// rotation, a byte: angles go to the nearest 360/256 degrees, so a turn
+    /// of a whole number of those a tick looks even.
     rotate: func(handle: u32, yaw: f32, pitch: f32) -> bool;
     /// Makes a block entity (`spawn-block`) solid for players, as a boat is:
     /// they stand on it and walk into it as on its full cube, and a player

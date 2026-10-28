@@ -3,7 +3,7 @@
 //! the server ticks it and saves the bytes with the world. A gear (an iron
 //! ingot, capability `entities`) floats above each counter placed.
 use horizon_mod_sdk::{
-    contraption::Contraption,
+    contraption::{Contraption, ROTATION_STEP},
     export_server_mod,
     server::{
         BlockPos, Player, Pos, Registration, ServerMod, block_entities, containers, effects,
@@ -81,16 +81,20 @@ impl ServerMod for Gears {
         }
         if state.starts_with(COUNTER) {
             let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &0u32.to_le_bytes());
+            // A gear above it: an iron trapdoor as a block entity, turned
+            // each tick (drawn smoothly between ticks on every client).
             let at = [
                 f64::from(pos.x) + 0.5,
                 f64::from(pos.y) + 1.1,
                 f64::from(pos.z) + 0.5,
             ];
-            if let Ok(handle) =
-                entities::spawn(DIMENSION, at[0], at[1], at[2], 0.0, "minecraft:iron_ingot")
-            {
-                // The counter's own block on the head, turned each tick.
-                entities::set_slot(handle, "head", Some(COUNTER));
+            if let Ok(handle) = entities::spawn_block(
+                DIMENSION,
+                at[0],
+                at[1],
+                at[2],
+                "minecraft:iron_trapdoor[half=bottom]",
+            ) {
                 self.gears.push(([pos.x, pos.y, pos.z], handle));
             }
         }
@@ -144,7 +148,7 @@ impl ServerMod for Gears {
             // A mill turns its wheel 3 degrees a tick about x.
             let at = [pos.x, pos.y, pos.z];
             if let Some((_, wheel, turn)) = self.mills.iter_mut().find(|(p, _, _)| *p == at) {
-                *turn = (*turn + 3.0) % 360.0;
+                *turn = (*turn + 2.0 * ROTATION_STEP) % 360.0;
                 wheel.set_rotation(0.0, *turn);
             }
             return;
@@ -206,9 +210,11 @@ impl ServerMod for Gears {
             return;
         }
         let at = [pos.x, pos.y, pos.z];
-        self.spin = (self.spin + 4.0) % 360.0;
+        // Two steps of the rotation clients are sent (360/256 degrees each) a
+        // tick, so every tick turns it the same.
+        self.spin = (self.spin + 2.0 * ROTATION_STEP) % 360.0;
         if let Some(&(_, handle)) = self.gears.iter().find(|(p, _)| *p == at) {
-            entities::set_pose(handle, "head", 0.0, self.spin, 0.0);
+            entities::rotate(handle, self.spin, 0.0);
         }
         let seen = match self.ticks.iter_mut().find(|(p, _)| *p == at) {
             Some((_, n)) => n,
