@@ -849,6 +849,8 @@ pub enum Output {
         dimension: String,
         pos: [i32; 3],
         parts: Vec<crate::visual::VisualPart>,
+        /// `set-in-phase`: the parts' angles are theirs at game time 0.
+        phased: bool,
     },
     /// `net.send`: a message on the mod's channel. `player` is the target
     /// of a server mod's message (none: every player); a client mod's goes to
@@ -3312,6 +3314,28 @@ impl visuals::Host for State {
         z: i32,
         parts: Vec<visuals::Part>,
     ) -> Result<(), String> {
+        self.set_visual(dimension, [x, y, z], parts, false)
+    }
+    fn set_in_phase(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        parts: Vec<visuals::Part>,
+    ) -> Result<(), String> {
+        self.set_visual(dimension, [x, y, z], parts, true)
+    }
+}
+impl State {
+    /// `visuals.set` and `set-in-phase`.
+    fn set_visual(
+        &mut self,
+        dimension: String,
+        [x, y, z]: [i32; 3],
+        parts: Vec<visuals::Part>,
+        phased: bool,
+    ) -> Result<(), String> {
         if parts.len() > crate::visual::PARTS {
             return Err(format!(
                 "{} parts: at most {}",
@@ -3343,6 +3367,7 @@ impl visuals::Host for State {
             dimension,
             pos: [x, y, z],
             parts,
+            phased,
         });
         Ok(())
     }

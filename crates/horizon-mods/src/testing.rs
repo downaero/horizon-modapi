@@ -37,6 +37,9 @@ pub struct TestGame {
     pub power: std::collections::BTreeMap<(i32, i32, i32), u8>,
     /// The item entities lying in the Overworld; `take` removes them.
     pub items: Vec<crate::DroppedStack>,
+    /// The parts the mod draws at its blocks of the Overworld (`visuals`),
+    /// gone with the block's data as in the game.
+    pub visuals: std::collections::BTreeMap<(i32, i32, i32), Vec<crate::visual::VisualPart>>,
     /// The package's own recipe files (`data/<ns>/recipe/`): id, type, JSON.
     /// `recipe-manager` sees these and no vanilla recipe.
     recipes: Vec<(String, String, String)>,
@@ -203,6 +206,7 @@ impl TestGame {
             world: Default::default(),
             power: Default::default(),
             items: Vec::new(),
+            visuals: Default::default(),
             recipes: package_recipes(hmod),
         };
         copy_mod(hmod, &copy)?;
@@ -332,6 +336,14 @@ impl TestGame {
         }
     }
 
+    /// `player` right-clicks `state` at `pos` with an empty hand; whether
+    /// a mod took the click.
+    pub fn use_block(&mut self, player: &ServerPlayer, pos: BlockPos, state: &str) -> bool {
+        self.snapshot();
+        self.mods
+            .block_used(player, "minecraft:overworld", pos, state)
+    }
+
     /// The scratch copy the mod runs from; its `storage` is beside it.
     pub fn hmod(&self) -> &Path {
         &self.hmod
@@ -438,6 +450,15 @@ pub struct PowerSet {
     level: u8,
 }
 
+/// A block position.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PosSet {
+    x: i32,
+    y: i32,
+    z: i32,
+}
+
 /// An item entity lying in the Overworld (capability `items`).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -503,6 +524,10 @@ pub struct Step {
     #[serde(rename = "break")]
     broken: Option<BlockSet>,
     place: Option<BlockSet>,
+    /// Server mods: the player right-clicks the block there with an empty
+    /// hand (`block-events.block-used`).
+    #[serde(rename = "use")]
+    used: Option<PosSet>,
     /// Blocks of the Overworld before the rest of the step (capability
     /// `world`); every other block is air.
     #[serde(default)]
@@ -547,6 +572,9 @@ pub struct Expect {
     /// Capability `containers`: every `set-name` as `"name at x y z"` (`-` for
     /// none), in order.
     names: Option<Vec<String>>,
+    /// Capability `block-entities`: the parts drawn at the mod's blocks after
+    /// the step, by position, each as `"x y z state speed"` (degrees a tick).
+    visuals: Option<Vec<String>>,
     /// The mod is turned off during this step, for a reason holding this text.
     /// Without it, a mod that stops fails the test.
     stopped: Option<String>,
@@ -634,6 +662,9 @@ impl Step {
                 parts.push(format!("{what} {} at {} {} {}", b.state, b.x, b.y, b.z));
             }
         }
+        if let Some(u) = &self.used {
+            parts.push(format!("uses {} {} {}", u.x, u.y, u.z));
+        }
         if let Some(name) = &self.leave {
             parts.push(format!("{name} leaves"));
         }
@@ -692,7 +723,8 @@ impl Step {
             || self.chat.is_some()
             || self.command.is_some()
             || self.broken.is_some()
-            || self.place.is_some();
+            || self.place.is_some()
+            || self.used.is_some();
         let actor = if server && acts {
             Some(actor(game)?)
         } else {
@@ -733,6 +765,16 @@ impl Step {
                 game.block(p, pos, &b.state, placed);
             }
         }
+        if let (Some(u), Some(p)) = (&self.used, &who) {
+            let state = game.world.get(&(u.x, u.y, u.z)).cloned();
+            let state = state.unwrap_or_else(|| "minecraft:air".into());
+            let pos = BlockPos {
+                x: u.x,
+                y: u.y,
+                z: u.z,
+            };
+            game.use_block(p, pos, &state);
+        }
         if let Some(name) = &self.leave
             && !game.leave(name)
         {
@@ -740,15 +782,42 @@ impl Step {
         }
         game.mods.take_world();
         let out = game.drain();
+        let overworld = |d: &str| d == "minecraft:overworld";
         for o in &out {
-            if let Output::SetBlocks {
-                dimension, blocks, ..
-            } = o
-                && dimension == "minecraft:overworld"
-            {
-                for b in blocks {
-                    game.world.insert((b.x, b.y, b.z), b.state.clone());
+            match o {
+                Output::SetBlocks {
+                    dimension, blocks, ..
+                } if overworld(dimension) => {
+                    for b in blocks {
+                        game.world.insert((b.x, b.y, b.z), b.state.clone());
+                    }
                 }
+                // A block the mod broke is air; its drops are the game's.
+                Output::Break { dimension, pos, .. } if overworld(dimension) => {
+                    game.world.remove(&(pos[0], pos[1], pos[2]));
+                }
+                Output::Visual {
+                    dimension,
+                    pos,
+                    parts,
+                    ..
+                } if overworld(dimension) => {
+                    let at = (pos[0], pos[1], pos[2]);
+                    if parts.is_empty() {
+                        game.visuals.remove(&at);
+                    } else {
+                        game.visuals.insert(at, parts.clone());
+                    }
+                }
+                Output::BlockData {
+                    dimension,
+                    pos,
+                    data: None,
+                    ..
+                } if overworld(dimension) => {
+                    game.visuals.remove(&(pos[0], pos[1], pos[2]));
+                }
+                _ => {}
             }
         }
         let taken: Vec<u32> = out
@@ -907,6 +976,18 @@ impl Step {
                 })
                 .collect();
             same("names", want, &got)?;
+        }
+        if let Some(want) = &e.visuals {
+            let got: Vec<String> = game
+                .visuals
+                .iter()
+                .flat_map(|((x, y, z), parts)| {
+                    parts
+                        .iter()
+                        .map(move |p| format!("{x} {y} {z} {} {}", p.state, p.speed))
+                })
+                .collect();
+            same("visuals", want, &got)?;
         }
         if let Some(want) = &e.corner {
             let got = game.panel().map(|p| corner_name(p.corner).to_string());

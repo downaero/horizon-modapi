@@ -1039,6 +1039,7 @@ Capability `block-entities`, server mods: model parts drawn at the mod's own blo
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `set` | `func(dimension: string, x: s32, y: s32, z: s32, parts: list<part>) -> result<_, string>` | Draws `parts` (at most 16) at a block of the mod's own, replacing what it drew there, after the call; none draws nothing there any more. |
+| `set-in-phase` | `func(dimension: string, x: s32, y: s32, z: s32, parts: list<part>) -> result<_, string>` | `set`, with each part's `angle` its angle at game time 0 instead of at the tick it was set: parts at one speed turn in step however far apart they were set, as Flywheel turns Create's cogs (angle = time x speed + offset), so their teeth mesh. |
 
 ## `block-data`
 

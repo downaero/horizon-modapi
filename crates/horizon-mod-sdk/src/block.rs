@@ -116,8 +116,8 @@ pub trait BlockEntity: Sized + 'static {
     /// What it draws at its block, after it is placed and after each tick
     /// (capability `block-entities`, `visuals`): the parts go to players'
     /// games only when they differ from the last ones, and their games turn
-    /// them every frame. A part whose speed changes starts again from its
-    /// `angle`.
+    /// them every frame. A part's `angle` is its angle at game time 0
+    /// (`visuals.set-in-phase`), so parts at one speed turn in step.
     fn visual(&self, _state: &BlockState, _visual: &mut Visual) {}
 }
 
@@ -138,7 +138,7 @@ impl Visual {
     /// `state`'s model turning about `axis` through the block's centre at
     /// `speed` degrees a tick ([`rpm`] converts), as Flywheel's
     /// `RotatingInstance`; the part is returned to move its pivot, offset
-    /// or starting angle.
+    /// or angle at game time 0 (its `rotationOffset`).
     pub fn rotating(&mut self, state: &str, axis: Axis, speed: f32) -> &mut visuals::Part {
         self.parts.push(visuals::Part {
             state: state.to_owned(),
@@ -186,7 +186,7 @@ fn draw<T: BlockEntity>(entity: &T, level: &Level, pos: BlockPos, state: &BlockS
     if unchanged {
         return;
     }
-    if visuals::set(level.dimension(), pos.x, pos.y, pos.z, &visual.parts).is_ok() {
+    if visuals::set_in_phase(level.dimension(), pos.x, pos.y, pos.z, &visual.parts).is_ok() {
         DRAWN.with(|d| {
             let mut d = d.borrow_mut();
             if visual.parts.is_empty() {

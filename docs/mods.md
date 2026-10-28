@@ -302,6 +302,7 @@ A step's parts happen in this order:
 | `chat = "<Steve> hi"` | a chat line the player receives |
 | `command = "where north"` | the player types `/where north`; a command the mod doesn't own fails the step |
 | `break = { x = 1, y = 63, z = 0, state = "minecraft:stone" }`, `place = { ... }` | server mods: the player breaks or places that block |
+| `use = { x = 1, y = 64, z = 0 }` | server mods: the player right-clicks the block there with an empty hand |
 | `leave = "Alex"` | server mods: that player leaves |
 
 A server mod starts with nobody on: `join = "Alex"` (after `reload` and `title-screen`) brings a
@@ -326,6 +327,7 @@ checked:
 | `drops = ["minecraft:iron_nugget x9 at 5.5 65 5.5"]`, `taken = [7]` | server mods with `items`: every `items.drop` and the ids `items.take` removed, in order |
 | `effects = ["sound minecraft:block.anvil.use at 5 64 5", "event 2000 1 at 5 65 5"]` | server mods with `effects`: every sound and level event, in order |
 | `names = ["Gear Crate at 5 64 5"]` | server mods with `containers`: every `set-name` (`-` for none) |
+| `visuals = ["0 64 0 mymod:shaft[axis=x] 4.8"]` | server mods with `block-entities`: the parts drawn at the mod's blocks after the step, by position, with their speed in degrees a tick (`[]`: none); a block the mod breaks with `world.break-block` is air |
 | `stopped = "panic"` | the mod was turned off, for a reason holding this text; without it, a mod that traps, panics or overruns fails the test |
 
 A step may also set what the mod reads: `power = [{ x, y, z, level }]` (the redstone signal at those positions from then on, capability `redstone`) and `items = [{ id, item, count, x, y, z }]` (item entities lying in the Overworld, capability `items`; the ones `take` removes are gone for later steps).
@@ -701,10 +703,13 @@ only when they change; each game turns them every frame from the tick they were 
 frame's fraction of a tick, so a thousand shafts cost no packets while they turn. Parts set in one
 tick at the same speed turn together. They are saved with the world beside the block data, and gone
 when a player breaks the block or the game forgets its data. They are drawn as falling blocks are,
-lit by the block's light. In the SDK, `BlockEntity::visual` fills a `Visual`
-(`rotating(state, axis, speed)`, `model(state, offset)`; `block::rpm` turns revolutions a minute
-into degrees a tick) after each tick, sent only when it changed; a part whose speed changes starts
-again from its `angle`. The gears example's counter turns an iron trapdoor above it while it runs.
+lit by the block's light. `visuals.set-in-phase` (API level 41) sets them with each `angle` the
+part's angle at game time 0 instead of at the tick it was set, as Flywheel turns Create's cogs
+(time x speed + offset): parts at one speed turn in step however far apart they were set, so cogs
+placed minutes apart still mesh, and a part whose speed changes keeps its phase. In the SDK,
+`BlockEntity::visual` fills a `Visual` (`rotating(state, axis, speed)`, `model(state, offset)`;
+`block::rpm` turns revolutions a minute into degrees a tick) after each tick, sent in phase and
+only when it changed. The gears example's counter turns an iron trapdoor above it while it runs.
 
 ### Moving structures and networks
 

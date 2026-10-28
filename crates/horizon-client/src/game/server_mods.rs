@@ -971,7 +971,14 @@ mod run {
                                 .cloned()
                                 .collect();
                             for (mod_id, dimension, at) in drawn {
-                                self.store_mod_visual(mod_id, dimension, at, Vec::new(), None);
+                                self.store_mod_visual(
+                                    mod_id,
+                                    dimension,
+                                    at,
+                                    Vec::new(),
+                                    false,
+                                    None,
+                                );
                             }
                         }
                     }
@@ -1142,7 +1149,7 @@ mod run {
             self.mods.block_data_dirty |= changed || synced != was_synced;
             // Its block is gone: so is what the mod drew there.
             if gone && self.mods.visuals.contains_key(&key) {
-                self.store_mod_visual(key.0, key.1, key.2, Vec::new(), None);
+                self.store_mod_visual(key.0, key.1, key.2, Vec::new(), false, None);
             }
         }
 
@@ -1155,9 +1162,12 @@ mod run {
             dimension: String,
             pos: [i32; 3],
             parts: Vec<horizon_mods::visual::VisualPart>,
+            phased: bool,
             host: Option<&mut LanHost>,
         ) {
-            let start = self.world.game_time;
+            // In phase, the angles are those at game time 0: the parts turn
+            // from there, whenever they were set.
+            let start = if phased { 0 } else { self.world.game_time };
             let key = (mod_id, dimension, pos);
             let changed = if parts.is_empty() {
                 self.mods.visuals.remove(&key).is_some()
@@ -1165,7 +1175,7 @@ mod run {
                 self.mods
                     .visuals
                     .insert(key.clone(), (start, parts.clone()))
-                    .is_none_or(|old| old.1 != parts)
+                    .is_none_or(|old| old.1 != parts || (phased && old.0 != start))
             };
             if !changed {
                 return;
@@ -3305,7 +3315,8 @@ mod run {
                     dimension,
                     pos,
                     parts,
-                } => self.store_mod_visual(mod_id, dimension, pos, parts, host),
+                    phased,
+                } => self.store_mod_visual(mod_id, dimension, pos, parts, phased, host),
                 Output::Structure { dimension, payload } => {
                     self.store_mod_structure(dimension, payload, host)
                 }
