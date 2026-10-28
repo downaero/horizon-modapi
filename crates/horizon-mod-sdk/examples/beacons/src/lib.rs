@@ -70,15 +70,7 @@ impl ServerMod for Beacons {
         }
         if name == "around" {
             let r = args.integer("radius").unwrap_or(2);
-            let region = world::scan(
-                &player.dimension,
-                x - r,
-                y - r,
-                z - r,
-                x + r,
-                y + r,
-                z + r,
-            )?;
+            let region = world::scan(&player.dimension, x - r, y - r, z - r, x + r, y + r, z + r)?;
             return Ok(Some(format!(
                 "{} solid blocks of {} kinds within {r}",
                 region.blocks.len(),
