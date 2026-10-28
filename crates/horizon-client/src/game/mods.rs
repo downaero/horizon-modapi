@@ -94,6 +94,24 @@ pub(super) struct ModsState {
     /// a close), in the order they did it, for the next tick.
     #[cfg(feature = "mods")]
     pub(super) menu_events: Vec<(String, String, horizon_mods::menu_layout::MenuMessage)>,
+    /// Every server mod's typed entities (`entity-types`), the world they
+    /// were read from, and whether they changed since saved.
+    #[cfg(feature = "mods")]
+    pub(super) typed: Vec<horizon_mods::TypedEntity>,
+    #[cfg(feature = "mods")]
+    pub(super) typed_root: Option<std::path::PathBuf>,
+    #[cfg(feature = "mods")]
+    pub(super) typed_dirty: bool,
+    /// The armor stand showing each typed entity (mod, id) in the simulated
+    /// dimension.
+    #[cfg(feature = "mods")]
+    pub(super) typed_stands: std::collections::HashMap<(String, u32), u32>,
+    /// Changes mods queued for their typed entities, for the tick's end.
+    #[cfg(feature = "mods")]
+    pub(super) typed_ops: Vec<(String, horizon_mods::TypedOp)>,
+    /// Players' hits and clicks on typed entities, for the next tick.
+    #[cfg(feature = "mods")]
+    pub(super) typed_events: Vec<super::mod_entity_types::TypedEvent>,
     /// Commands server mods run as the console (mod, line), for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) console_lines: Vec<(String, String)>,
@@ -556,6 +574,7 @@ impl Game<'_> {
             player,
             clock,
             inventories: Default::default(),
+            typed_entities: std::sync::Arc::new(self.mods.typed.clone()),
             gui_size: self.gui_size(),
             held: self.mod_held(),
             frame: self.frame_reading(),
@@ -808,6 +827,7 @@ impl Game<'_> {
                 | Output::UseItem { .. }
                 | Output::Menu { .. }
                 | Output::Console { .. }
+                | Output::Typed { .. }
                 | Output::SetPlayerStack { .. }
                 | Output::Effect { .. }
                 | Output::Container { .. }) => {

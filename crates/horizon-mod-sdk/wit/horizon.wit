@@ -1413,6 +1413,100 @@ interface recipe-manager {
     test-ingredient: func(ingredient: string, item: string) -> bool;
 }
 
+/// One of a server mod's entities of its own types (`entity-types`), as
+/// its events and reads give it. Types only: every server mod has it.
+interface entity-data {
+    /// One of the mod's entities, as of the start of this tick.
+    record entity {
+        /// The game's id for it, the same after a restart.
+        id: u32,
+        /// Its type, `mymod:roller`.
+        kind: string,
+        dimension: string,
+        /// Its bottom centre.
+        x: f64,
+        y: f64,
+        z: f64,
+        yaw: f32,
+        /// Blocks a tick.
+        vx: f64,
+        vy: f64,
+        vz: f64,
+        on-ground: bool,
+        health: f32,
+        /// The mod's own bytes on it (`set-data`).
+        data: list<u8>,
+    }
+}
+
+/// Capability `entities`, server mods only (experimental): entity types
+/// of the mod's own, as NeoForge's `EntityType`s. The game keeps each one:
+/// it falls and slides as the type says, takes hits, and is saved with the
+/// world with the mod's own bytes; the mod gives it its behaviour each tick
+/// (`entity-events`). Every client sees it as an invisible armor stand
+/// wearing the type's model on its head (a block's item is drawn as the
+/// block), with the armor stand's hitbox.
+interface entity-types {
+    use entity-data.{entity};
+    record entity-type {
+        /// `mymod:roller`, in one of the mod's namespaces.
+        id: string,
+        /// The item its model is, worn on its head: `mymod:roller`.
+        model: string,
+        /// The small armor stand's size (0.5 by 0.9875) instead of the full
+        /// one (0.5 by 1.975).
+        small: bool,
+        /// Falls as a mob does (0.08 a tick); false: it floats and moves only
+        /// by its velocity.
+        gravity: bool,
+        /// The health it starts with, at most 1024; 0: no hit hurts it.
+        health: f32,
+    }
+    /// Registers a type, at init or later; again replaces it for entities
+    /// spawned from then on. At most 64 types.
+    register: func(def: entity-type) -> result<_, string>;
+    /// Spawns an entity of a registered type, after the call; its id now.
+    /// At most 256 of the mod's at once.
+    spawn: func(kind: string, dimension: string, x: f64, y: f64, z: f64, yaw: f32) -> result<u32, string>;
+    /// One of the mod's entities as of this tick's start; none for one
+    /// spawned this tick or gone.
+    get: func(id: u32) -> option<entity>;
+    /// Every entity of the mod's, as of this tick's start.
+    all: func() -> list<entity>;
+    /// Sets its velocity, blocks a tick (each at most 10), after the call. On
+    /// the ground it slows as a mob does (0.546 a tick), in the air by 0.91.
+    set-velocity: func(id: u32, vx: f64, vy: f64, vz: f64) -> bool;
+    /// Puts it at a position, facing `yaw`, after the call.
+    move-to: func(id: u32, x: f64, y: f64, z: f64, yaw: f32) -> bool;
+    /// Keeps bytes on it (at most 4 KiB), saved with it.
+    set-data: func(id: u32, data: list<u8>) -> bool;
+    /// Takes `amount` off its health, after the call; at 0 it dies
+    /// (`entity-events.died`).
+    hurt: func(id: u32, amount: f32) -> bool;
+    /// Changes the item its model is.
+    set-model: func(id: u32, item: string) -> bool;
+    /// Turns a part of its model, as `entities.set-pose` does: `head` turns
+    /// the model.
+    set-pose: func(id: u32, part: string, x: f32, y: f32, z: f32) -> bool;
+    /// Removes it, after the call, with no `died`.
+    remove: func(id: u32) -> bool;
+}
+
+/// What the server calls in a server mod for its entity types.
+interface entity-events {
+    use entity-data.{entity};
+    /// Each server tick, the mod's entities in the dimension the server
+    /// simulates, after the game moved them: their behaviour.
+    tick: func(entities: list<entity>);
+    /// A player hit one with `damage` (their attack's). True takes the hit
+    /// (no damage); false lets the game take it off its health.
+    attacked: func(id: u32, player: string, damage: f32) -> bool;
+    /// A player right-clicked one, `item` in their main hand ("" for none).
+    interacted: func(id: u32, player: string, item: string);
+    /// Its health reached 0; it is gone after the call.
+    died: func(id: u32, kind: string);
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -1461,6 +1555,14 @@ world horizon-block-mod {
     import console;
     import stacks;
     import recipe-manager;
+    import entity-types;
+    export entity-events;
+}
+
+/// The game's side of `entity-types` and `entity-events`.
+world entity-types-host {
+    import entity-types;
+    export entity-events;
 }
 
 /// The game's side of `recipe-manager` (imports only).

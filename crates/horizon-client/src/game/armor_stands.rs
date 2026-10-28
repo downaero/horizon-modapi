@@ -409,6 +409,15 @@ impl Game<'_> {
             return false;
         }
         let held = self.held().cloned();
+        // A mod's typed entity hears the click instead.
+        let item = held
+            .as_ref()
+            .map_or_else(String::new, |h| h.item.to_string());
+        let player = self.player_uuid_string();
+        if self.typed_interact(self.armor_stands[i].id, player, item) {
+            self.swing_arm();
+            return true;
+        }
         if held
             .as_ref()
             .is_some_and(|h| &*h.item == "minecraft:name_tag")
@@ -491,6 +500,12 @@ impl Game<'_> {
         if !self.before_block(d) || self.mob_hit().is_some_and(|m| m.1 < d) {
             return false;
         }
+        // A mod's typed entity takes the hit as its mod says.
+        let damage = 1.0 + self.attack_item_info().map_or(0.0, |i| i.attack_damage);
+        let player = self.player_uuid_string();
+        if self.typed_attack(self.armor_stands[i].id, player, damage) {
+            return true;
+        }
         let time = self.world.game_time;
         let at = self.armor_stands[i].position;
         let at = [at.x, at.y, at.z];
@@ -542,8 +557,17 @@ impl Game<'_> {
         let mut dead = Vec::new();
         // ServerLevel.tick: only entities in entity-ticking chunks tick.
         let ticking = self.entity_ticking_area();
+        // A mod's typed entity moves by its own rules (game/mod_entity_types.rs).
+        let typed: Vec<u32> = self
+            .armor_stands
+            .iter()
+            .map(|a| a.id)
+            .filter(|&id| self.is_typed_stand(id))
+            .collect();
         for (i, a) in self.armor_stands.iter_mut().enumerate() {
-            if !ticking(a.position.x.floor() as i32, a.position.z.floor() as i32) {
+            if !ticking(a.position.x.floor() as i32, a.position.z.floor() as i32)
+                || typed.contains(&a.id)
+            {
                 continue;
             }
             a.tick(&mut scene);

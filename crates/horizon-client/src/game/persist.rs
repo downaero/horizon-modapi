@@ -804,7 +804,10 @@ impl Game<'_> {
             }
         }
         for a in &self.armor_stands {
-            if keys.contains(&chunk_of(a.position)) && !self.is_mod_entity(a.id) {
+            if keys.contains(&chunk_of(a.position))
+                && !self.is_mod_entity(a.id)
+                && !self.is_typed_stand(a.id)
+            {
                 let uuid = self
                     .persist
                     .uuids

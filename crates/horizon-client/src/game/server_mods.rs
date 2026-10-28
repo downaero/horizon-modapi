@@ -788,6 +788,8 @@ mod run {
                 return;
             }
             self.world.neighbor_log.get_or_insert_with(Vec::new);
+            self.sync_typed_entities();
+            self.tick_typed_entities();
             let players = self.server_players(None);
             let mut snapshot = self.mod_snapshot_with(players.clone());
             self.fill_mod_inventories(&mut snapshot, None);
@@ -875,6 +877,7 @@ mod run {
             for (from, to, data) in std::mem::take(&mut self.mods.peer_messages) {
                 self.mods.mods.peer_message(&to, &from, &data);
             }
+            self.deliver_typed_events();
             self.mods.mods.server_tick(self.ticks);
             self.mods.mods.tick_blocks();
             self.return_world();
@@ -882,6 +885,7 @@ mod run {
             self.show_mod_output();
             self.apply_mod_block_writes();
             self.apply_mod_entities();
+            self.apply_typed_ops();
             self.apply_mod_containers();
             self.apply_mod_takes();
             self.apply_mod_pushes();
@@ -893,8 +897,11 @@ mod run {
             self.apply_mod_signals();
             self.apply_mod_drops();
             self.apply_mod_effects();
-            if self.mods.block_data_dirty && self.ticks.is_multiple_of(200) {
-                self.flush_mod_block_data();
+            if self.ticks.is_multiple_of(200) {
+                if self.mods.block_data_dirty {
+                    self.flush_mod_block_data();
+                }
+                self.flush_typed_entities();
             }
         }
 
@@ -2654,6 +2661,12 @@ mod run {
                     let queue = &mut self.mods.player_stacks;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((mod_id, player, slot, stack));
+                    }
+                }
+                Output::Typed { mod_id, op } => {
+                    let queue = &mut self.mods.typed_ops;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push((mod_id, op));
                     }
                 }
                 Output::Console { mod_id, line } => {

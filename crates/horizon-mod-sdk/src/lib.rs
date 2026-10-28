@@ -210,6 +210,8 @@ pub mod server {
     });
 
     pub use exports::horizon::mods::block_events::{Guest as __BlockGuest, Pos};
+    #[doc(hidden)]
+    pub use exports::horizon::mods::entity_events::Guest as __EntityGuest;
     pub use exports::horizon::mods::item_events::{BlockTarget, Guest as __ItemGuest};
     pub use exports::horizon::mods::menu_events::Guest as __MenuGuest;
     pub use exports::horizon::mods::neighbor_events::Guest as __NeighborGuest;
@@ -232,6 +234,8 @@ pub mod server {
     pub use horizon::mods::effects;
     /// Capability `entities`: small marker entities.
     pub use horizon::mods::entities;
+    /// Capability `entities`: entity types of the mod's own.
+    pub use horizon::mods::entity_types;
     /// The files in the mod's own package, read only.
     pub use horizon::mods::files;
     /// Capability `items`: item entities dropped into the world.
@@ -293,6 +297,17 @@ pub mod server {
         fn menu_text(&mut self, _player: &str, _id: u32, _value: &str) {}
         /// The player closed the mod's screen.
         fn menu_closed(&mut self, _player: &str) {}
+        /// Each server tick, the mod's entities of its own types in the
+        /// simulated dimension, after the game moved them.
+        fn entity_tick(&mut self, _entities: &[entity_types::Entity]) {}
+        /// A player hit one of the mod's entities: true takes the hit.
+        fn entity_attacked(&mut self, _id: u32, _player: &str, _damage: f32) -> bool {
+            false
+        }
+        /// A player right-clicked one of the mod's entities.
+        fn entity_interacted(&mut self, _id: u32, _player: &str, _item: &str) {}
+        /// One of the mod's entities died.
+        fn entity_died(&mut self, _id: u32, _kind: &str) {}
         /// A message from another server mod (`peers::send`), by its id.
         fn peer_message(&mut self, _from: &str, _data: &[u8]) {}
         /// A player used `item` (on `target`, or in the air): true takes the
@@ -559,6 +574,22 @@ macro_rules! export_server_mod {
                     let mut out = false;
                     with(|m| out = m.block_used(&player, &dimension, pos, &state));
                     out
+                }
+            }
+            impl $crate::server::__EntityGuest for Export {
+                fn tick(entities: Vec<$crate::server::entity_types::Entity>) {
+                    with(|m| m.entity_tick(&entities))
+                }
+                fn attacked(id: u32, player: String, damage: f32) -> bool {
+                    let mut out = false;
+                    with(|m| out = m.entity_attacked(id, &player, damage));
+                    out
+                }
+                fn interacted(id: u32, player: String, item: String) {
+                    with(|m| m.entity_interacted(id, &player, &item))
+                }
+                fn died(id: u32, kind: String) {
+                    with(|m| m.entity_died(id, &kind))
                 }
             }
             impl $crate::server::__MenuGuest for Export {

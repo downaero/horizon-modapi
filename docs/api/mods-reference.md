@@ -49,8 +49,15 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `console`, `stacks`, `recipe-manager`, `log`, `storage`, `players`, `world`
-- Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `item-events`, `peer-events`, `menu-events`, `server-events`
+- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `console`, `stacks`, `recipe-manager`, `entity-data`, `entity-types`, `log`, `storage`, `players`, `world`
+- Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `item-events`, `peer-events`, `menu-events`, `entity-events`, `server-events`
+
+## World `entity-types-host`
+
+The game's side of `entity-types` and `entity-events`.
+
+- Imports (what the game offers): `entity-data`, `entity-types`
+- Exports (what the mod provides): `entity-events`
 
 ## World `recipe-manager-host`
 
@@ -1441,3 +1448,81 @@ A recipe file of a type the game does not run itself.
 | `stonecut` | `func(item: string) -> list<tuple<string, item-count>>` | The stonecutter's recipes taking `item`, in its order: each recipe's id and result. |
 | `of-type` | `func(kind: string) -> list<recipe-file>` | Every recipe file of type `kind` (`gears:pressing`) the content mods carry, by id; empty for vanilla's own types (`minecraft:`). |
 | `test-ingredient` | `func(ingredient: string, item: string) -> bool` | Whether an ingredient, as recipe files write one (`minecraft:iron_ingot`, `#minecraft:logs`, or a JSON list of them), takes `item`. |
+
+## `entity-data`
+
+Access: not granted by any capability.
+
+One of a server mod's entities of its own types (`entity-types`), as its events and reads give it. Types only: every server mod has it.
+
+### record `entity`
+
+One of the mod's entities, as of the start of this tick.
+
+| Field | Type | |
+| --- | --- | --- |
+| `id` | `u32` | The game's id for it, the same after a restart. |
+| `kind` | `string` | Its type, `mymod:roller`. |
+| `dimension` | `string` |  |
+| `x` | `f64` | Its bottom centre. |
+| `y` | `f64` |  |
+| `z` | `f64` |  |
+| `yaw` | `f32` |  |
+| `vx` | `f64` | Blocks a tick. |
+| `vy` | `f64` |  |
+| `vz` | `f64` |  |
+| `on-ground` | `bool` |  |
+| `health` | `f32` |  |
+| `data` | `list<u8>` | The mod's own bytes on it (`set-data`). |
+
+
+## `entity-types`
+
+Access: not granted by any capability.
+
+Capability `entities`, server mods only (experimental): entity types of the mod's own, as NeoForge's `EntityType`s. The game keeps each one: it falls and slides as the type says, takes hits, and is saved with the world with the mod's own bytes; the mod gives it its behaviour each tick (`entity-events`). Every client sees it as an invisible armor stand wearing the type's model on its head (a block's item is drawn as the block), with the armor stand's hitbox.
+
+### type `entity`
+
+`type entity = entity`
+
+### record `entity-type`
+
+| Field | Type | |
+| --- | --- | --- |
+| `id` | `string` | `mymod:roller`, in one of the mod's namespaces. |
+| `model` | `string` | The item its model is, worn on its head: `mymod:roller`. |
+| `small` | `bool` | The small armor stand's size (0.5 by 0.9875) instead of the full one (0.5 by 1.975). |
+| `gravity` | `bool` | Falls as a mob does (0.08 a tick); false: it floats and moves only by its velocity. |
+| `health` | `f32` | The health it starts with, at most 1024; 0: no hit hurts it. |
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `register` | `func(def: entity-type) -> result<_, string>` | Registers a type, at init or later; again replaces it for entities spawned from then on. At most 64 types. |
+| `spawn` | `func(kind: string, dimension: string, x: f64, y: f64, z: f64, yaw: f32) -> result<u32, string>` | Spawns an entity of a registered type, after the call; its id now. At most 256 of the mod's at once. |
+| `get` | `func(id: u32) -> option<entity>` | One of the mod's entities as of this tick's start; none for one spawned this tick or gone. |
+| `all` | `func() -> list<entity>` | Every entity of the mod's, as of this tick's start. |
+| `set-velocity` | `func(id: u32, vx: f64, vy: f64, vz: f64) -> bool` | Sets its velocity, blocks a tick (each at most 10), after the call. On the ground it slows as a mob does (0.546 a tick), in the air by 0.91. |
+| `move-to` | `func(id: u32, x: f64, y: f64, z: f64, yaw: f32) -> bool` | Puts it at a position, facing `yaw`, after the call. |
+| `set-data` | `func(id: u32, data: list<u8>) -> bool` | Keeps bytes on it (at most 4 KiB), saved with it. |
+| `hurt` | `func(id: u32, amount: f32) -> bool` | Takes `amount` off its health, after the call; at 0 it dies (`entity-events.died`). |
+| `set-model` | `func(id: u32, item: string) -> bool` | Changes the item its model is. |
+| `set-pose` | `func(id: u32, part: string, x: f32, y: f32, z: f32) -> bool` | Turns a part of its model, as `entities.set-pose` does: `head` turns the model. |
+| `remove` | `func(id: u32) -> bool` | Removes it, after the call, with no `died`. |
+
+## `entity-events`
+
+Access: exported by the mod: the game calls it.
+
+What the server calls in a server mod for its entity types.
+
+### type `entity`
+
+`type entity = entity`
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `tick` | `func(entities: list<entity>)` | Each server tick, the mod's entities in the dimension the server simulates, after the game moved them: their behaviour. |
+| `attacked` | `func(id: u32, player: string, damage: f32) -> bool` | A player hit one with `damage` (their attack's). True takes the hit (no damage); false lets the game take it off its health. |
+| `interacted` | `func(id: u32, player: string, item: string)` | A player right-clicked one, `item` in their main hand ("" for none). |
+| `died` | `func(id: u32, kind: string)` | Its health reached 0; it is gone after the call. |

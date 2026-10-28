@@ -7,8 +7,8 @@ use horizon_mod_sdk::{
     export_server_mod, player_ops,
     server::{
         BlockPos, BlockTarget, Player, Pos, Registration, ServerMod, attachments, block_entities,
-        containers, effects, entities, items, menus, net, peers, players, recipe_manager, redstone,
-        stacks, transfer, world,
+        containers, effects, entities, entity_types, items, menus, net, peers, players,
+        recipe_manager, redstone, stacks, transfer, world,
     },
 };
 
@@ -18,6 +18,8 @@ const BELT: &str = "gears:belt";
 const GAUGE: &str = "gears:gauge";
 const LIFT: &str = "gears:lift";
 const MILL: &str = "gears:mill";
+/// The mod's own entity type: a small gear that rolls after players.
+const ROLLER: &str = "gears:roller";
 const DRILL: &str = "gears:drill";
 const DEPLOYER: &str = "gears:deployer";
 /// Ticks a lift takes to raise its load three blocks.
@@ -254,6 +256,15 @@ impl ServerMod for Gears {
         };
         // The crate holds items (capability `containers`) and opens as a chest.
         containers::register(CRATE)?;
+        // An entity type of the mod's own (capability `entities`): a gear
+        // the size of a small armor stand, worn as the counter's block.
+        entity_types::register(&entity_types::EntityType {
+            id: ROLLER.into(),
+            model: COUNTER.into(),
+            small: true,
+            gravity: true,
+            health: 10.0,
+        })?;
         Ok((this, Registration::new().on_blocks().on_tick()))
     }
 
@@ -347,6 +358,58 @@ impl ServerMod for Gears {
         self.drafts.push((player.to_owned(), value.to_owned()));
     }
 
+    /// Each tick the rollers roll toward the nearest player within 16
+    /// blocks, turn their gear and count their age in their own bytes.
+    fn entity_tick(&mut self, rollers: &[entity_types::Entity]) {
+        let online = players::online();
+        for r in rollers {
+            let age = <[u8; 4]>::try_from(r.data.as_slice()).map_or(0, u32::from_le_bytes) + 1;
+            entity_types::set_data(r.id, &age.to_le_bytes());
+            entity_types::set_pose(r.id, "head", (age * 9 % 360) as f32, 0.0, 0.0);
+            let near = online
+                .iter()
+                .filter(|p| p.dimension == r.dimension)
+                .map(|p| (p.x - r.x, p.z - r.z))
+                .filter(|(dx, dz)| dx * dx + dz * dz < 256.0)
+                .min_by(|a, b| (a.0 * a.0 + a.1 * a.1).total_cmp(&(b.0 * b.0 + b.1 * b.1)));
+            let Some((dx, dz)) = near else { continue };
+            let d = (dx * dx + dz * dz).sqrt();
+            if d < 2.0 || !r.on_ground {
+                continue;
+            }
+            let yaw = (-dx.atan2(dz)).to_degrees() as f32;
+            entity_types::move_to(r.id, r.x, r.y, r.z, yaw);
+            entity_types::set_velocity(r.id, dx / d * 0.15, r.vy, dz / d * 0.15);
+        }
+    }
+
+    /// A roller right-clicked hops and says how old it is.
+    fn entity_interacted(&mut self, id: u32, player: &str, _item: &str) {
+        let Some(r) = entity_types::get(id) else {
+            return;
+        };
+        let age = <[u8; 4]>::try_from(r.data.as_slice()).map_or(0, u32::from_le_bytes);
+        entity_types::set_velocity(id, r.vx, 0.5, r.vz);
+        players::tell(
+            player,
+            &format!("Roller #{id}: {} ticks old, {} health", age, r.health),
+        );
+    }
+
+    /// A roller broken drops three iron nuggets where it stood.
+    fn entity_died(&mut self, id: u32, _kind: &str) {
+        if let Some(r) = entity_types::get(id) {
+            let _ = items::drop(
+                &r.dimension,
+                r.x,
+                r.y + 0.3,
+                r.z,
+                "minecraft:iron_nugget",
+                3,
+            );
+        }
+    }
+
     /// The player left a screen of the mod's.
     fn menu_closed(&mut self, player: &str) {
         self.viewers.retain(|v| v != player);
@@ -372,6 +435,22 @@ impl ServerMod for Gears {
         match target {
             Some(t) if item == "minecraft:stick" && t.state == "minecraft:crafting_table" => {
                 auto_craft(player, t);
+                true
+            }
+            // Sneaking, a stick on one of the mod's blocks lets a roller out.
+            Some(t) if item == "minecraft:stick" && sneaking && t.state.starts_with("gears:") => {
+                let spawned = entity_types::spawn(
+                    ROLLER,
+                    &t.dimension,
+                    f64::from(t.x) + 0.5,
+                    f64::from(t.y) + 1.0,
+                    f64::from(t.z) + 0.5,
+                    0.0,
+                );
+                match spawned {
+                    Ok(id) => players::tell(player, &format!("Roller #{id} is out")),
+                    Err(e) => players::tell(player, &format!("No roller: {e}")),
+                };
                 true
             }
             Some(t) if item == "minecraft:stick" && t.state.starts_with("gears:") => {

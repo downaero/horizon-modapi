@@ -1242,6 +1242,26 @@ impl Game<'_> {
             }
             S::Attack(p) => self.guest_attack(host, conn, p.id),
             S::Interact(p) => {
+                // A mod's typed entity hears the click (main hand only).
+                if let Ok(stand) = u32::try_from(p.id)
+                    && self.is_typed_stand(stand)
+                {
+                    if p.hand == 0 {
+                        let g = &host.hub.guests[gi];
+                        let item = g
+                            .inventory
+                            .get(g.selected)
+                            .and_then(|s| s.as_ref())
+                            .map_or_else(String::new, |s| s.item.to_string());
+                        self.typed_interact(
+                            stand,
+                            super::mod_entity_types::uuid_text(g.uuid),
+                            item,
+                        );
+                        self.lan_swing_back(host, conn, Some(true));
+                    }
+                    return;
+                }
                 let before = host.hub.guests[gi].vehicle;
                 if self
                     .look_at_entity(host, gi, p.id, Some(p.location))
@@ -1783,6 +1803,19 @@ impl Game<'_> {
             return;
         };
         if host.hub.guests[gi].spectator() {
+            return;
+        }
+        // A mod's typed entity takes the hit as its mod says.
+        if let Ok(stand) = u32::try_from(id)
+            && self.is_typed_stand(stand)
+        {
+            let g = &host.hub.guests[gi];
+            let held = g.inventory.get(g.selected).and_then(|s| s.as_ref());
+            let damage = 1.0
+                + held
+                    .and_then(|s| self.res.items().get(&s.item))
+                    .map_or(0.0, |i| i.attack_damage);
+            self.typed_attack(stand, super::mod_entity_types::uuid_text(g.uuid), damage);
             return;
         }
         if let Some(victim) = Self::pvp_victim(host, conn, id) {

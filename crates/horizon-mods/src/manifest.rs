@@ -270,9 +270,13 @@ impl Capability {
         }
         if matches!(
             interface,
-            "log" | "files" | "attachments" | "peers" | "recipe-manager"
+            "log" | "files" | "attachments" | "peers" | "recipe-manager" | "entity-data"
         ) {
             return Ok(None);
+        }
+        // A mod's own entity types are part of capability `entities`.
+        if interface == "entity-types" {
+            return Ok(Some(Capability::Entities));
         }
         // A recipe viewer's panel is part of capability `ui`.
         if interface == "browser" {

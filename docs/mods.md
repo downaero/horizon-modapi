@@ -856,6 +856,31 @@ in the world as a model. `entities.set-pose(handle, part, x, y, z)` turns
 as an armor stand's pose does: a spinning gear is a block on the head turned a
 few degrees each tick.
 
+#### Entity types of the mod's own
+
+**API level 37, experimental, server mods.** As NeoForge's `EntityType`s, under capability
+`entities`: `entity-types.register(def)` names a type in one of the mod's namespaces with its
+model (an item worn on the head, a block's item drawn as the block), size (an armor stand's, or a
+small one's), gravity and health. `spawn(kind, dimension, x, y, z, yaw)` gives back the entity's
+id, which stays the same after a restart. The game keeps each entity: it moves it by its velocity
+against the blocks (gravity if its type has it; on the ground it slows as a mob does), saves it
+with the world in `horizon-mod-data/entities.json` with the mod's own bytes (`set-data`, at most
+4 KiB), and takes players' hits off its health. The mod gives it its behaviour:
+
+- `entity-events.tick(entities)` each server tick, with the mod's entities in the simulated
+  dimension after they moved, where the mod calls `set-velocity`, `move-to`, `set-pose` (the
+  model turns with `head`), `set-model`, `hurt` or `remove`;
+- `attacked(id, player, damage)` when a player hits one: true takes the hit, false lets the game
+  take the damage off its health;
+- `interacted(id, player, item)` when a player right-clicks one;
+- `died(id, kind)` when its health reaches 0 (or it falls out of the world), before it goes.
+
+`get(id)` and `all()` read them as of the tick's start. Every client, vanilla's too, sees each one
+as an invisible armor stand wearing its model, with the armor stand's hitbox; at most 256 a mod.
+In the gears example, a stick used while sneaking on one of its blocks lets out a `gears:roller`
+that rolls after the nearest player, spins its gear, hops and tells its age when clicked, and drops
+three iron nuggets when broken.
+
 ### Capability `net`
 
 A mod with a client half and a server half (two mods with the same `id`, one

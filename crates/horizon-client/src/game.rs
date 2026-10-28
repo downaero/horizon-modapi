@@ -111,6 +111,7 @@ mod mob_sounds;
 mod mod_browser;
 #[cfg(feature = "mods")]
 mod mod_browser_recipes;
+mod mod_entity_types;
 mod mod_input;
 mod mod_menus;
 #[cfg(feature = "mods")]

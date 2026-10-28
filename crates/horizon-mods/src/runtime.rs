@@ -213,6 +213,94 @@ mod menu_bindings {
     });
 }
 use menu_bindings::{MenusHost, horizon::mods::menus};
+mod entity_type_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "entity-types-host",
+    });
+}
+use entity_type_bindings::{EntityTypesHost, horizon::mods::entity_types};
+/// Most entities of its own types one mod has at once.
+pub const TYPED_PER_MOD: usize = 256;
+/// Most entity types one mod registers.
+const ENTITY_TYPES_PER_MOD: usize = 64;
+/// Most bytes a mod keeps on one entity.
+pub const TYPED_DATA_BYTES: usize = 4 << 10;
+
+/// An entity of a mod's own type (`entity-types`), as the game keeps and
+/// saves it.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TypedEntity {
+    pub mod_id: String,
+    pub id: u32,
+    pub kind: String,
+    pub dimension: String,
+    pub pos: [f64; 3],
+    pub velocity: [f64; 3],
+    pub yaw: f32,
+    pub on_ground: bool,
+    pub health: f32,
+    pub max_health: f32,
+    pub model: String,
+    pub small: bool,
+    pub gravity: bool,
+    pub data: Vec<u8>,
+}
+
+/// The parts `set-pose` turns, in the game's order.
+const POSE_PARTS: [&str; 6] = [
+    "head",
+    "body",
+    "left-arm",
+    "right-arm",
+    "left-leg",
+    "right-leg",
+];
+
+/// One change to a mod's typed entities, by id.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TypedOp {
+    Spawn(TypedEntity),
+    Velocity {
+        id: u32,
+        velocity: [f64; 3],
+    },
+    Move {
+        id: u32,
+        pos: [f64; 3],
+        yaw: f32,
+    },
+    Data {
+        id: u32,
+        data: Vec<u8>,
+    },
+    Hurt {
+        id: u32,
+        amount: f32,
+    },
+    Model {
+        id: u32,
+        item: String,
+    },
+    /// A part (0 head to 5 right leg), in degrees.
+    Pose {
+        id: u32,
+        part: usize,
+        rotation: [f32; 3],
+    },
+    Remove {
+        id: u32,
+    },
+}
+
+/// A registered entity type: its model, size, gravity and health.
+#[derive(Clone, Debug)]
+struct EntityTypeDef {
+    model: String,
+    small: bool,
+    gravity: bool,
+    health: f32,
+}
 mod console_bindings {
     wasmtime::component::bindgen!({
         path: "../horizon-mod-sdk/wit",
@@ -499,6 +587,9 @@ pub struct Snapshot {
     /// Each online player's 41 inventory slots and selected hotbar slot, by
     /// UUID (`players.inventory`).
     pub inventories: std::collections::HashMap<String, (Vec<Option<StackInfo>>, u32)>,
+    /// Every server mod's typed entities (`entity-types`); each mod sees
+    /// its own.
+    pub typed_entities: Arc<Vec<TypedEntity>>,
     /// The first block along the player's view within [`RAYCAST_MAX`] and
     /// its distance from the eye, for `game.raycast`; the game works it out
     /// only while a mod calls it ([`Mods::wants_raycast`]).
@@ -776,6 +867,8 @@ pub enum Output {
         slot: u32,
         stack: Option<StackInfo>,
     },
+    /// `entity-types`: a change to the mod's typed entities.
+    Typed { mod_id: String, op: TypedOp },
     /// `console.run`: a command as the server's console.
     Console { mod_id: String, line: String },
     /// `menus.*`: a screen of the mod's own opened, or its data.
@@ -982,6 +1075,7 @@ struct Running {
     peer: Option<PeersHost>,
     /// A server mod's `menu-events` export.
     menu: Option<MenusHost>,
+    typed: Option<EntityTypesHost>,
 }
 
 /// A running mod's exports and the hooks its `init` asked for.
@@ -1108,6 +1202,10 @@ struct State {
     block_namespaces: Vec<String>,
     /// Where [`Mods::tick_blocks`] resumes in `block_data`.
     block_cursor: usize,
+    /// The entity types the mod registered, by id.
+    entity_types: std::collections::HashMap<String, EntityTypeDef>,
+    /// The next id for a typed entity of the mod's.
+    next_typed: u32,
     /// A server mod: `net.send` may name a player.
     server: bool,
     /// Capability `entities`: the handles of the mod's live entities, and
@@ -1283,6 +1381,8 @@ impl Mods {
                 .map_err(|e| e.to_string())?;
             PeersHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
+            EntityTypesHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
             MenusHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             ConsoleHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
@@ -1387,6 +1487,8 @@ impl Mods {
             world,
             block_data: Default::default(),
             block_cursor: 0,
+            entity_types: Default::default(),
+            next_typed: 1,
             block_namespaces: std::iter::once(m.id.clone())
                 .chain(m.namespaces.iter().cloned())
                 .collect(),
@@ -1423,6 +1525,11 @@ impl Mods {
         };
         let menu = if server {
             MenusHost::new(&mut store, &instance).ok()
+        } else {
+            None
+        };
+        let typed = if server {
+            EntityTypesHost::new(&mut store, &instance).ok()
         } else {
             None
         };
@@ -1502,6 +1609,7 @@ impl Mods {
             item,
             peer,
             menu,
+            typed,
         }))
     }
 
@@ -1883,6 +1991,69 @@ impl Mods {
             Some(h) => h
                 .horizon_mods_menu_events()
                 .call_closed(&mut run.store, player),
+            None => Ok(()),
+        });
+    }
+    /// The running server mod with this id that hears its entities' events.
+    fn typed_owner_index(&self, mod_id: &str) -> Option<usize> {
+        (0..self.entries.len()).find(|&i| {
+            self.entries[i]
+                .run
+                .as_ref()
+                .is_some_and(|r| r.typed.is_some() && r.store.data().id == mod_id)
+        })
+    }
+    /// Mod `mod_id`'s typed entities in the simulated dimension, after the
+    /// game moved them: their tick.
+    pub fn entity_tick(&mut self, mod_id: &str, entities: &[TypedEntity]) {
+        let Some(i) = self.typed_owner_index(mod_id) else {
+            return;
+        };
+        let list: Vec<entity_types::Entity> = entities.iter().map(typed_view).collect();
+        self.call(i, FUEL_TICK, |run| match &run.typed {
+            Some(h) => h
+                .horizon_mods_entity_events()
+                .call_tick(&mut run.store, &list),
+            None => Ok(()),
+        });
+    }
+    /// A player hit one of mod `mod_id`'s entities: whether the mod took
+    /// the hit.
+    pub fn entity_attacked(&mut self, mod_id: &str, id: u32, player: &str, damage: f32) -> bool {
+        let Some(i) = self.typed_owner_index(mod_id) else {
+            return false;
+        };
+        self.call(i, FUEL_EVENT, |run| match &run.typed {
+            Some(h) => {
+                h.horizon_mods_entity_events()
+                    .call_attacked(&mut run.store, id, player, damage)
+            }
+            None => Ok(false),
+        })
+        .unwrap_or(false)
+    }
+    /// A player right-clicked one of mod `mod_id`'s entities.
+    pub fn entity_interacted(&mut self, mod_id: &str, id: u32, player: &str, item: &str) {
+        let Some(i) = self.typed_owner_index(mod_id) else {
+            return;
+        };
+        self.call(i, FUEL_EVENT, |run| match &run.typed {
+            Some(h) => {
+                h.horizon_mods_entity_events()
+                    .call_interacted(&mut run.store, id, player, item)
+            }
+            None => Ok(()),
+        });
+    }
+    /// One of mod `mod_id`'s entities died.
+    pub fn entity_died(&mut self, mod_id: &str, id: u32, kind: &str) {
+        let Some(i) = self.typed_owner_index(mod_id) else {
+            return;
+        };
+        self.call(i, FUEL_EVENT, |run| match &run.typed {
+            Some(h) => h
+                .horizon_mods_entity_events()
+                .call_died(&mut run.store, id, kind),
             None => Ok(()),
         });
     }
@@ -3398,6 +3569,221 @@ impl recipe_manager::Host for State {
         };
         view.as_ref()
             .is_some_and(|v| v.test_ingredient(&ingredient, &item))
+    }
+}
+/// A typed entity as its mod sees it.
+fn typed_view(e: &TypedEntity) -> entity_types::Entity {
+    entity_types::Entity {
+        id: e.id,
+        kind: e.kind.clone(),
+        dimension: e.dimension.clone(),
+        x: e.pos[0],
+        y: e.pos[1],
+        z: e.pos[2],
+        yaw: e.yaw,
+        vx: e.velocity[0],
+        vy: e.velocity[1],
+        vz: e.velocity[2],
+        on_ground: e.on_ground,
+        health: e.health,
+        data: e.data.clone(),
+    }
+}
+impl State {
+    /// Queues a typed entity change, within the per-call cap.
+    fn typed_op(&mut self, op: TypedOp) -> bool {
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Typed { .. }))
+            .count();
+        if queued >= ENTITY_OPS_PER_CALL {
+            return false;
+        }
+        self.out.push(Output::Typed {
+            mod_id: self.id.clone(),
+            op,
+        });
+        true
+    }
+    /// Whether the mod has an entity with this id now (spawned this tick too).
+    fn has_typed(&self, id: u32) -> bool {
+        self.snapshot
+            .typed_entities
+            .iter()
+            .any(|e| e.id == id && e.mod_id == self.id)
+            || self
+                .out
+                .iter()
+                .any(|o| matches!(o, Output::Typed { op: TypedOp::Spawn(e), .. } if e.id == id))
+    }
+}
+impl entity_type_bindings::horizon::mods::entity_data::Host for State {}
+impl entity_types::Host for State {
+    fn register(&mut self, def: entity_types::EntityType) -> Result<(), String> {
+        let own = def
+            .id
+            .split_once(':')
+            .is_some_and(|(ns, _)| self.block_namespaces.iter().any(|n| n == ns));
+        if !own || def.id.len() > 128 {
+            return Err(format!("{} is not in one of this mod's namespaces", def.id));
+        }
+        if def.model.is_empty() || def.model.len() > 128 {
+            return Err("a model item id of 1 to 128 bytes".into());
+        }
+        if !(0.0..=1024.0).contains(&def.health) {
+            return Err("health from 0 to 1024".into());
+        }
+        if !self.entity_types.contains_key(&def.id)
+            && self.entity_types.len() >= ENTITY_TYPES_PER_MOD
+        {
+            return Err(format!("at most {ENTITY_TYPES_PER_MOD} entity types"));
+        }
+        self.entity_types.insert(
+            def.id,
+            EntityTypeDef {
+                model: def.model,
+                small: def.small,
+                gravity: def.gravity,
+                health: def.health,
+            },
+        );
+        Ok(())
+    }
+    fn spawn(
+        &mut self,
+        kind: String,
+        dimension: String,
+        x: f64,
+        y: f64,
+        z: f64,
+        yaw: f32,
+    ) -> Result<u32, String> {
+        let Some(def) = self.entity_types.get(&kind).cloned() else {
+            return Err(format!("{kind} is not a registered type of this mod's"));
+        };
+        if ![x, y, z, f64::from(yaw)].iter().all(|v| v.is_finite()) {
+            return Err("a position that is not a number".into());
+        }
+        if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref())
+            && !view.has_dimension(&dimension)
+        {
+            return Err(format!("no dimension {dimension}"));
+        }
+        let own = self
+            .snapshot
+            .typed_entities
+            .iter()
+            .filter(|e| e.mod_id == self.id);
+        let (count, last) = own.fold((0, 0), |(n, m), e| (n + 1, m.max(e.id)));
+        let spawned = self
+            .out
+            .iter()
+            .filter(|o| {
+                matches!(
+                    o,
+                    Output::Typed {
+                        op: TypedOp::Spawn(_),
+                        ..
+                    }
+                )
+            })
+            .count();
+        if count + spawned >= TYPED_PER_MOD {
+            return Err(format!(
+                "at most {TYPED_PER_MOD} entities of the mod's types"
+            ));
+        }
+        // Ids go on from the highest the game keeps, saved ones too.
+        self.next_typed = self.next_typed.max(last + 1);
+        let id = self.next_typed;
+        let entity = TypedEntity {
+            mod_id: self.id.clone(),
+            id,
+            kind,
+            dimension,
+            pos: [x, y, z],
+            velocity: [0.0; 3],
+            yaw,
+            on_ground: false,
+            health: def.health,
+            max_health: def.health,
+            model: def.model,
+            small: def.small,
+            gravity: def.gravity,
+            data: Vec::new(),
+        };
+        if !self.typed_op(TypedOp::Spawn(entity)) {
+            return Err(format!("at most {ENTITY_OPS_PER_CALL} changes a call"));
+        }
+        self.next_typed += 1;
+        Ok(id)
+    }
+    fn get(&mut self, id: u32) -> Option<entity_types::Entity> {
+        self.snapshot
+            .typed_entities
+            .iter()
+            .find(|e| e.id == id && e.mod_id == self.id)
+            .map(typed_view)
+    }
+    fn all(&mut self) -> Vec<entity_types::Entity> {
+        self.snapshot
+            .typed_entities
+            .iter()
+            .filter(|e| e.mod_id == self.id)
+            .map(typed_view)
+            .collect()
+    }
+    fn set_velocity(&mut self, id: u32, vx: f64, vy: f64, vz: f64) -> bool {
+        let ok = [vx, vy, vz]
+            .iter()
+            .all(|v| v.is_finite() && v.abs() <= 10.0);
+        ok && self.has_typed(id)
+            && self.typed_op(TypedOp::Velocity {
+                id,
+                velocity: [vx, vy, vz],
+            })
+    }
+    fn move_to(&mut self, id: u32, x: f64, y: f64, z: f64, yaw: f32) -> bool {
+        let ok = [x, y, z, f64::from(yaw)].iter().all(|v| v.is_finite());
+        ok && self.has_typed(id)
+            && self.typed_op(TypedOp::Move {
+                id,
+                pos: [x, y, z],
+                yaw,
+            })
+    }
+    fn set_data(&mut self, id: u32, data: Vec<u8>) -> bool {
+        data.len() <= TYPED_DATA_BYTES
+            && self.has_typed(id)
+            && self.typed_op(TypedOp::Data { id, data })
+    }
+    fn hurt(&mut self, id: u32, amount: f32) -> bool {
+        amount.is_finite()
+            && amount > 0.0
+            && self.has_typed(id)
+            && self.typed_op(TypedOp::Hurt { id, amount })
+    }
+    fn set_model(&mut self, id: u32, item: String) -> bool {
+        !item.is_empty()
+            && item.len() <= 128
+            && self.has_typed(id)
+            && self.typed_op(TypedOp::Model { id, item })
+    }
+    fn set_pose(&mut self, id: u32, part: String, x: f32, y: f32, z: f32) -> bool {
+        let Some(part) = POSE_PARTS.iter().position(|p| *p == part) else {
+            return false;
+        };
+        let wrap = |v: f32| if v.is_finite() { v % 360.0 } else { 0.0 };
+        self.has_typed(id)
+            && self.typed_op(TypedOp::Pose {
+                id,
+                part,
+                rotation: [wrap(x), wrap(y), wrap(z)],
+            })
+    }
+    fn remove(&mut self, id: u32) -> bool {
+        self.has_typed(id) && self.typed_op(TypedOp::Remove { id })
     }
 }
 impl console::Host for State {
