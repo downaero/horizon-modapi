@@ -13,6 +13,7 @@ use horizon_mod_sdk::{
 const COUNTER: &str = "gears:counter";
 const CRATE: &str = "gears:crate";
 const BELT: &str = "gears:belt";
+const GAUGE: &str = "gears:gauge";
 const DIMENSION: &str = "minecraft:overworld";
 
 struct Gears {
@@ -37,7 +38,7 @@ impl ServerMod for Gears {
     }
 
     fn block_placed(&mut self, _player: &Player, pos: BlockPos, state: &str) {
-        if state.starts_with(BELT) {
+        if state.starts_with(BELT) || state.starts_with(GAUGE) {
             // Data under it, so the server ticks it.
             let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &[0]);
         }
@@ -92,10 +93,24 @@ impl ServerMod for Gears {
     }
 
     fn ticking_blocks(&self) -> Vec<String> {
-        vec![COUNTER.into(), BELT.into()]
+        vec![COUNTER.into(), BELT.into(), GAUGE.into()]
     }
 
     fn block_tick(&mut self, dimension: &str, pos: Pos, state: &str) {
+        if state.starts_with(GAUGE) {
+            // Five of signal for each item lying on it (capability
+            // `redstone`'s output: a trapped chest's analog signal).
+            let found = items::nearby(
+                dimension,
+                f64::from(pos.x) + 0.5,
+                f64::from(pos.y) + 1.2,
+                f64::from(pos.z) + 0.5,
+                0.7,
+            );
+            let level = (found.len() as u8).saturating_mul(5).min(15);
+            let _ = redstone::set_signal(dimension, pos.x, pos.y, pos.z, level);
+            return;
+        }
         if state.starts_with(BELT) {
             // A belt moves what stands on it east (capabilities `items`
             // and `players`).

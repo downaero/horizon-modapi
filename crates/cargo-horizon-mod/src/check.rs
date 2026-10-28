@@ -282,6 +282,8 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
             Output::Entity { .. } => "changed an entity".to_string(),
             Output::Effect { .. } => "played an effect".to_string(),
             Output::Take { .. } => "took an item entity".to_string(),
+            Output::Push { .. } => "pushed something".to_string(),
+            Output::Signal { level, .. } => format!("gave a redstone signal of {level}"),
             Output::Drop { item, count, .. } => format!("dropped {count} {item}"),
             Output::OpenScreen { .. } => "opened a screen".to_string(),
             Output::CloseScreen { .. } => "closed its screen".to_string(),

@@ -976,6 +976,7 @@ Capability `redstone`, server mods only (manifest `api = "0.3"`, experimental): 
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `power` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<u8>` | The strongest signal (0 to 15) reaching the block at a position from its neighbours (vanilla's best neighbour signal), as of the start of this tick. Known only for positions where the mod keeps block data (`block-entities.set`) or has a container, in the simulated dimension; none elsewhere. |
+| `set-signal` | `func(dimension: string, x: s32, y: s32, z: s32, level: u8) -> result<_, string>` | Makes a block of the mod's give a redstone signal of 0 to 15 to its neighbours, after the call, until the mod sets another: the signal a trapped chest gives (analog, to every side). Only a block declared with the template `minecraft:trapped_chest` in `data/<id>/horizon/block/` gives one; any other block is left as it is. The signal is not saved: the mod sets it again when the world loads. At most 1024 a call. |
 
 ## `items`
 

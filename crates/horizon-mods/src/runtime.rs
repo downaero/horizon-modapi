@@ -476,6 +476,13 @@ pub enum Output {
         target: PushTarget,
         velocity: [f64; 3],
     },
+    /// `redstone.set-signal`: the signal a mod block gives.
+    Signal {
+        mod_id: String,
+        dimension: String,
+        pos: [i32; 3],
+        level: u8,
+    },
     /// `items.take`: remove this item entity.
     Take { mod_id: String, id: u32 },
     /// `items.drop`: a stack to drop as an item entity.
@@ -2534,6 +2541,33 @@ impl items::Host for State {
     }
 }
 impl redstone::Host for State {
+    fn set_signal(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        level: u8,
+    ) -> Result<(), String> {
+        if level > 15 {
+            return Err(format!("signal {level}: 0 to 15"));
+        }
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Signal { .. }))
+            .count();
+        if queued >= 1024 {
+            return Err("at most 1024 signals a call".into());
+        }
+        self.out.push(Output::Signal {
+            mod_id: self.id.clone(),
+            dimension,
+            pos: [x, y, z],
+            level,
+        });
+        Ok(())
+    }
     fn power(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<u8> {
         let view = self.world.lock().ok()?;
         view.as_ref()?.power(&dimension, x, y, z)

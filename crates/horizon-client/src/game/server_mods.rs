@@ -490,6 +490,7 @@ mod run {
             self.apply_mod_containers();
             self.apply_mod_takes();
             self.apply_mod_pushes();
+            self.apply_mod_signals();
             self.apply_mod_drops();
             self.apply_mod_effects();
             if self.mods.block_data_dirty && self.ticks % 200 == 0 {
@@ -900,6 +901,37 @@ mod run {
             }
             if let Err(e) = self.process_level_events() {
                 log::debug!("Horizon: a mod's effects: {e:?}");
+            }
+        }
+
+        /// Sets the redstone signals server mods asked for, through the
+        /// table a trapped chest's signal is read from, and tells the blocks
+        /// around of a change. Only the dimension the window simulates.
+        pub(in crate::game) fn apply_mod_signals(&mut self) {
+            for (dimension, p, level) in std::mem::take(&mut self.mods.signals) {
+                if dimension != self.dim.id() {
+                    continue;
+                }
+                let state = self.world.block(p[0], p[1], p[2]);
+                if self.res.facts().get(state).name.starts_with("minecraft:") {
+                    continue;
+                }
+                let key = (p[0], p[1], p[2]);
+                let before = self.lid_openers.get(&key).copied().unwrap_or(0);
+                if before == i32::from(level) {
+                    continue;
+                }
+                if level == 0 {
+                    self.lid_openers.remove(&key);
+                } else {
+                    self.lid_openers.insert(key, i32::from(level));
+                }
+                let pos = horizon_core::position::BlockPos::new(p[0], p[1], p[2]);
+                self.with_level(|b, level, ticks| {
+                    let block = b.block(state);
+                    b.update_neighbors_at(level, ticks, pos, block);
+                    b.update_neighbors_at(level, ticks, pos.offset(0, -1, 0), block);
+                });
             }
         }
 
@@ -1426,6 +1458,17 @@ mod run {
                     let queue = &mut self.mods.effects;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((dimension, pos, effect));
+                    }
+                }
+                Output::Signal {
+                    dimension,
+                    pos,
+                    level,
+                    ..
+                } => {
+                    let queue = &mut self.mods.signals;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push((dimension, pos, level));
                     }
                 }
                 Output::Push {

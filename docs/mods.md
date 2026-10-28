@@ -600,6 +600,16 @@ a tick to a mod; built before this, a mod simply hears nothing. A block that
 should send a redstone signal can be two blocks of the mod, one with template
 `minecraft:redstone_block`, swapped with `world.set-blocks`.
 
+### Giving a redstone signal
+
+`redstone.set-signal(dimension, x, y, z, level)` (API level 21) makes a block of the
+mod's give a signal of 0 to 15 to its neighbours at the tick's end, until the
+mod sets another: the analog signal a trapped chest gives. Only a block declared
+with the template `minecraft:trapped_chest` has one, and its container
+openers share the number, so a mod keeps such a block for signals only. It is
+not saved: the mod sets it again after a load. The gears example's
+`gears:gauge` gives 5 for each item lying on it.
+
 ### Pushing players and items
 
 `players.push(player, x, y, z)` and `items.push(id, x, y, z)` (API level 19)

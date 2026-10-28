@@ -77,6 +77,10 @@ pub(super) struct ModsState {
     /// Item entities server mods took, by id, for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) takes: Vec<u32>,
+    /// Redstone signals server mods set (dimension, position, level), for
+    /// the tick's end.
+    #[cfg(feature = "mods")]
+    pub(super) signals: Vec<(String, [i32; 3], u8)>,
     /// Pushes server mods asked for, for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) pushes: Vec<(horizon_mods::PushTarget, [f64; 3])>,
@@ -759,6 +763,7 @@ impl Game<'_> {
                 | Output::Drop { .. }
                 | Output::Take { .. }
                 | Output::Push { .. }
+                | Output::Signal { .. }
                 | Output::Effect { .. }
                 | Output::Container { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);
