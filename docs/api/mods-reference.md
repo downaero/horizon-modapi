@@ -1037,6 +1037,8 @@ Capability `block-entities`, server mods: model parts drawn at the mod's own blo
 | `speed` | `f32` | Degrees a tick (360 at most), counterclockwise looking from the axis's positive end; negative turns the other way, 0 not at all. |
 | `angle` | `f32` | Its angle in degrees when set: parts set in one tick at the same speed turn together. |
 | `velocity` | `tuple<f32, f32, f32>` | Blocks a tick the whole part moves, from the tick it was set (0 not at all): a press's head going down. It keeps moving until the mod sets the position's parts again, so a mod animating something sets them each tick, with this tick's offset and the step to the next. |
+| `item` | `bool` | `state` names an item (`minecraft:iron_ingot`) instead: drawn as an item frame shows it, a block across, its centre half a block from `offset` (an item lying on a depot, a belt, in a basin). |
+| `scale` | `f32` | How large it is drawn, about its model's centre: 1 as it is, at most 4 (0.5: an item as a frame or a depot shows it). |
 
 | Function | Signature | What it does |
 | --- | --- | --- |
@@ -1156,7 +1158,7 @@ What hoppers, droppers and other containers' moves may do with one slot of a reg
 
 | Function | Signature | What it does |
 | --- | --- | --- |
-| `register` | `func(block: string) -> result<_, string>` | Makes a block of the mod's (`mymod:crate`, no properties) a container: the game gives its positions a chest's slots when opened or written. At most 64 blocks per mod. |
+| `register` | `func(block: string) -> result<_, string>` | Makes a block of the mod's (`mymod:crate`, no properties) a container: the game gives its positions a chest's slots as the block is placed (by a player or the mod), so hoppers and comparators find them, or when opened or written. At most 64 blocks per mod. |
 | `register-sized` | `func(block: string, slots: u32) -> result<_, string>` | `register` with a size: 27 slots opens as a chest, 9 as a dispenser's 3 x 3 and 5 as a hopper's row. A block registered twice keeps its first size. |
 | `open` | `func(player: string, dimension: string, x: s32, y: s32, z: s32) -> bool` | Opens the container at a position for the player with this id, after the call; false when the player is not online. |
 | `slots` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<option<item-stack>>>` | The 27 slots of a container in a loaded chunk, as of the start of this tick; none where there is no container with items yet or none loaded. (Item components are not shown.) |

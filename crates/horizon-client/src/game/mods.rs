@@ -44,10 +44,14 @@ pub(super) struct ClientVisual {
     pub(super) start: i64,
     /// The tick they were set, from which their velocity moves them.
     pub(super) set_at: i64,
-    pub(super) parts: Vec<(
-        horizon_world::registry::BlockStateId,
-        horizon_mods::visual::VisualPart,
-    )>,
+    pub(super) parts: Vec<(VisualModel, horizon_mods::visual::VisualPart)>,
+}
+
+/// What a visual part draws, resolved once when it arrives.
+#[cfg(feature = "mods")]
+pub(super) enum VisualModel {
+    Block(horizon_world::registry::BlockStateId),
+    Item(Box<horizon_client::item_render::ItemRenderState>),
 }
 
 /// A server mod's structure as the server keeps it.

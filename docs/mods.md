@@ -734,10 +734,14 @@ part's angle at game time 0 instead of at the tick it was set, as Flywheel turns
 placed minutes apart still mesh, and a part whose speed changes keeps its phase. A part also has a
 `velocity` in blocks a tick: it moves that much each tick from the tick it was set, until the mod sets
 the position's parts again, so a press's head going down is set each tick with its offset now and the
-step to the next, and its game draws it between the two as Flywheel draws it between ticks. In the SDK,
-`BlockEntity::visual` fills a `Visual` (`rotating(state, axis, speed)`, `model(state, offset)`;
-`block::rpm` turns revolutions a minute into degrees a tick) after each tick, sent in phase and
-only when it changed. The gears example's counter turns an iron trapdoor above it while it runs.
+step to the next, and its game draws it between the two as Flywheel draws it between ticks.
+With `item` (API level 42) the part's `state` names an item (`minecraft:iron_ingot`) drawn as an
+item frame shows it, a block across, its centre half a block from `offset`: an item on a depot, a
+belt or in a basin. Every part has a `scale` about its model's centre (1 as it is; 0.5 an item as a
+frame shows it). In the SDK, `BlockEntity::visual` fills a `Visual` (`rotating(state, axis, speed)`,
+`model(state, offset)`, `item(item, centre)`; `block::rpm` turns revolutions a minute into degrees
+a tick) after each tick, sent in phase and only when it changed. The gears example's counter turns
+an iron trapdoor above it while it runs, an iron ingot lying on the trapdoor.
 
 ### Moving structures and networks
 

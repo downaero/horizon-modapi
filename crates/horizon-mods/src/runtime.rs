@@ -1265,7 +1265,7 @@ struct State {
     /// Capability `block-entities`: the bytes the mod keeps at block
     /// positions, by dimension and position; the game loads them back with
     /// [`Mods::load_block_data`].
-    block_data: std::collections::HashMap<(String, [i32; 3]), Vec<u8>>,
+    block_data: std::collections::BTreeMap<(String, [i32; 3]), Vec<u8>>,
     /// The ids of the structures the mod has (`structures`), and the last
     /// id given.
     structures: std::collections::HashSet<u32>,
@@ -3404,9 +3404,13 @@ impl State {
                     speed: p.speed,
                     angle: p.angle,
                     velocity: [p.velocity.0, p.velocity.1, p.velocity.2],
+                    item: p.item,
+                    scale: p.scale,
                 };
                 part.check()?;
-                if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref()) {
+                if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref())
+                    && !part.item
+                {
                     view.check_state(&part.state)?;
                 }
                 Ok(part)

@@ -148,8 +148,22 @@ impl Visual {
             speed,
             angle: 0.0,
             velocity: (0.0, 0.0, 0.0),
+            item: false,
+            scale: 1.0,
         });
         self.parts.last_mut().expect("just pushed")
+    }
+    /// `item`'s model (`minecraft:iron_ingot`) as an item frame shows it,
+    /// its centre at `centre` blocks from the block's corner, half size: an
+    /// item lying on a depot. The part is returned to turn it (about x by 90
+    /// degrees, `angle`, to lay it flat), scale it or move it.
+    pub fn item(&mut self, item: &str, centre: [f32; 3]) -> &mut visuals::Part {
+        let part = self.rotating(item, Axis::Y, 0.0);
+        part.item = true;
+        part.scale = 0.5;
+        part.pivot = (centre[0], centre[1], centre[2]);
+        part.offset = (centre[0] - 0.5, centre[1] - 0.5, centre[2] - 0.5);
+        part
     }
     /// `state`'s model, still, its corner at `offset` blocks from the
     /// block's, as Flywheel's `TransformedInstance`.
@@ -171,6 +185,8 @@ impl Visual {
                 p.speed,
                 p.angle,
                 p.velocity,
+                p.item,
+                p.scale,
             )
         };
         self.parts.len() == other.len() && self.parts.iter().map(key).eq(other.iter().map(key))

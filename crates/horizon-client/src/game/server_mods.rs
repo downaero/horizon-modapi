@@ -1648,11 +1648,25 @@ mod run {
                         b.z
                     );
                 }
+                self.make_mod_container([b.x, b.y, b.z]);
             }
         }
 
-        /// The block entity a mod's container block gets when first opened
-        /// (a chest's 27 slots), none for any other block.
+        /// Gives a mod's container block its slots as it is placed, so
+        /// hoppers and comparators find a container before anyone opens it.
+        pub(in crate::game) fn make_mod_container(&mut self, pos: [i32; 3]) {
+            if self.mods.container_blocks.is_empty() {
+                return;
+            }
+            let block = self.world.block(pos[0], pos[1], pos[2]);
+            if let Some(entity) = self.mod_container_entity(&self.res.facts().get(block).name) {
+                let key = (pos[0], pos[1], pos[2]);
+                self.world.block_entities.get_or_insert_with(key, || entity);
+            }
+        }
+
+        /// The block entity a mod's container block gets when placed or
+        /// first opened (a chest's 27 slots), none for any other block.
         pub(in crate::game) fn mod_container_entity(
             &self,
             block: &str,
@@ -2035,7 +2049,8 @@ mod run {
             {
                 let mut slots: Vec<_> = self.inventory.iter().take(36).map(stack).collect();
                 slots.resize(36, None);
-                slots.extend(self.armor.iter().map(stack));
+                // `armor` is head first; mods count feet to head.
+                slots.extend(self.armor.iter().rev().map(stack));
                 slots.push(stack(&self.offhand));
                 out.insert(self.player_uuid_string(), (slots, self.selected as u32));
             }
@@ -2046,7 +2061,7 @@ mod run {
             for g in guests.filter(|g| g.placed) {
                 let mut slots: Vec<_> = g.inventory.iter().take(36).map(stack).collect();
                 slots.resize(36, None);
-                slots.extend(g.armor.iter().map(stack));
+                slots.extend(g.armor.iter().rev().map(stack));
                 slots.push(stack(&g.offhand));
                 out.insert(uuid_string(g.uuid), (slots, g.selected as u32));
             }
@@ -2070,7 +2085,8 @@ mod run {
             ) -> Option<&'a mut Stack> {
                 match slot {
                     0..36 => inventory.get_mut(slot),
-                    36..40 => Some(&mut armor[slot - 36]),
+                    // Feet to head over `armor`'s head first.
+                    36..40 => Some(&mut armor[39 - slot]),
                     40 => Some(offhand),
                     _ => None,
                 }
@@ -2412,9 +2428,6 @@ mod run {
             }
         }
 
-        /// Sets the redstone signals server mods asked for, through the
-        /// table a trapped chest's signal is read from, and tells the blocks
-        /// around of a change. Only the dimension the window simulates.
         /// Sets what comparators read from mod blocks, and tells the
         /// comparators next to each one that changed.
         pub(in crate::game) fn apply_mod_comparator_signals(&mut self) {
@@ -2440,6 +2453,9 @@ mod run {
             }
         }
 
+        /// Sets the redstone signals server mods asked for, through the
+        /// table a trapped chest's signal is read from, and tells the blocks
+        /// around of a change. Only the dimension the window simulates.
         pub(in crate::game) fn apply_mod_signals(&mut self) {
             for (dimension, p, level) in std::mem::take(&mut self.mods.signals) {
                 if dimension != self.dim.id() {
@@ -2744,6 +2760,9 @@ mod run {
             state: BlockStateId,
             placed: bool,
         ) {
+            if placed {
+                self.make_mod_container(pos);
+            }
             if !self.hears_players() {
                 return;
             }
@@ -3148,13 +3167,22 @@ mod run {
             else {
                 return;
             };
+            use crate::game::mods::VisualModel;
             let registry = self.pack.assets.registry;
             let parts: Vec<_> = parts
                 .into_iter()
                 .filter_map(|p| {
-                    let state =
-                        crate::game::render_control::parse_state(registry, &p.state).ok()?;
-                    Some((state, p))
+                    let model = if p.item {
+                        // As an item frame shows it (ItemDisplayContext.FIXED).
+                        self.res.items().get(&p.state)?;
+                        let stack = horizon_client::items::ItemStack::new(&p.state, 1);
+                        let display = horizon_assets::item_model::DisplayContext::Fixed;
+                        VisualModel::Item(Box::new(self.resolve_item(&stack, display, None, 0)))
+                    } else {
+                        let state = crate::game::render_control::parse_state(registry, &p.state);
+                        VisualModel::Block(state.ok()?)
+                    };
+                    Some((model, p))
                 })
                 .collect();
             if parts.is_empty() {
@@ -3302,6 +3330,7 @@ mod run {
             alpha: f64,
             out: &mut Vec<horizon_client::mesher::Vertex>,
         ) {
+            use crate::game::mods::VisualModel;
             use glam::{Mat4, Vec3};
             for ((_, pos), v) in &self.mods.client_visuals {
                 let o = (glam::DVec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64) - camera)
@@ -3321,14 +3350,26 @@ mod run {
                 let seed = horizon_core::random::position_seed(
                     horizon_core::position::BlockPos::new(pos[0], pos[1], pos[2]),
                 );
-                for (state, part) in &v.parts {
+                for (model, part) in &v.parts {
                     let axis = [Vec3::X, Vec3::Y, Vec3::Z][usize::from(part.axis.min(2))];
                     let pivot = Vec3::from(part.pivot);
+                    // Turned about the pivot, scaled about the model's centre.
                     let transform =
                         Mat4::from_translation(o + pivot + Vec3::from(part.moved_at(moved)))
                             * Mat4::from_axis_angle(axis, part.angle_at(ticks).to_radians())
-                            * Mat4::from_translation(Vec3::from(part.offset) - pivot);
-                    self.block_model_vertices(*state, seed, transform, packed, false, out);
+                            * Mat4::from_translation(Vec3::from(part.offset) - pivot)
+                            * Mat4::from_translation(Vec3::splat(0.5))
+                            * Mat4::from_scale(Vec3::splat(part.scale));
+                    match model {
+                        VisualModel::Block(state) => {
+                            let m = transform * Mat4::from_translation(Vec3::splat(-0.5));
+                            self.block_model_vertices(*state, seed, m, packed, false, out);
+                        }
+                        // An item's model is centred on its origin.
+                        VisualModel::Item(state) => {
+                            self.submit_item_world(state, transform, packed, out)
+                        }
+                    }
                 }
             }
         }

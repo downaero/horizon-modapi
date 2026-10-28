@@ -3,12 +3,12 @@
 //! the server ticks it and saves the bytes with the world, and sends them to
 //! the players near it for a client half to read. A gear (an iron
 //! trapdoor drawn by players' games, capability `visuals`) turns above each
-//! counter while it runs.
+//! counter while it runs, an iron ingot lying on it.
 use horizon_mod_sdk::{
     block::{self, Block, BlockEntity, BlockHitResult, InteractionResult},
     contraption::{Contraption, ROTATION_STEP},
     export_server_mod,
-    level::{BlockState, Level},
+    level::{BlockState, Direction, Level},
     player_ops,
     server::{
         BlockPos, BlockTarget, Player, Pos, Registration, ServerMod, attachments, block_entities,
@@ -245,7 +245,8 @@ struct Gears {
 }
 
 /// The gear over a counter: an iron trapdoor's model a tenth of a block above
-/// it, turning about its upright axis while the counter runs (`visuals`).
+/// it, turning about its upright axis while the counter runs, with an iron
+/// ingot lying on it (`visuals`).
 fn gear(dimension: &str, x: i32, y: i32, z: i32, running: bool) {
     let part = visuals::Part {
         state: "minecraft:iron_trapdoor[half=bottom]".into(),
@@ -255,8 +256,23 @@ fn gear(dimension: &str, x: i32, y: i32, z: i32, running: bool) {
         speed: if running { 2.0 * ROTATION_STEP } else { 0.0 },
         angle: 0.0,
         velocity: (0.0, 0.0, 0.0),
+        item: false,
+        scale: 1.0,
     };
-    let _ = visuals::set(dimension, x, y, z, &[part]);
+    // An iron ingot lying on the gear, laid flat (a quarter turn about x),
+    // half size as an item frame shows it.
+    let ingot = visuals::Part {
+        state: "minecraft:iron_ingot".into(),
+        axis: 0,
+        pivot: (0.5, 1.32, 0.5),
+        offset: (0.0, 0.82, 0.0),
+        speed: 0.0,
+        angle: 90.0,
+        velocity: (0.0, 0.0, 0.0),
+        item: true,
+        scale: 0.5,
+    };
+    let _ = visuals::set(dimension, x, y, z, &[part, ingot]);
 }
 
 /// A drill's block entity: the ticks since it last mined.
@@ -295,7 +311,7 @@ impl BlockEntity for Drill {
     }
 }
 
-/// Uses cobblestone on the block above as a player would (`world.use-item`):
+/// Clicked on its top, uses cobblestone on the block above as a player would (`world.use-item`):
 /// a lever there flips, else cobblestone goes on top. It tells itself
 /// through `peers`, heard next tick.
 struct Deployer;
@@ -306,9 +322,18 @@ impl Block for Deployer {
         _state: &BlockState,
         level: &Level,
         pos: BlockPos,
-        _player: &str,
-        _hit: &BlockHitResult,
+        player: &str,
+        hit: &BlockHitResult,
     ) -> InteractionResult {
+        // Only a click on its top works it (`clicked-face`).
+        if hit.direction != Some(Direction::Up) {
+            let face = hit.direction.map_or("an unknown face", Direction::get_name);
+            players::tell(
+                player,
+                &format!("The deployer works from its top, not {face}"),
+            );
+            return InteractionResult::Consume;
+        }
         let above = pos.above();
         let _ = world::use_item(
             level.dimension(),
@@ -359,6 +384,17 @@ impl ServerMod for Gears {
         {
             // Data under it, so the server ticks it.
             let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &[0]);
+        }
+        if state.starts_with(CRATE) {
+            // Hoppers put one iron ingot at a time in slot 0 and never take it
+            // back out (`set-hopper-rule`), as a depot takes an item only
+            // while empty.
+            let rule = containers::HopperRule {
+                insert: true,
+                extract: false,
+                max: 1,
+            };
+            let _ = containers::set_hopper_rule(DIMENSION, pos.x, pos.y, pos.z, 0, Some(rule));
         }
         if state.starts_with(COUNTER) {
             // Synced: players' games have its seconds too (`block_data`).
@@ -637,6 +673,9 @@ impl ServerMod for Gears {
             );
             let level = (found.len() as u8).saturating_mul(5).min(15);
             let _ = redstone::set_signal(dimension, pos.x, pos.y, pos.z, level);
+            // Comparators read one for each item (`set-comparator-signal`).
+            let count = Some((found.len() as u8).min(15));
+            let _ = redstone::set_comparator_signal(dimension, pos.x, pos.y, pos.z, count);
             return;
         }
         if state.starts_with(BELT) {
@@ -723,6 +762,15 @@ impl ServerMod for Gears {
             if let Some((out, n)) = made
                 && items::take(item.id)
             {
+                // Bits of what it swallowed fly off, as from a press.
+                let particle = format!("minecraft:item{{item:\"{}\"}}", item.item);
+                let (cx, cy, cz) = (
+                    f64::from(pos.x) + 0.5,
+                    f64::from(pos.y) + 1.0,
+                    f64::from(pos.z) + 0.5,
+                );
+                let _ =
+                    effects::particles(dimension, cx, cy, cz, &particle, (0.2, 0.1, 0.2), 0.05, 8);
                 gives.push((out, (item.count * n).min(99)));
             }
         }

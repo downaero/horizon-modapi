@@ -24,6 +24,11 @@ pub struct VisualPart {
     pub angle: f32,
     /// Blocks a tick the whole part moves, from the tick it was set.
     pub velocity: [f32; 3],
+    /// `state` names an item (`minecraft:iron_ingot`), drawn as an item
+    /// frame shows it, a block across, its centre half a block from `offset`.
+    pub item: bool,
+    /// How large it is drawn, about its model's centre: 1 is as it is.
+    pub scale: f32,
 }
 
 impl VisualPart {
@@ -58,7 +63,10 @@ impl VisualPart {
             return Err("velocity is at most 16 blocks a tick".into());
         }
         if self.state.is_empty() || self.state.len() > 256 {
-            return Err("a part names a block state".into());
+            return Err("a part names a block state or an item".into());
+        }
+        if !(self.scale.is_finite() && self.scale > 0.0 && self.scale <= 4.0) {
+            return Err("scale is more than 0 and at most 4".into());
         }
         Ok(())
     }
@@ -67,8 +75,9 @@ impl VisualPart {
 /// One position's parts for a client: the mod id (u16 length and bytes),
 /// x y z (i32), the tick their angles are measured from (i64: the tick they
 /// were set, or 0 for parts set in phase) and the tick they were set
-/// (i64), then each part's state (u16 length and bytes), axis (u8), pivot,
-/// offset, speed, angle and velocity (f32), little-endian. No parts: none
+/// (i64), then each part's state (u16 length and bytes), axis (u8), whether it
+/// is an item (u8), pivot, offset, speed, angle, velocity and scale (f32),
+/// little-endian. No parts: none
 /// drawn there any more.
 pub fn encode(
     mod_id: &str,
@@ -89,8 +98,13 @@ pub fn encode(
         out.extend((p.state.len() as u16).to_le_bytes());
         out.extend(p.state.as_bytes());
         out.push(p.axis);
+        out.push(u8::from(p.item));
         let more = [&p.speed, &p.angle];
-        for v in (p.pivot.iter().chain(&p.offset).chain(more)).chain(&p.velocity) {
+        let last = [&p.scale];
+        for v in (p.pivot.iter().chain(&p.offset).chain(more))
+            .chain(&p.velocity)
+            .chain(last)
+        {
             out.extend(v.to_le_bytes());
         }
     }
@@ -121,7 +135,12 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPar
         let n = u16::from_le_bytes(take(&mut b, 2)?.try_into().ok()?) as usize;
         let state = std::str::from_utf8(take(&mut b, n)?).ok()?.to_owned();
         let axis = take(&mut b, 1)?[0];
-        let mut f = [0f32; 11];
+        let item = match take(&mut b, 1)?[0] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let mut f = [0f32; 12];
         for v in &mut f {
             *v = f32::from_le_bytes(take(&mut b, 4)?.try_into().ok()?);
         }
@@ -133,6 +152,8 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPar
             speed: f[6],
             angle: f[7],
             velocity: [f[8], f[9], f[10]],
+            item,
+            scale: f[11],
         };
         part.check().ok()?;
         parts.push(part);
@@ -153,12 +174,20 @@ mod tests {
             speed,
             angle: 45.0,
             velocity: [0.0, -0.25, 0.0],
+            item: false,
+            scale: 1.0,
         }
     }
 
     #[test]
     fn parts_round_trip_and_damage_is_refused() {
-        let parts = [shaft(6.0), shaft(-3.0)];
+        let ingot = VisualPart {
+            state: "minecraft:iron_ingot".into(),
+            item: true,
+            scale: 0.5,
+            ..shaft(0.0)
+        };
+        let parts = [shaft(6.0), shaft(-3.0), ingot];
         let bytes = encode("gears", [1, -60, 9], 0, 1234, &parts);
         assert_eq!(
             decode(&bytes),

@@ -927,6 +927,13 @@ interface visuals {
         /// something sets them each tick, with this tick's offset and the
         /// step to the next.
         velocity: tuple<f32,f32,f32>,
+        /// `state` names an item (`minecraft:iron_ingot`) instead: drawn as
+        /// an item frame shows it, a block across, its centre half a block
+        /// from `offset` (an item lying on a depot, a belt, in a basin).
+        item: bool,
+        /// How large it is drawn, about its model's centre: 1 as it is, at
+        /// most 4 (0.5: an item as a frame or a depot shows it).
+        scale: f32,
     }
     /// Draws `parts` (at most 16) at a block of the mod's own, replacing
     /// what it drew there, after the call; none draws nothing there any more.
@@ -1060,8 +1067,9 @@ interface containers {
         count: u32,
     }
     /// Makes a block of the mod's (`mymod:crate`, no properties) a
-    /// container: the game gives its positions a chest's slots when opened
-    /// or written. At most 64 blocks per mod.
+    /// container: the game gives its positions a chest's slots as the
+    /// block is placed (by a player or the mod), so hoppers and comparators
+    /// find them, or when opened or written. At most 64 blocks per mod.
     register: func(block: string) -> result<_, string>;
     /// `register` with a size: 27 slots opens as a chest, 9 as a dispenser's
     /// 3 x 3 and 5 as a hopper's row. A block registered twice keeps its first
