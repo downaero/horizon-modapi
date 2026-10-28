@@ -88,6 +88,7 @@ folder, loads no runtime and plays exactly like vanilla 26.3.
 | `hud` | `hud` | `set-panel(corner, lines)`, `clear()`: up to 16 lines of 256 characters |
 | `storage` | `storage` | `get(key)`, `set(key, value)`, `delete(key)`: a per-mod folder of up to 64 files, 4 MiB total, at most 1 MiB written per call |
 | `command` | `command` | `run(line)`: a vanilla command run as the player, with the player's permissions, after the hook returns (8 per call); mods' own commands are not run. `run-quiet(lines)`: up to 256 a call, the same rights, nothing in the chat (single player and Horizon's servers run them 64 a tick and log one line a batch; elsewhere they go as chat commands and their feedback shows) |
+| `net` | `net` | `send(player, data)`: messages between a mod's client half and its server half ([below](#capability-net)). **Experimental:** `experimental = ["net"]` |
 | `block-entities` | `block-entities` | server mods: `get`, `set`, `remove` of bytes at the positions of the mod's own blocks, and the `block-tick` and `block-used` hooks ([below](#server-mods-api-03-experimental)). **Experimental:** `experimental = ["block-entities"]` |
 | `ui` | `ui` | `open-screen`, `close-screen`, `set-settings`: a screen the mod owns and a page in Options > Mods, of text, button, item and list widgets the game lays out and draws with its own menus' code; `browser.set-items`, `browser.poll`: a recipe viewer's panel of items right of the inventory and container screens (not the creative one), which the game pages and draws with its own slots and search box, and the mod hears its clicks, its searches and the mod's own keys (`input.register-key`) pressed over any item on the screen; `browser.set-recipes`: recipes in the panel's place (crafting grids, cooking, stonecutting, smithing and brewing layouts, their slots cycling through their stacks, a note and an action button each), paged by the game, with clicks on their slots, action buttons, page turns and a back button. **Experimental:** the manifest needs `experimental = ["ui"]` |
 | `render` | `render` | `set-hud(shapes)`: up to 1024 fills, four-cornered shapes, GUI sprites, items and text, kept on the HUD (over the hotbar, under chat and screens, hidden with F1) until replaced; `set-corner(corner, w, h, shapes)`: a box the game places in a corner, stacked with its overlays and other panels, as `hud`'s panels are; `text-width(text)`; `frame-stats()`: the game's FPS, min and 1% low; `gui-size()`; `shake(strength, seconds)`: the view turns, the player doesn't, scaled by Distortion Effects; `set-zoom(zoom)`: the field of view divided by up to 10, eased or at once, with slower turning, while playing and not through a spyglass (the strongest of several mods' zooms counts); `set-minimap(minimap)`: a map of the world around the player in a corner, as a map item colours it (the floor underground and under roofs), square or round, turning with the player or north up, with the player's arrow; the game keeps its tiles within its own frame budget (one map at a time, the first loaded mod's); `set-far-terrain(far-terrain)`: the world past the render distance as distant terrain, out to 64 to 1024 chunks, built by the game's own workers (the player's LOD Distance, when on, wins; the first loaded mod's). The game's own HUD renderer draws them: a mod never supplies shader code. **Experimental:** `experimental = ["render"]` |
@@ -561,6 +562,22 @@ running mods changes. `block-used` runs when a player (the window's own or a
 LAN guest) right-clicks a block of a mod's namespace with an empty-handed
 use, not sneaking with full hands: the mod returns true to take the click,
 and the game then does nothing else with it. Vanilla blocks never reach it.
+
+### Capability `net`
+
+A mod with a client half and a server half (two mods with the same `id`, one
+`side = "client"` and one `side = "server"`) talks between them with
+`net.send(player, data)`: up to 32 KiB a message and 64 messages a hook call.
+A client mod passes `none` and the message goes to the server it plays on. A
+server mod passes a player's id (`players.online`), or `none` for every player.
+The receiver hears it as `Mod::net_message` (client) or
+`ServerMod::net_message` (server, with the sender's id) on its next tick. The
+messages travel as custom payloads on the channel `horizon:mod/<mod id>`:
+in single player and on a LAN host they stay in the game or go to the guests'
+connections, and a client mod playing on a server reaches that server's mod
+of the same id. Vanilla servers ignore the payloads. A mod built before `net`
+(no `net-events` export) hears nothing. **Experimental:**
+`experimental = ["net"]`.
 
 **Where they run.** The game that simulates the world starts the server mods
 that are on, and only that one:

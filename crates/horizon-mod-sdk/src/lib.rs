@@ -38,9 +38,10 @@ wit_bindgen::generate!({
 });
 
 pub use exports::horizon::mods::events::{Guest as __Guest, Registration};
+pub use exports::horizon::mods::net_events::Guest as __NetGuest;
 pub use exports::horizon::mods::ui_events::Guest as __UiEventsGuest;
 pub use horizon::mods::{
-    browser, chat, command, game, hud, input, log, recipes, render, storage, ui,
+    browser, chat, command, game, hud, input, log, net, recipes, render, storage, ui,
 };
 
 /// The game's calls into a mod. Only the hooks [`Registration`] asks for
@@ -68,6 +69,8 @@ pub trait Mod: Sized + 'static {
     /// The player opened the mod's settings page (capability `ui`): call
     /// [`ui::set_settings`] for fresh widgets.
     fn ui_settings_opened(&mut self) {}
+    /// The mod's server half sent `data` (capability `net`).
+    fn net_message(&mut self, _data: &[u8]) {}
 }
 
 impl Registration {
@@ -163,6 +166,11 @@ macro_rules! export_mod {
                     with(|m| $crate::Mod::ui_settings_opened(m))
                 }
             }
+            impl $crate::__NetGuest for Export {
+                fn message(data: Vec<u8>) {
+                    with(|m| $crate::Mod::net_message(m, &data))
+                }
+            }
             // Only WebAssembly has the component's exports: a host build (cargo test or
             // clippy on the workspace) checks the mod without them, which macOS
             // couldn't link (its exported-symbols list cuts names at the `#`).
@@ -199,9 +207,12 @@ pub mod server {
         Argument, ArgumentKind, ArgumentValue, BlockPos, Guest as __Guest, Registration,
         ServerCommand,
     };
+    pub use exports::horizon::mods::server_net_events::Guest as __NetGuest;
     /// Capability `block-entities`: bytes kept at the positions of the
     /// mod's own blocks.
     pub use horizon::mods::block_entities;
+    /// Capability `net`: messages to and from the mod's client half.
+    pub use horizon::mods::net;
     pub use horizon::mods::players::{self, GameMode, Player};
     pub use horizon::mods::world::{self, BlockChange};
 
@@ -245,6 +256,8 @@ pub mod server {
         fn block_used(&mut self, _player: &str, _dimension: &str, _pos: Pos, _state: &str) -> bool {
             false
         }
+        /// A player's client half sent `data` (capability `net`).
+        fn net_message(&mut self, _player: &str, _data: &[u8]) {}
     }
 
     impl Registration {
@@ -477,6 +490,11 @@ macro_rules! export_server_mod {
                     let mut out = false;
                     with(|m| out = m.block_used(&player, &dimension, pos, &state));
                     out
+                }
+            }
+            impl $crate::server::__NetGuest for Export {
+                fn message(player: String, data: Vec<u8>) {
+                    with(|m| m.net_message(&player, &data))
                 }
             }
             #[cfg(target_arch = "wasm32")]

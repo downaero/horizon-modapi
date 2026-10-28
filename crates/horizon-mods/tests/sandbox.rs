@@ -241,8 +241,8 @@ id = "too_new"
 name = "Too New"
 version = "0.1.0"
 api = "0.1"
-capabilities = ["game-read", "chat", "hud", "storage", "command", "ui", "render", "input", "recipes"]
-experimental = ["ui", "render", "input", "recipes"]
+capabilities = ["game-read", "chat", "hud", "storage", "command", "ui", "render", "input", "recipes", "net"]
+experimental = ["ui", "render", "input", "recipes", "net"]
 "#;
     std::fs::write(dir.join("horizon-mod.toml"), manifest).unwrap();
     std::fs::write(dir.join("mod.wasm"), wasm).unwrap();

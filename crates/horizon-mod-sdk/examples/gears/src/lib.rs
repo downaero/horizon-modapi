@@ -3,7 +3,7 @@
 //! the server ticks it and saves the bytes with the world.
 use horizon_mod_sdk::{
     export_server_mod,
-    server::{BlockPos, Player, Pos, Registration, ServerMod, block_entities, players},
+    server::{BlockPos, Player, Pos, Registration, ServerMod, block_entities, net, players},
 };
 
 const COUNTER: &str = "gears:counter";
@@ -58,6 +58,18 @@ impl ServerMod for Gears {
             .map_or(0, u32::from_le_bytes);
         players::tell(player, &format!("This counter has run for {seconds} s"));
         true
+    }
+
+    /// A client half asking for a position's counter (three i32 LE) gets
+    /// the seconds back (capability `net`).
+    fn net_message(&mut self, player: &str, data: &[u8]) {
+        let Ok(raw) = <[u8; 12]>::try_from(data) else {
+            return;
+        };
+        let at = |i: usize| i32::from_le_bytes(raw[i * 4..i * 4 + 4].try_into().expect("4 bytes"));
+        if let Some(seconds) = block_entities::get(DIMENSION, at(0), at(1), at(2)) {
+            let _ = net::send(Some(player), &seconds);
+        }
     }
 }
 

@@ -821,6 +821,30 @@ interface block-events {
     block-used: func(player: string, dimension: string, pos: pos, state: string) -> bool;
 }
 
+/// Capability `net`: messages between a mod's client half and its server
+/// half, as custom payloads on the channel `horizon:mod/<mod id>`. A client
+/// mod sends to the server it plays on; a server mod to one player or to all.
+interface net {
+    /// Sends up to 32 KiB. A client mod passes `none` (the server it plays
+    /// on, which must run a mod with the same id). A server mod passes the
+    /// id of a player (`players.online`), or `none` for every player.
+    send: func(player: option<string>, data: list<u8>) -> result<_, string>;
+}
+
+/// What a client mod hears on its channel, beside its other exports (a mod
+/// built without this export hears nothing).
+interface net-events {
+    /// A message from the mod's server half.
+    message: func(data: list<u8>);
+}
+
+/// The same for a server mod (a separate interface: the SDK builds client
+/// and server mods in one crate, whose exports can't share a name).
+interface server-net-events {
+    /// A message from the mod's client half on `player` (their id).
+    message: func(player: string, data: list<u8>);
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -850,12 +874,26 @@ world horizon-block-mod {
     include horizon-server-mod;
     import block-entities;
     export block-events;
+    import net;
+    export server-net-events;
 }
 
 /// The game's side of `horizon-block-mod` beyond `horizon-server-mod`.
 world block-host {
     import block-entities;
     export block-events;
+}
+
+/// The game's side of capability `net` for client mods (it adds the `net`
+/// import for server mods too).
+world net-host {
+    import net;
+    export net-events;
+}
+
+/// The game's side of `server-net-events`.
+world server-net-host {
+    export server-net-events;
 }
 
 /// A mod with widgets (capability `ui`): the SDK builds every mod against
@@ -869,6 +907,8 @@ world horizon-ui-mod {
     import recipes;
     import browser;
     export ui-events;
+    import net;
+    export net-events;
 }
 
 /// The game's side of `horizon-ui-mod` beyond `horizon-mod`.

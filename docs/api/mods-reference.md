@@ -20,6 +20,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
 | `world` | [`world`](#world) | read and change the world's blocks |
 | `recipes` | [`recipes`](#recipes) | read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items |
 | `block-entities` | [`block-entities`](#block-entities) | keep data at the positions of its own blocks and tick them |
+| `net` | [`net`](#net) | send messages between the game and the server it plays on |
 
 ## World `horizon-mod`
 
@@ -39,8 +40,8 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `log`, `storage`, `players`, `world`
-- Exports (what the mod provides): `block-events`, `server-events`
+- Imports (what the game offers): `block-entities`, `net`, `log`, `storage`, `players`, `world`
+- Exports (what the mod provides): `block-events`, `server-net-events`, `server-events`
 
 ## World `block-host`
 
@@ -49,12 +50,26 @@ The game's side of `horizon-block-mod` beyond `horizon-server-mod`.
 - Imports (what the game offers): `block-entities`
 - Exports (what the mod provides): `block-events`
 
+## World `net-host`
+
+The game's side of capability `net` for client mods (it adds the `net` import for server mods too).
+
+- Imports (what the game offers): `net`
+- Exports (what the mod provides): `net-events`
+
+## World `server-net-host`
+
+The game's side of `server-net-events`.
+
+- Imports (what the game offers): 
+- Exports (what the mod provides): `server-net-events`
+
 ## World `horizon-ui-mod`
 
 A mod with widgets (capability `ui`): the SDK builds every mod against this world. Mods built for `horizon-mod` alone (no `ui-events` export) still load and simply hear nothing of their widgets.
 
-- Imports (what the game offers): `ui`, `render`, `input`, `recipes`, `browser`, `log`, `game`, `chat`, `hud`, `storage`, `command`
-- Exports (what the mod provides): `ui-events`, `events`
+- Imports (what the game offers): `ui`, `render`, `input`, `recipes`, `browser`, `net`, `log`, `game`, `chat`, `hud`, `storage`, `command`
+- Exports (what the mod provides): `ui-events`, `net-events`, `events`
 
 ## World `ui-host`
 
@@ -815,3 +830,33 @@ What the server calls in a mod's blocks, beside `server-events` (a mod built wit
 | `ticking-blocks` | `func() -> list<string>` | The blocks (`mymod:gear`, ids without properties) whose instances the game ticks, asked once after `init`. |
 | `block-tick` | `func(dimension: string, pos: pos, state: string)` | A position where the mod keeps data (`block-entities.set`) and a ticking block stands in a loaded chunk, once per server tick (at most 4096 positions per tick, the rest next tick), in `dimension`; `state` is the block's state as `minecraft:oak_log[axis=y]`. Data under any other block is forgotten. |
 | `block-used` | `func(player: string, dimension: string, pos: pos, state: string) -> bool` | The player with this id (`players.online`) used (right-clicked) a block of the mod's with an empty hand, in `dimension`; true when the mod handled it (the game then does nothing else). |
+
+## `net`
+
+Access: capability `net`.
+
+Capability `net`: messages between a mod's client half and its server half, as custom payloads on the channel `horizon:mod/<mod id>`. A client mod sends to the server it plays on; a server mod to one player or to all.
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `send` | `func(player: option<string>, data: list<u8>) -> result<_, string>` | Sends up to 32 KiB. A client mod passes `none` (the server it plays on, which must run a mod with the same id). A server mod passes the id of a player (`players.online`), or `none` for every player. |
+
+## `net-events`
+
+Access: exported by the mod: the game calls it.
+
+What a client mod hears on its channel, beside its other exports (a mod built without this export hears nothing).
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `message` | `func(data: list<u8>)` | A message from the mod's server half. |
+
+## `server-net-events`
+
+Access: exported by the mod: the game calls it.
+
+The same for a server mod (a separate interface: the SDK builds client and server mods in one crate, whose exports can't share a name).
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `message` | `func(player: string, data: list<u8>)` | A message from the mod's client half on `player` (their id). |

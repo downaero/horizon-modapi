@@ -107,9 +107,12 @@ pub enum Capability {
     /// world, and a tick for those blocks (server mods; interface
     /// `block-entities`).
     BlockEntities,
+    /// Messages between the mod's client half and its server half (interface
+    /// `net`).
+    Net,
 }
 impl Capability {
-    pub const ALL: [Capability; 13] = [
+    pub const ALL: [Capability; 14] = [
         Capability::GameRead,
         Capability::Chat,
         Capability::Hud,
@@ -123,6 +126,7 @@ impl Capability {
         Capability::World,
         Capability::Recipes,
         Capability::BlockEntities,
+        Capability::Net,
     ];
     /// Whether a server mod may have it: the others act on a local player.
     pub fn on_server(self) -> bool {
@@ -132,6 +136,7 @@ impl Capability {
                 | Capability::Players
                 | Capability::World
                 | Capability::BlockEntities
+                | Capability::Net
         )
     }
     /// The WIT interface it grants, in `horizon:mods`.
@@ -150,6 +155,7 @@ impl Capability {
             Capability::World => "world",
             Capability::Recipes => "recipes",
             Capability::BlockEntities => "block-entities",
+            Capability::Net => "net",
         }
     }
     /// May change in any release: a mod uses it only with
@@ -162,6 +168,7 @@ impl Capability {
                 | Capability::Input
                 | Capability::Recipes
                 | Capability::BlockEntities
+                | Capability::Net
         )
     }
     /// What the player reads before turning the mod on: "May <this>".
@@ -183,6 +190,7 @@ impl Capability {
             Capability::BlockEntities => {
                 "keep data at the positions of its own blocks and tick them"
             }
+            Capability::Net => "send messages between the game and the server it plays on",
             Capability::Recipes => {
                 "read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items"
             }
@@ -228,6 +236,7 @@ impl fmt::Display for Capability {
             Capability::World => "world",
             Capability::Recipes => "recipes",
             Capability::BlockEntities => "block-entities",
+            Capability::Net => "net",
         };
         f.write_str(name)
     }
@@ -267,6 +276,8 @@ impl Manifest {
         if let Some(c) = m.capabilities.iter().find(|c| {
             c.on_server() != server
                     && **c != Capability::Storage
+                    // Both halves of a mod talk over it.
+                    && **c != Capability::Net
                     // Content has no WIT interface: a server mod carries its own blocks.
                     && **c != Capability::Registries
         }) {

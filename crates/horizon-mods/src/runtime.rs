@@ -43,6 +43,22 @@ mod block_bindings {
     });
 }
 use block_bindings::{BlockHost, horizon::mods::block_entities};
+/// Capability `net`'s world: a second one again, as mods built before it
+/// have no `net-events` export.
+mod net_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "net-host",
+    });
+}
+mod server_net_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "server-net-host",
+    });
+}
+use net_bindings::{NetHost, horizon::mods::net};
+use server_net_bindings::ServerNetHost;
 /// Capability `ui`'s world beyond `horizon-mod` (docs/mods.md): a second
 /// world, so mods built before it (no `ui-events` export) still instantiate
 /// as `horizon-mod` and simply hear nothing of their widgets.
@@ -128,6 +144,9 @@ pub const BLOCK_DATA_BYTES: usize = 64 << 10;
 pub const BLOCK_DATA_POSITIONS: usize = 1 << 16;
 /// Positions [`Mods::tick_blocks`] ticks per mod per server tick.
 pub const BLOCK_TICKS_PER_TICK: usize = 4096;
+/// Bytes of one `net.send`, and messages a mod may send per hook call.
+pub const NET_BYTES: usize = 32 << 10;
+const NET_PER_CALL: usize = 64;
 /// Chat lines a mod may show per call, HUD lines and their length.
 const CHAT_PER_CALL: usize = 8;
 /// `command.run-quiet` lines one call of a mod may queue (a quiet payload's
@@ -265,6 +284,16 @@ pub enum Output {
         pos: [i32; 3],
         data: Option<Vec<u8>>,
     },
+    /// `net.send`: a message on the mod's channel. `player` is the target
+    /// of a server mod's message (none: every player); a client mod's goes to
+    /// its server.
+    Net {
+        mod_id: String,
+        /// Sent by a server mod.
+        server: bool,
+        player: Option<String>,
+        data: Vec<u8>,
+    },
     /// `recipes.give`: a stack for a creative player.
     Give {
         item: String,
@@ -347,6 +376,10 @@ struct Running {
     blocks: Option<BlockHost>,
     /// The blocks (ids without properties) it asked the game to tick.
     ticking: Vec<String>,
+    /// A client mod's `net-events` export, none for one built before `net`.
+    net: Option<NetHost>,
+    /// A server mod's `server-net-events` export.
+    server_net: Option<ServerNetHost>,
 }
 
 /// A running mod's exports and the hooks its `init` asked for.
@@ -465,6 +498,8 @@ struct State {
     block_namespaces: Vec<String>,
     /// Where [`Mods::tick_blocks`] resumes in `block_data`.
     block_cursor: usize,
+    /// A server mod: `net.send` may name a player.
+    server: bool,
 }
 
 fn block_pos(p: BlockPos) -> block_bindings::exports::horizon::mods::block_events::Pos {
@@ -597,6 +632,8 @@ impl Mods {
                 .map_err(|e| e.to_string())?;
             BlockHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
+            NetHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             RenderHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
@@ -688,6 +725,7 @@ impl Mods {
             block_namespaces: std::iter::once(m.id.clone())
                 .chain(m.namespaces.iter().cloned())
                 .collect(),
+            server,
         };
         let mut store = Store::new(engine, state);
         store.limiter(|s| &mut s.limits);
@@ -695,6 +733,11 @@ impl Mods {
         let instance = linker
             .instantiate(&mut store, &component)
             .map_err(|e| reason(&e))?;
+        let (net, server_net) = if server {
+            (None, ServerNetHost::new(&mut store, &instance).ok())
+        } else {
+            (NetHost::new(&mut store, &instance).ok(), None)
+        };
         let mut blocks = None;
         let mut ticking = Vec::new();
         let (mut hooks, ui) = if server {
@@ -765,6 +808,8 @@ impl Mods {
             reads_recipes: functions.iter().any(|f| f.starts_with("recipes.")),
             blocks,
             ticking,
+            net,
+            server_net,
         }))
     }
 
@@ -1090,6 +1135,33 @@ impl Mods {
                 map.insert((dimension.to_owned(), pos), data);
             }
         }
+    }
+    /// A message on mod `mod_id`'s channel: for a client mod `player` is none,
+    /// for a server mod the id of the player who sent it. True when a running
+    /// mod of that id took it.
+    pub fn net_message(&mut self, mod_id: &str, player: Option<&str>, data: &[u8]) -> bool {
+        if data.len() > NET_BYTES {
+            return false;
+        }
+        let Some(i) = (0..self.entries.len()).find(|&i| {
+            self.entries[i].run.as_ref().is_some_and(|r| {
+                (r.net.is_some() || r.server_net.is_some()) && r.store.data().id == mod_id
+            })
+        }) else {
+            return false;
+        };
+        self.call(i, FUEL_EVENT, |run| match (&run.net, &run.server_net) {
+            (Some(n), _) => n
+                .horizon_mods_net_events()
+                .call_message(&mut run.store, data),
+            (_, Some(n)) => n.horizon_mods_server_net_events().call_message(
+                &mut run.store,
+                player.unwrap_or_default(),
+                data,
+            ),
+            _ => Ok(()),
+        })
+        .is_some()
     }
     /// The running server mods with a `block-events` export that `wants`.
     fn block_owners(&self, wants: impl Fn(&Running) -> bool) -> Vec<usize> {
@@ -1894,6 +1966,40 @@ impl block_entities::Host for State {
                 data: None,
             });
         }
+    }
+}
+impl net::Host for State {
+    fn send(&mut self, player: Option<String>, data: Vec<u8>) -> Result<(), String> {
+        if data.len() > NET_BYTES {
+            return Err(format!(
+                "{} bytes: at most {NET_BYTES} a message",
+                data.len()
+            ));
+        }
+        match &player {
+            Some(_) if !self.server => {
+                return Err("a client mod sends to its server only".into());
+            }
+            Some(id) if !self.snapshot.players.iter().any(|p| &p.id == id) => {
+                return Err(format!("no player {id}"));
+            }
+            _ => {}
+        }
+        let sent = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Net { .. }))
+            .count();
+        if sent >= NET_PER_CALL {
+            return Err(format!("at most {NET_PER_CALL} messages a call"));
+        }
+        self.out.push(Output::Net {
+            mod_id: self.id.clone(),
+            server: self.server,
+            player,
+            data,
+        });
+        Ok(())
     }
 }
 impl players::Host for State {
