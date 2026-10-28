@@ -1797,17 +1797,25 @@ impl Mods {
         };
         let item_ns = ns(item);
         let block_ns = target.and_then(|t| ns(&t.state));
-        let owners: Vec<usize> = (0..self.entries.len())
-            .filter(|&i| {
-                self.entries[i].run.as_ref().is_some_and(|r| {
-                    r.item.is_some()
-                        && r.store.data().block_namespaces.iter().any(|n| {
-                            item_ns.as_deref() == Some(n.as_str())
-                                || block_ns.as_deref() == Some(n.as_str())
-                        })
+        // Every mod that hears items, those whose namespace the item or the
+        // block is in first: the first to take it ends it.
+        let owns = |i: usize| {
+            self.entries[i].run.as_ref().is_some_and(|r| {
+                r.store.data().block_namespaces.iter().any(|n| {
+                    item_ns.as_deref() == Some(n.as_str())
+                        || block_ns.as_deref() == Some(n.as_str())
                 })
             })
+        };
+        let mut owners: Vec<usize> = (0..self.entries.len())
+            .filter(|&i| {
+                self.entries[i]
+                    .run
+                    .as_ref()
+                    .is_some_and(|r| r.item.is_some())
+            })
             .collect();
+        owners.sort_by_key(|&i| !owns(i));
         let mut handled = false;
         for i in owners {
             handled |= self

@@ -1215,7 +1215,7 @@ The block a player clicked with the item.
 
 | Function | Signature | What it does |
 | --- | --- | --- |
-| `item-used` | `func(player: string, item: string, sneaking: bool, target: option<block-target>) -> bool` | A player right-clicked with `item` in the main hand, on a block or in the air, sneaking or not. Offered first to the mods whose namespace the item or the block is in, before anything vanilla does with it: true takes the click (a wrench turning a block, a filter set on a machine), and nothing else happens. |
+| `item-used` | `func(player: string, item: string, sneaking: bool, target: option<block-target>) -> bool` | A player right-clicked with `item` in the main hand, on a block or in the air, sneaking or not, before anything vanilla does with it: offered to every server mod, those whose namespace the item or the block is in first, until one takes it: true takes the click (a wrench turning a block, a filter set on a machine), and nothing else happens. |
 
 ## `peers`
 

@@ -1287,7 +1287,7 @@ mod run {
             }
             let mut ran: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
             for (mod_id, line) in lines {
-                let ok = self.as_console(|g| g.run_command(&line));
+                let ok = self.as_console(|g| g.run_command_quietly(&line));
                 let e = ran.entry(mod_id).or_default();
                 e.0 += 1;
                 e.1 += usize::from(!ok);

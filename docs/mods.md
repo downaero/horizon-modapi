@@ -727,9 +727,9 @@ two slots, a moving bar and a button.
 
 `ServerMod::item_used(player, item, sneaking, target)` hears a player's right click with the item
 in their main hand, on a block (`target`: dimension, position, face 0 to 5 and state) or in the
-air, before anything vanilla does with it. It goes to the mods whose namespace the item or the
-block is in, so a mod's wrench works on any block and a mod's machine hears any item used on it;
-true takes the click. The gears example shows a gears block's state when a stick is used on it.
+air, before anything vanilla does with it. It goes to every server mod, those whose namespace the
+item or the block is in first, until one takes it (true): a mod's wrench works on any block, a mod's
+machine hears any item used on it, and a mod can give a vanilla item a use. The gears example shows a gears block's state when a stick is used on it.
 
 `world.break-block(dimension, x, y, z, tool, enchantments, into)` (API level 29) breaks a block as
 a player holding `tool` with those enchantments (fortune, silk touch) would, after the call: its
