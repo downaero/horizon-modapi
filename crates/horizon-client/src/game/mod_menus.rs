@@ -391,30 +391,21 @@ impl Game<'_> {
         if event.state != winit::event::ElementState::Pressed {
             return;
         }
-        let Some(m) = self.mod_menu.as_mut().filter(|m| m.panel) else {
-            return;
-        };
-        let Some(focus) = m.focus else {
-            return;
-        };
-        let max = m
-            .layout
-            .widgets
-            .iter()
-            .find_map(|w| match w {
-                MenuWidget::TextField { id, max_length, .. } if *id == focus => Some(*max_length),
-                _ => None,
-            })
-            .unwrap_or(256) as usize;
-        let window = m.window;
-        let Some((_, value)) = m.fields.iter_mut().find(|(id, _)| *id == focus) else {
-            return;
-        };
         match event.physical_key {
             PhysicalKey::Code(KeyCode::Backspace) => {
-                value.pop();
+                self.mod_panel_text(None);
             }
             PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => {
+                let Some(m) = self.mod_menu.as_ref().filter(|m| m.panel) else {
+                    return;
+                };
+                let Some(focus) = m.focus else {
+                    return;
+                };
+                let window = m.window;
+                let Some((_, value)) = m.fields.iter().find(|(id, _)| *id == focus) else {
+                    return;
+                };
                 let value = value.clone();
                 self.send_menu(
                     window,
@@ -427,14 +418,46 @@ impl Game<'_> {
             }
             _ => {
                 if let Some(text) = event.text.as_deref() {
-                    for c in text.chars().filter(|c| !c.is_control()) {
-                        if value.chars().count() < max {
-                            value.push(c);
-                        }
+                    self.mod_panel_text(Some(text));
+                }
+            }
+        }
+    }
+
+    /// Typing into the panel's focused field (`None` is Backspace); false
+    /// when no field has focus.
+    pub(super) fn mod_panel_text(&mut self, text: Option<&str>) -> bool {
+        let Some(m) = self.mod_menu.as_mut().filter(|m| m.panel) else {
+            return false;
+        };
+        let Some(focus) = m.focus else {
+            return false;
+        };
+        let max = m
+            .layout
+            .widgets
+            .iter()
+            .find_map(|w| match w {
+                MenuWidget::TextField { id, max_length, .. } if *id == focus => Some(*max_length),
+                _ => None,
+            })
+            .unwrap_or(256) as usize;
+        let Some((_, value)) = m.fields.iter_mut().find(|(id, _)| *id == focus) else {
+            return false;
+        };
+        match text {
+            None => {
+                value.pop();
+            }
+            Some(text) => {
+                for c in text.chars().filter(|c| !c.is_control()) {
+                    if value.chars().count() < max {
+                        value.push(c);
                     }
                 }
             }
         }
+        true
     }
 
     /// Closes the mod's panel: back to the world. `tell` (Escape) sends the

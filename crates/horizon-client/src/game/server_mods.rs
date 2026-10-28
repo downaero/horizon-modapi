@@ -779,14 +779,19 @@ mod run {
                 let changed: Vec<[i32; 3]> = changed.into_iter().map(|p| [p.0, p.1, p.2]).collect();
                 self.mods.mods.neighbors_changed(self.dim.id(), &changed);
             }
-            for (mod_id, player, id) in std::mem::take(&mut self.mods.menu_buttons) {
-                self.mods.mods.menu_button(&mod_id, &player, id);
-            }
-            for (mod_id, player, id, value) in std::mem::take(&mut self.mods.menu_texts) {
-                self.mods.mods.menu_text(&mod_id, &player, id, &value);
-            }
-            for (mod_id, player) in std::mem::take(&mut self.mods.menu_closes) {
-                self.mods.mods.menu_closed(&mod_id, &player);
+            // In order: a button's action sees the texts sent before it.
+            for (mod_id, player, event) in std::mem::take(&mut self.mods.menu_events) {
+                use horizon_mods::menu_layout::MenuMessage;
+                match event {
+                    MenuMessage::Button { id, .. } => {
+                        self.mods.mods.menu_button(&mod_id, &player, id)
+                    }
+                    MenuMessage::Text { id, value, .. } => {
+                        self.mods.mods.menu_text(&mod_id, &player, id, &value)
+                    }
+                    MenuMessage::Closed { .. } => self.mods.mods.menu_closed(&mod_id, &player),
+                    _ => {}
+                }
             }
             for (from, to, data) in std::mem::take(&mut self.mods.peer_messages) {
                 self.mods.mods.peer_message(&to, &from, &data);
@@ -2431,23 +2436,22 @@ mod run {
                 let Some((mod_id, Some(w))) = self.mods.menu_owner.get(&player).cloned() else {
                     return;
                 };
-                if w != window || !open || self.mods.menu_texts.len() >= MAX_QUEUED_NET {
+                if w != window || !open || self.mods.menu_events.len() >= MAX_QUEUED_NET {
                     return;
                 }
-                match message {
-                    MenuMessage::Button { id, .. } => {
-                        self.mods.menu_buttons.push((mod_id, player, id))
-                    }
-                    MenuMessage::Text { id, value, .. } => {
-                        let value: String = value.chars().take(256).collect();
-                        self.mods.menu_texts.push((mod_id, player, id, value));
-                    }
-                    MenuMessage::Closed { .. } => {
+                let message = match message {
+                    MenuMessage::Text { window, id, value } => MenuMessage::Text {
+                        window,
+                        id,
+                        value: value.chars().take(256).collect(),
+                    },
+                    MenuMessage::Closed { window } => {
                         self.mods.menu_owner.remove(&player);
-                        self.mods.menu_closes.push((mod_id, player));
+                        MenuMessage::Closed { window }
                     }
-                    _ => {}
-                }
+                    other => other,
+                };
+                self.mods.menu_events.push((mod_id, player, message));
                 return;
             }
             let Some(mod_id) = channel.strip_prefix(super::NET_CHANNEL) else {

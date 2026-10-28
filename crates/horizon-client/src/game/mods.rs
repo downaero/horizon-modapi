@@ -90,15 +90,10 @@ pub(super) struct ModsState {
     /// (none for this window's own player).
     #[cfg(feature = "mods")]
     pub(super) menu_owner: std::collections::HashMap<String, (String, Option<i32>)>,
-    /// Buttons guests pressed (mod, player, id), for the next tick.
+    /// What guests did on mods' screens (mod, player, a button, a text or
+    /// a close), in the order they did it, for the next tick.
     #[cfg(feature = "mods")]
-    pub(super) menu_buttons: Vec<(String, String, u32)>,
-    /// What guests typed into mods' screens (mod, player, field, text), and
-    /// who closed one (mod, player), for the next tick.
-    #[cfg(feature = "mods")]
-    pub(super) menu_texts: Vec<(String, String, u32, String)>,
-    #[cfg(feature = "mods")]
-    pub(super) menu_closes: Vec<(String, String)>,
+    pub(super) menu_events: Vec<(String, String, horizon_mods::menu_layout::MenuMessage)>,
     /// Commands server mods run as the console (mod, line), for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) console_lines: Vec<(String, String)>,

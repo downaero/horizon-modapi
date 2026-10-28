@@ -643,13 +643,19 @@ impl Game<'_> {
                     {
                         self.station_text(Some(text), false)
                     }
+                    // A mod's panel: its focused text field.
+                    Screen::ModPanel => {
+                        if !self.mod_panel_text((text != "\\b").then_some(text)) {
+                            return Err("click a text field of the panel first".into());
+                        }
+                    }
                     Screen::Creative if self.creative_screen.tab().search => {
                         // As typed: replaces a selected query, keeps the length limit.
                         self.creative_search_edit(Some(text))
                     }
                     _ => {
                         return Err(
-                            "type needs the chat screen (key t tap), a sign or book, the language search, the creative search, the anvil or World Options".into(),
+                            "type needs the chat screen (key t tap), a sign or book, the language search, the creative search, the anvil, a mod's panel or World Options".into(),
                         );
                     }
                 }
