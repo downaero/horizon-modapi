@@ -406,10 +406,15 @@ impl Hub {
         if in_menu && items.is_none() {
             return Vec::new();
         }
+        let filters = match source {
+            Some(menu::Slots::Block(k)) => world.slot_rules.get(&k).cloned(),
+            _ => None,
+        };
         let mut view = View {
             guest,
             container: items.as_deref_mut(),
             shulker,
+            filters: filters.as_deref(),
         };
         let (drops, changed) = menu::click(
             &mut view,

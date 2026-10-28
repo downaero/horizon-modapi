@@ -132,6 +132,8 @@ pub struct View<'a> {
     pub container: Option<&'a mut [Option<ItemStack>]>,
     /// The container is a shulker box (`ShulkerBoxSlot`).
     pub shulker: bool,
+    /// What a server mod allows in each container slot (`None`: anything).
+    pub filters: Option<&'a [Option<Vec<String>>]>,
 }
 
 impl View<'_> {
@@ -173,6 +175,13 @@ impl View<'_> {
     fn may_place(&self, i: usize, stack: &ItemStack, rules: &dyn Rules) -> bool {
         if self.container.is_none() && (5..=8).contains(&i) {
             return rules.armor_index(&stack.item) == Some(i - 5);
+        }
+        if let (Some(c), Some(filters)) = (&self.container, self.filters)
+            && i < c.len()
+            && let Some(Some(allowed)) = filters.get(i)
+            && !allowed.iter().any(|a| **a == *stack.item)
+        {
+            return false;
         }
         if self.shulker
             && self.container.as_ref().is_some_and(|c| i < c.len())
@@ -742,6 +751,7 @@ mod tests {
             guest: &mut g,
             container: Some(&mut chest),
             shulker: false,
+            filters: None,
         };
         view.guest.carried = Some(ItemStack::new("minecraft:bundle", 1));
         // Left click with the bundle: the stone goes in.
@@ -788,6 +798,7 @@ mod tests {
                 guest: &mut g,
                 container: Some(&mut container),
                 shulker,
+                filters: None,
             };
             // Carried onto an empty slot, shift-clicked from the hotbar
             // (menu slot 27 + 27) and swapped in with the number key 1.
@@ -806,5 +817,41 @@ mod tests {
             click(&mut view, &mut drag, 9, 0, input::PICKUP, &rules);
             assert!(view.get(9).is_some());
         }
+    }
+
+    /// A server mod's slot rules (`containers.set-slot-rule`): slot 0 takes
+    /// iron ingots only, slot 1 nothing.
+    #[test]
+    fn guest_container_slots_follow_a_mods_rules() {
+        let Some(rules) = rules() else {
+            return;
+        };
+        let filters = vec![
+            Some(vec!["minecraft:iron_ingot".to_string()]),
+            Some(Vec::new()),
+        ];
+        let mut g = guest();
+        let mut container = vec![None; 27];
+        let mut drag = None;
+        let mut view = View {
+            guest: &mut g,
+            container: Some(&mut container),
+            shulker: false,
+            filters: Some(&filters),
+        };
+        // Dirt is refused by slot 0, an ingot goes in, and nothing goes in slot 1.
+        view.guest.carried = Some(ItemStack::new("minecraft:dirt", 1));
+        click(&mut view, &mut drag, 0, 0, input::PICKUP, &rules);
+        assert!(view.get(0).is_none());
+        view.guest.carried = Some(ItemStack::new("minecraft:iron_ingot", 1));
+        click(&mut view, &mut drag, 0, 0, input::PICKUP, &rules);
+        assert!(view.get(0).is_some());
+        view.guest.carried = Some(ItemStack::new("minecraft:iron_ingot", 1));
+        click(&mut view, &mut drag, 1, 0, input::PICKUP, &rules);
+        assert!(view.get(1).is_none());
+        // A slot with no rule takes anything.
+        view.guest.carried = Some(ItemStack::new("minecraft:dirt", 1));
+        click(&mut view, &mut drag, 2, 0, input::PICKUP, &rules);
+        assert!(view.get(2).is_some());
     }
 }

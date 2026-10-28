@@ -20,6 +20,18 @@ impl Game<'_> {
     }
     /// ShulkerBoxSlot.mayPlace: no shulker box inside a shulker box.
     pub(super) fn refuses(&self, slot: usize, stack: &ItemStack) -> bool {
+        // A server mod's rule for the slot (`containers.set-slot-rule`).
+        if (300..400).contains(&slot)
+            && let Some(key) = self.container
+            && let Some(Some(allowed)) = self
+                .world
+                .slot_rules
+                .get(&key)
+                .and_then(|rules| rules.get(slot - 300))
+            && !allowed.iter().any(|a| **a == *stack.item)
+        {
+            return true;
+        }
         (300..400).contains(&slot)
             && is_shulker_box(&stack.item)
             && self.container.is_some_and(|k| {

@@ -655,6 +655,14 @@ first, at most 256) as of the tick's start, and `items.take(id)` removes one
 at the tick's end, so a mod's machine can carry items in. Only the simulated
 dimension has item entities to list.
 
+`containers.set-slot-rule(dimension, x, y, z, slot, allowed)` (API level 22) limits
+what a player may put in a slot of a registered container: `some(items)` allows
+only those item ids, an empty list nothing (a slot players can only take from),
+none lifts the rule. It holds for clicks, drags and shift-clicks, local and
+guests'; hoppers and the mod itself are not held to it. Not saved: the mod sets
+its rules again after a load (the gears crate does at each open). A progress bar or
+a screen of its own is not part of this.
+
 ### Capability `entities`
 
 **API level 10, experimental, server mods.** A first, small step toward mod

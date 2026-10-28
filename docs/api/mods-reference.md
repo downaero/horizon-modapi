@@ -966,6 +966,7 @@ Capability `containers`, server mods only (manifest `api = "0.3"`, experimental)
 | `slots` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<list<option<item-stack>>>` | The 27 slots of a container in a loaded chunk, as of the start of this tick; none where there is no container with items yet or none loaded. (Item components are not shown.) |
 | `set-slot` | `func(dimension: string, x: s32, y: s32, z: s32, slot: u32, stack: option<item-stack>) -> result<_, string>` | Puts a stack in slot 0 to 26 (none empties it), after the call, in a registered container; count 1 to 99. Components of what was there go. |
 | `set-name` | `func(dimension: string, x: s32, y: s32, z: s32, name: option<string>) -> result<_, string>` | Names the container at a position (the title its window shows, saved with the chunk as a renamed chest's is); none clears it. After the call, in a registered container; at most 64 characters. |
+| `set-slot-rule` | `func(dimension: string, x: s32, y: s32, z: s32, slot: u32, allowed: option<list<string>>) -> result<_, string>` | Limits what a player may put in one slot of a registered container, as vanilla's slots do (a furnace's fuel slot): `some(items)` allows only those item ids (`minecraft:coal`), an empty list nothing (an output or display slot players can only take from); none lifts the rule. Hoppers and the mod itself are not held to it. After the call; not saved, so the mod sets its rules again after a load. |
 
 ## `redstone`
 

@@ -208,6 +208,10 @@ impl ServerMod for Gears {
     fn block_used(&mut self, player: &str, dimension: &str, pos: Pos, state: &str) -> bool {
         if state.starts_with(CRATE) {
             let _ = containers::set_name(dimension, pos.x, pos.y, pos.z, Some("Gear Crate"));
+            // Slot 0 takes iron ingots only; slot 1 is only for taking from.
+            let ingots = Some(vec!["minecraft:iron_ingot".to_string()]);
+            let _ = containers::set_slot_rule(dimension, pos.x, pos.y, pos.z, 0, ingots.as_deref());
+            let _ = containers::set_slot_rule(dimension, pos.x, pos.y, pos.z, 1, Some(&[]));
             return containers::open(player, dimension, pos.x, pos.y, pos.z);
         }
         if !state.starts_with(COUNTER) {

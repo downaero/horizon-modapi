@@ -926,6 +926,13 @@ interface containers {
     /// with the chunk as a renamed chest's is); none clears it. After the
     /// call, in a registered container; at most 64 characters.
     set-name: func(dimension: string, x: s32, y: s32, z: s32, name: option<string>) -> result<_, string>;
+    /// Limits what a player may put in one slot of a registered container, as
+    /// vanilla's slots do (a furnace's fuel slot): `some(items)` allows only
+    /// those item ids (`minecraft:coal`), an empty list nothing (an output or
+    /// display slot players can only take from); none lifts the rule. Hoppers
+    /// and the mod itself are not held to it. After the call; not saved, so the
+    /// mod sets its rules again after a load.
+    set-slot-rule: func(dimension: string, x: s32, y: s32, z: s32, slot: u32, allowed: option<list<string>>) -> result<_, string>;
 }
 
 /// Capability `redstone`, server mods only (manifest `api = "0.3"`,

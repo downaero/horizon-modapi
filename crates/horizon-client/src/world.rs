@@ -90,6 +90,9 @@ pub struct World {
     /// Every block position written since server mods last heard of it, kept
     /// only while a server mod with blocks runs.
     pub neighbor_log: Option<Vec<(i32, i32, i32)>>,
+    /// What a player may put in each slot of a container block, set by server
+    /// mods: per slot, `None` for anything, else the item ids allowed.
+    pub slot_rules: HashMap<(i32, i32, i32), Vec<Option<Vec<String>>>>,
     /// The sections whose light changed since the log was last drained, as
     /// a bit per section of each column, kept while `block_log` is
     /// (`ChunkHolder.sectionLightChanged`).
@@ -192,6 +195,7 @@ impl World {
             weather: Weather::default(),
             block_log: None,
             neighbor_log: None,
+            slot_rules: HashMap::new(),
             light_log: None,
             moving_piston_fallback: Vec::new(),
             moving_pistons: Vec::new(),

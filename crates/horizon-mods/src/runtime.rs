@@ -387,6 +387,13 @@ pub enum ContainerOp {
         slot: u32,
         stack: Option<SlotStack>,
     },
+    /// `containers.set-slot-rule`: the items a slot takes (none: any).
+    SetRule {
+        dimension: String,
+        pos: [i32; 3],
+        slot: u32,
+        allowed: Option<Vec<String>>,
+    },
     /// `containers.set-name`.
     SetName {
         dimension: String,
@@ -2622,6 +2629,36 @@ impl containers::Host for State {
                 .map(|s| s.map(|(item, count)| containers::ItemStack { item, count }))
                 .collect(),
         )
+    }
+    fn set_slot_rule(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        slot: u32,
+        allowed: Option<Vec<String>>,
+    ) -> Result<(), String> {
+        if slot >= CONTAINER_SLOTS {
+            return Err(format!("slot {slot}: 0 to {}", CONTAINER_SLOTS - 1));
+        }
+        if allowed
+            .as_ref()
+            .is_some_and(|l| l.len() > 64 || l.iter().any(|i| i.is_empty() || i.len() > 128))
+        {
+            return Err("at most 64 item ids of at most 128 characters".into());
+        }
+        let op = ContainerOp::SetRule {
+            dimension,
+            pos: [x, y, z],
+            slot,
+            allowed,
+        };
+        if self.container_op(op) {
+            Ok(())
+        } else {
+            Err(format!("at most {CONTAINER_OPS_PER_CALL} changes a call"))
+        }
     }
     fn set_name(
         &mut self,

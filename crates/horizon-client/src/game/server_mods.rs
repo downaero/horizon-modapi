@@ -820,6 +820,35 @@ mod run {
                         }
                         self.lan = Some(host);
                     }
+                    horizon_mods::ContainerOp::SetRule {
+                        dimension,
+                        pos,
+                        slot,
+                        allowed,
+                    } => {
+                        if dimension != self.dim.id() {
+                            continue;
+                        }
+                        let block = self.world.block(pos[0], pos[1], pos[2]);
+                        if self
+                            .mod_container_entity(&self.res.facts().get(block).name)
+                            .is_none()
+                        {
+                            continue;
+                        }
+                        let rules = self
+                            .world
+                            .slot_rules
+                            .entry((pos[0], pos[1], pos[2]))
+                            .or_default();
+                        if rules.len() <= slot as usize {
+                            rules.resize(slot as usize + 1, None);
+                        }
+                        rules[slot as usize] = allowed;
+                        if rules.iter().all(Option::is_none) {
+                            self.world.slot_rules.remove(&(pos[0], pos[1], pos[2]));
+                        }
+                    }
                     horizon_mods::ContainerOp::SetName {
                         dimension,
                         pos,
