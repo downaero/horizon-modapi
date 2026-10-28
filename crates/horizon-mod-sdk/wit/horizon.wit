@@ -1197,6 +1197,83 @@ interface peer-events {
     message: func(%from: string, data: list<u8>);
 }
 
+/// Capability `menus`, server mods only (experimental): a container of the
+/// mod's own (`containers.register`) opened with a screen of its own, as
+/// NeoForge's menus and screens are: where each slot is drawn, labels,
+/// progress bars fed by the menu's data values (`ContainerData`) and buttons
+/// the mod hears (`clickMenuButton`). Horizon's clients draw it; a vanilla
+/// client sees the container as a chest. Positions are in GUI pixels from
+/// the screen's top left corner, as a container screen's are.
+interface menus {
+    /// A slot of the menu and where it is drawn: slots 0 up to the
+    /// container's size are the container's, then 27 of the player's main
+    /// inventory and 9 of the hotbar.
+    record slot-pos {
+        slot: u32,
+        x: s32,
+        y: s32,
+    }
+    record label {
+        x: s32,
+        y: s32,
+        text: string,
+        /// 0xRRGGBB.
+        color: u32,
+    }
+    /// A bar filled as data value `value` is to data value `max` (a
+    /// furnace's arrow, a machine's progress, a tank's level).
+    record progress {
+        x: s32,
+        y: s32,
+        width: u32,
+        height: u32,
+        value: u32,
+        max: u32,
+        /// Fills upward instead of rightward.
+        vertical: bool,
+        /// 0xRRGGBB of the filled part and of the rest.
+        color: u32,
+        background: u32,
+    }
+    record button {
+        /// What `menu-events.button` hears.
+        id: u32,
+        x: s32,
+        y: s32,
+        width: u32,
+        height: u32,
+        label: string,
+    }
+    variant widget {
+        label(label),
+        progress(progress),
+        button(button),
+    }
+    record layout {
+        /// The screen's size, at most 512 x 512.
+        width: u32,
+        height: u32,
+        /// Where the menu's slots are drawn (at most 72); a slot left out
+        /// is not drawn and cannot be clicked.
+        slots: list<slot-pos>,
+        /// At most 64.
+        widgets: list<widget>,
+    }
+    /// Opens the container at a position (one of the mod's registered
+    /// containers) for a player, after the call, with this screen. False
+    /// when the player is not online or the layout is too large.
+    open: func(player: string, dimension: string, x: s32, y: s32, z: s32, layout: layout) -> bool;
+    /// Sets data value `index` (0 to 31) of the screen the player has open
+    /// from this mod, sent to their client; the bars read it.
+    set-data: func(player: string, index: u32, value: s32) -> bool;
+}
+
+/// What the server calls in a server mod about its screens.
+interface menu-events {
+    /// The player pressed button `id` on the mod's screen they have open.
+    button: func(player: string, id: u32);
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -1240,6 +1317,14 @@ world horizon-block-mod {
     export item-events;
     import peers;
     export peer-events;
+    import menus;
+    export menu-events;
+}
+
+/// The game's side of capability `menus`.
+world menus-host {
+    import menus;
+    export menu-events;
 }
 
 /// The game's side of `peers` and `peer-events`.

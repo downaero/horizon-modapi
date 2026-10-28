@@ -83,6 +83,16 @@ pub(super) struct ModsState {
     /// Items server mods use on blocks (dimension, position, face, item).
     #[cfg(feature = "mods")]
     pub(super) item_uses: Vec<(String, [i32; 3], u8, String)>,
+    /// Screens and data server mods sent, for the tick's end.
+    #[cfg(feature = "mods")]
+    pub(super) menu_ops: Vec<(String, horizon_mods::MenuOp)>,
+    /// Whose screen each player has open: the mod, and the menu's window
+    /// (none for this window's own player).
+    #[cfg(feature = "mods")]
+    pub(super) menu_owner: std::collections::HashMap<String, (String, Option<i32>)>,
+    /// Buttons guests pressed (mod, player, id), for the next tick.
+    #[cfg(feature = "mods")]
+    pub(super) menu_buttons: Vec<(String, String, u32)>,
     /// Blocks server mods break (dimension, position, tool, inventory the
     /// drops go into), for the tick's end.
     #[cfg(feature = "mods")]
@@ -788,6 +798,7 @@ impl Game<'_> {
                 | Output::Break { .. }
                 | Output::Peer { .. }
                 | Output::UseItem { .. }
+                | Output::Menu { .. }
                 | Output::Effect { .. }
                 | Output::Container { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);

@@ -89,6 +89,7 @@ folder, loads no runtime and plays exactly like vanilla 26.3.
 | `storage` | `storage` | `get(key)`, `set(key, value)`, `delete(key)`: a per-mod folder of up to 64 files, 4 MiB total, at most 1 MiB written per call |
 | `command` | `command` | `run(line)`: a vanilla command run as the player, with the player's permissions, after the hook returns (8 per call); mods' own commands are not run. `run-quiet(lines)`: up to 256 a call, the same rights, nothing in the chat (single player and Horizon's servers run them 64 a tick and log one line a batch; elsewhere they go as chat commands and their feedback shows) |
 | `containers` | `containers` | server mods: `register`, `open`, `slots`, `set-slot` for the mod's own blocks that hold items and open as a chest ([below](#capability-containers)). **Experimental:** `experimental = ["containers"]` |
+| `menus` | `menus` | server mods: screens of the mod's own for its containers: slots where it wants them, labels, progress bars, buttons ([below](#capability-menus-screens-of-the-mods-own)). **Experimental:** `experimental = ["menus"]` |
 | `transfer` | `transfer` | server mods: items into and out of any inventory, fluid tanks and batteries on the mod's blocks ([below](#capability-transfer-items-fluids-and-energy-between-blocks)). **Experimental:** `experimental = ["transfer"]` |
 | `effects` | `effects` | server mods: `play-sound` and `level-event` at the mod's blocks ([below](#capability-effects)). **Experimental:** `experimental = ["effects"]` |
 | `items` | `items` | server mods: `drop` puts item entities into the world ([below](#capability-items)). **Experimental:** `experimental = ["items"]` |
@@ -691,6 +692,22 @@ example's `gears:mill` spins the 1 x 3 x 3 wheel above it, and its lift carries 
 by a cog) from each source to each member and marks a conflict where two disagree;
 `members(start, limit, connects)` lists one pipe or cable network. A mod keeps what flows
 (stress, fluid amounts) in `block-entities` data and shows it with entities and effects.
+
+### Capability `menus`: screens of the mod's own
+
+**API level 32, experimental, server mods.** As NeoForge's menus and screens: a mod opens one of
+its registered containers with `menus.open(player, dimension, x, y, z, layout)`, where `layout`
+says the screen's size, where each menu slot is drawn (the container's slots first, then the
+player's 27 main and 9 hotbar slots; a slot left out is not drawn), and its widgets: labels,
+progress bars filled as one data value is to another, and buttons. `menus.set-data(player,
+index, value)` sets one of the screen's 32 data values (`ContainerData`), sent to the client
+when it changes; a button pressed reaches `ServerMod::menu_button(player, id)` (`clickMenuButton`).
+
+The menu itself is the container's ordinary one, so clicks, shift-clicks and the slot rules work
+as they do in a chest; the layout goes to Horizon's clients on the `horizon:menu` channel and they
+draw it, and a vanilla client sees a chest. The panel is drawn in vanilla's container colours;
+textures of the mod's own are not drawn yet. The gears example opens its crate as a press with
+two slots, a moving bar and a button.
 
 ### Items used and blocks broken
 

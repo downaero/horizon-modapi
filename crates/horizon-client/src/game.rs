@@ -112,6 +112,7 @@ mod mod_browser;
 #[cfg(feature = "mods")]
 mod mod_browser_recipes;
 mod mod_input;
+mod mod_menus;
 #[cfg(feature = "mods")]
 mod mod_recipes;
 mod mod_render;
@@ -1893,6 +1894,8 @@ struct Game<'a> {
     /// `ContainerOpenersCounter`: how many players (the host and the guests)
     /// have each chest open.
     lid_openers: HashMap<(i32, i32, i32), i32>,
+    /// A server mod's screen for the container menu open now (`menus`).
+    mod_menu: Option<mod_menus::ModMenu>,
     lan_acting: Option<u32>,
     /// The name of the guest `lan_acting` acts for (`Player.getName`).
     lan_acting_name: Option<String>,
@@ -6197,6 +6200,11 @@ impl Game<'_> {
         if self.screen == Screen::Creative {
             return Self::creative_origin(batch);
         }
+        // A server mod's screen, at its own size.
+        if let Some((w, h)) = self.mod_menu_size() {
+            let (x, y) = batch.centered_origin(w, h);
+            return (x + self.recipe_book_shift(batch.width), y);
+        }
         let (x, y) = batch.centered_origin(176.0, self.screen_height());
         (x + self.recipe_book_shift(batch.width), y)
     }
@@ -6262,6 +6270,9 @@ impl Game<'_> {
             && let Some(position) = Creative::tab_slot_position(i)
         {
             return position;
+        }
+        if let Some(p) = self.mod_menu_slot_position(i) {
+            return p;
         }
         if let Some(p) = self
             .station_slot_position(i)
@@ -6436,6 +6447,7 @@ impl Game<'_> {
                 .container
                 .and_then(|k| self.world.block_entities.get(&k))
             {
+                Some(BlockEntity::Chest(_)) if self.draw_mod_menu(batch, ox, oy) => {}
                 Some(BlockEntity::Chest(_)) if self.draw_machine_screen(batch, ox, oy) => {}
                 Some(BlockEntity::Chest(_)) => self.draw_chest_screen(batch, ox, oy),
                 Some(BlockEntity::Furnace(f)) => {
@@ -7284,6 +7296,10 @@ impl Game<'_> {
         if self.mod_browser_press(right) {
             return;
         }
+        // A button of a server mod's screen (`menus`).
+        if !right && self.mod_menu_press() {
+            return;
+        }
         if !right && self.sort_press() {
             return;
         }
@@ -7491,7 +7507,7 @@ impl Game<'_> {
             let (shift, width) = match self.station.as_ref().map(|s| s.kind) {
                 Some(stations::Kind::Merchant) => (-50.0, 276),
                 Some(stations::Kind::Beacon) => (beacon::SHIFT, 230),
-                _ => (0.0, 176),
+                _ => (0.0, self.mod_menu_size().map_or(176, |(w, _)| w as i32)),
             };
             (shift, width, self.screen_height() as i32)
         };
@@ -13943,6 +13959,7 @@ impl<'a> Game<'a> {
             kinetic_feedback: HashMap::new(),
             lan_global_events: Vec::new(),
             lid_openers: HashMap::new(),
+            mod_menu: None,
             lan_acting: None,
             guest_packets: Vec::new(),
             guest_cooldowns: Vec::new(),

@@ -206,6 +206,73 @@ mod peer_bindings {
     });
 }
 use peer_bindings::{PeersHost, horizon::mods::peers};
+mod menu_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "menus-host",
+    });
+}
+use menu_bindings::{MenusHost, horizon::mods::menus};
+
+pub use crate::menu_layout::{MenuLayout, MenuWidget};
+/// A change to a mod's screens.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MenuOp {
+    Open {
+        player: String,
+        dimension: String,
+        pos: [i32; 3],
+        layout: MenuLayout,
+    },
+    Data {
+        player: String,
+        index: u32,
+        value: i32,
+    },
+}
+impl MenuLayout {
+    fn from_wit(l: menus::Layout) -> Option<Self> {
+        use menus::Widget;
+        let clip = |t: String| t.chars().take(64).collect::<String>();
+        let ok = l.width <= 512 && l.height <= 512 && l.slots.len() <= 72 && l.widgets.len() <= 64;
+        ok.then(|| Self {
+            width: l.width,
+            height: l.height,
+            slots: l.slots.into_iter().map(|s| (s.slot, s.x, s.y)).collect(),
+            widgets: l
+                .widgets
+                .into_iter()
+                .map(|w| match w {
+                    Widget::Label(l) => MenuWidget::Label {
+                        x: l.x,
+                        y: l.y,
+                        text: clip(l.text),
+                        color: l.color & 0xFF_FFFF,
+                    },
+                    Widget::Progress(p) => MenuWidget::Progress {
+                        x: p.x,
+                        y: p.y,
+                        width: p.width.min(512),
+                        height: p.height.min(512),
+                        value: p.value.min(31),
+                        max: p.max.min(31),
+                        vertical: p.vertical,
+                        color: p.color & 0xFF_FFFF,
+                        background: p.background & 0xFF_FFFF,
+                    },
+                    Widget::Button(b) => MenuWidget::Button {
+                        id: b.id,
+                        x: b.x,
+                        y: b.y,
+                        width: b.width.min(512),
+                        height: b.height.min(512),
+                        label: clip(b.label),
+                    },
+                })
+                .collect(),
+        })
+    }
+}
 /// Largest message between mods, and most a call sends.
 const PEER_BYTES: usize = 64 << 10;
 const PEER_PER_CALL: usize = 64;
@@ -632,6 +699,8 @@ pub enum Output {
         face: u8,
         item: String,
     },
+    /// `menus.*`: a screen of the mod's own opened, or its data.
+    Menu { mod_id: String, op: MenuOp },
     /// `peers.send`: a message from one server mod to another.
     Peer {
         from: String,
@@ -794,6 +863,8 @@ struct Running {
     item: Option<ItemHost>,
     /// A server mod's `peer-events` export.
     peer: Option<PeersHost>,
+    /// A server mod's `menu-events` export.
+    menu: Option<MenusHost>,
 }
 
 /// A running mod's exports and the hooks its `init` asked for.
@@ -1095,6 +1166,8 @@ impl Mods {
                 .map_err(|e| e.to_string())?;
             PeersHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
+            MenusHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
             EffectsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
@@ -1225,6 +1298,11 @@ impl Mods {
         } else {
             None
         };
+        let menu = if server {
+            MenusHost::new(&mut store, &instance).ok()
+        } else {
+            None
+        };
         let mut blocks = None;
         let mut ticking = Vec::new();
         let (mut hooks, ui) = if server {
@@ -1300,6 +1378,7 @@ impl Mods {
             neighbor,
             item,
             peer,
+            menu,
         }))
     }
 
@@ -1659,6 +1738,23 @@ impl Mods {
             None => Ok(()),
         });
         true
+    }
+    /// `player` pressed button `id` on the screen mod `mod_id` opened for them.
+    pub fn menu_button(&mut self, mod_id: &str, player: &str, id: u32) {
+        let Some(i) = (0..self.entries.len()).find(|&i| {
+            self.entries[i]
+                .run
+                .as_ref()
+                .is_some_and(|r| r.menu.is_some() && r.store.data().id == mod_id)
+        }) else {
+            return;
+        };
+        self.call(i, FUEL_EVENT, |run| match &run.menu {
+            Some(h) => h
+                .horizon_mods_menu_events()
+                .call_button(&mut run.store, player, id),
+            None => Ok(()),
+        });
     }
     /// The ids of the server mods running now, for `peers.running`.
     fn running_server_ids(&self) -> Vec<String> {
@@ -2959,6 +3055,56 @@ impl State {
             owner: self.id.clone(),
             ..Storage::default()
         }))
+    }
+}
+impl menus::Host for State {
+    fn open(
+        &mut self,
+        player: String,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        layout: menus::Layout,
+    ) -> bool {
+        let Some(layout) = MenuLayout::from_wit(layout) else {
+            return false;
+        };
+        if !self.snapshot.players.iter().any(|p| p.id == player) {
+            return false;
+        }
+        self.out.push(Output::Menu {
+            mod_id: self.id.clone(),
+            op: MenuOp::Open {
+                player,
+                dimension,
+                pos: [x, y, z],
+                layout,
+            },
+        });
+        true
+    }
+    fn set_data(&mut self, player: String, index: u32, value: i32) -> bool {
+        if index > 31 {
+            return false;
+        }
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Menu { .. }))
+            .count();
+        if queued >= 4096 {
+            return false;
+        }
+        self.out.push(Output::Menu {
+            mod_id: self.id.clone(),
+            op: MenuOp::Data {
+                player,
+                index,
+                value,
+            },
+        });
+        true
     }
 }
 impl peers::Host for State {

@@ -209,6 +209,7 @@ pub mod server {
 
     pub use exports::horizon::mods::block_events::{Guest as __BlockGuest, Pos};
     pub use exports::horizon::mods::item_events::{BlockTarget, Guest as __ItemGuest};
+    pub use exports::horizon::mods::menu_events::Guest as __MenuGuest;
     pub use exports::horizon::mods::neighbor_events::Guest as __NeighborGuest;
     pub use exports::horizon::mods::peer_events::Guest as __PeerGuest;
     pub use exports::horizon::mods::server_events::{
@@ -231,6 +232,8 @@ pub mod server {
     pub use horizon::mods::files;
     /// Capability `items`: item entities dropped into the world.
     pub use horizon::mods::items;
+    /// Capability `menus`: screens of the mod's own.
+    pub use horizon::mods::menus;
     /// Capability `net`: messages to and from the mod's client half.
     pub use horizon::mods::net;
     /// Messages to other server mods.
@@ -275,6 +278,8 @@ pub mod server {
         fn ticking_blocks(&self) -> Vec<String> {
             Vec::new()
         }
+        /// The player pressed button `id` on the mod's screen they have open.
+        fn menu_button(&mut self, _player: &str, _id: u32) {}
         /// A message from another server mod (`peers::send`), by its id.
         fn peer_message(&mut self, _from: &str, _data: &[u8]) {}
         /// A player used `item` (on `target`, or in the air): true takes the
@@ -541,6 +546,11 @@ macro_rules! export_server_mod {
                     let mut out = false;
                     with(|m| out = m.block_used(&player, &dimension, pos, &state));
                     out
+                }
+            }
+            impl $crate::server::__MenuGuest for Export {
+                fn button(player: String, id: u32) {
+                    with(|m| m.menu_button(&player, id))
                 }
             }
             impl $crate::server::__PeerGuest for Export {

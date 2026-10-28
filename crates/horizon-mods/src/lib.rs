@@ -12,6 +12,7 @@ pub mod content;
 #[cfg(feature = "index")]
 pub mod index;
 pub mod manifest;
+pub mod menu_layout;
 pub mod modpack;
 #[cfg(feature = "runtime")]
 mod runtime;

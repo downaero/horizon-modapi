@@ -1073,6 +1073,9 @@ impl Game<'_> {
     }
     /// `imageHeight` of the open screen (HopperScreen is 133 tall).
     pub(super) fn screen_height(&self) -> f32 {
+        if let Some((_, h)) = self.mod_menu_size() {
+            return h;
+        }
         if self
             .station
             .as_ref()

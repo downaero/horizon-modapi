@@ -55,6 +55,7 @@ impl Game<'_> {
     ) -> bool {
         false
     }
+    pub(super) fn local_menu_button(&mut self, _id: u32) {}
     pub(super) fn guest_mod_net(
         &mut self,
         _host: &LanHost,
@@ -638,6 +639,9 @@ mod run {
                 let changed: Vec<[i32; 3]> = changed.into_iter().map(|p| [p.0, p.1, p.2]).collect();
                 self.mods.mods.neighbors_changed(self.dim.id(), &changed);
             }
+            for (mod_id, player, id) in std::mem::take(&mut self.mods.menu_buttons) {
+                self.mods.mods.menu_button(&mod_id, &player, id);
+            }
             for (from, to, data) in std::mem::take(&mut self.mods.peer_messages) {
                 self.mods.mods.peer_message(&to, &from, &data);
             }
@@ -653,6 +657,7 @@ mod run {
             self.apply_mod_pushes();
             self.apply_mod_breaks();
             self.apply_mod_item_uses();
+            self.apply_mod_menus();
             self.apply_mod_signals();
             self.apply_mod_drops();
             self.apply_mod_effects();
@@ -1216,6 +1221,149 @@ mod run {
             }
             if let Err(e) = self.process_level_events() {
                 log::debug!("Horizon: a server mod's breaks: {e:?}");
+            }
+        }
+
+        /// This window's own player pressed a button of a mod's screen: the
+        /// mod hears it at once.
+        pub(in crate::game) fn local_menu_button(&mut self, id: u32) {
+            let player = self.player_uuid_string();
+            let Some((mod_id, None)) = self.mods.menu_owner.get(&player).cloned() else {
+                return;
+            };
+            let players = self.server_players(None);
+            let snapshot = self.mod_snapshot_with(players);
+            self.mods.mods.set_snapshot(snapshot);
+            self.lend_world();
+            self.mods.mods.menu_button(&mod_id, &player, id);
+            self.return_world();
+            self.show_mod_output();
+        }
+
+        /// Opens the screens server mods asked for (their container's menu,
+        /// with the layout sent to the player's client) and sends the data
+        /// values they set. Only the dimension the window simulates.
+        pub(in crate::game) fn apply_mod_menus(&mut self) {
+            use horizon_mods::{
+                MenuOp,
+                menu_layout::{CHANNEL, MenuMessage},
+            };
+            let send = |host: &mut LanHost, conn: u32, message: &MenuMessage| {
+                if let Ok(data) = serde_json::to_vec(message) {
+                    host.hub.send_to(
+                        conn,
+                        &C::CustomPayload(CustomPayload {
+                            channel: CHANNEL.into(),
+                            data,
+                        }),
+                    );
+                }
+            };
+            for (mod_id, op) in std::mem::take(&mut self.mods.menu_ops) {
+                match op {
+                    MenuOp::Open {
+                        player,
+                        dimension,
+                        pos,
+                        layout,
+                    } => {
+                        if dimension != self.dim.id() {
+                            continue;
+                        }
+                        let key = (pos[0], pos[1], pos[2]);
+                        let block = self.world.block(pos[0], pos[1], pos[2]);
+                        let name = self.res.facts().get(block).name.clone();
+                        let Some(entity) = self.mod_container_entity(&name) else {
+                            continue;
+                        };
+                        self.world.block_entities.get_or_insert_with(key, || entity);
+                        if self.options.execution_role.is_client()
+                            && self.remote.is_none()
+                            && self.player.is_some()
+                            && self.player_uuid_string() == player
+                        {
+                            self.open_menu(pos);
+                            self.mod_menu = Some(crate::game::mod_menus::ModMenu {
+                                window: None,
+                                layout,
+                                data: [0; 32],
+                            });
+                            self.mods.menu_owner.insert(player, (mod_id, None));
+                            continue;
+                        }
+                        let Some(mut host) = self.lan.take() else {
+                            continue;
+                        };
+                        let conn = host
+                            .hub
+                            .guests
+                            .iter()
+                            .find(|g| g.placed && uuid_string(g.uuid) == player)
+                            .map(|g| g.conn);
+                        if let Some(conn) = conn {
+                            self.container_opener_event(key, true);
+                            if self.lan_open_container(&mut host, conn, key) {
+                                let window = host
+                                    .hub
+                                    .guest(conn)
+                                    .and_then(|g| g.menu.as_ref().map(|m| m.window));
+                                if let Some(window) = window {
+                                    send(&mut host, conn, &MenuMessage::Open { window, layout });
+                                    self.mods.menu_owner.insert(player, (mod_id, Some(window)));
+                                }
+                            } else {
+                                self.container_openers_changed(key, false);
+                            }
+                        }
+                        self.lan = Some(host);
+                    }
+                    MenuOp::Data {
+                        player,
+                        index,
+                        value,
+                    } => {
+                        let Some((owner, window)) = self.mods.menu_owner.get(&player).cloned()
+                        else {
+                            continue;
+                        };
+                        if owner != mod_id {
+                            continue;
+                        }
+                        let Some(window) = window else {
+                            if let Some(m) = self.mod_menu.as_mut()
+                                && m.window.is_none()
+                                && let Some(cell) = m.data.get_mut(index as usize)
+                            {
+                                *cell = value;
+                            }
+                            continue;
+                        };
+                        let Some(mut host) = self.lan.take() else {
+                            continue;
+                        };
+                        let conn = host
+                            .hub
+                            .guests
+                            .iter()
+                            .find(|g| {
+                                uuid_string(g.uuid) == player
+                                    && g.menu.as_ref().is_some_and(|m| m.window == window)
+                            })
+                            .map(|g| g.conn);
+                        if let Some(conn) = conn {
+                            send(
+                                &mut host,
+                                conn,
+                                &MenuMessage::Data {
+                                    window,
+                                    index,
+                                    value,
+                                },
+                            );
+                        }
+                        self.lan = Some(host);
+                    }
+                }
             }
         }
 
@@ -1916,6 +2064,27 @@ mod run {
             channel: &str,
             data: &[u8],
         ) {
+            // A button of a mod's screen (`menus`), heard next tick.
+            if channel == horizon_mods::menu_layout::CHANNEL {
+                let Some(g) = host.hub.guests.iter().find(|g| g.conn == conn) else {
+                    return;
+                };
+                let Ok(horizon_mods::menu_layout::MenuMessage::Button { window, id }) =
+                    serde_json::from_slice(data)
+                else {
+                    return;
+                };
+                let player = uuid_string(g.uuid);
+                let open = g.menu.as_ref().is_some_and(|m| m.window == window);
+                if let Some((mod_id, Some(w))) = self.mods.menu_owner.get(&player)
+                    && *w == window
+                    && open
+                    && self.mods.menu_buttons.len() < MAX_QUEUED_NET
+                {
+                    self.mods.menu_buttons.push((mod_id.clone(), player, id));
+                }
+                return;
+            }
             let Some(mod_id) = channel.strip_prefix(super::NET_CHANNEL) else {
                 return;
             };
@@ -2026,6 +2195,12 @@ mod run {
                     let queue = &mut self.mods.effects;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((dimension, pos, effect));
+                    }
+                }
+                Output::Menu { mod_id, op } => {
+                    let queue = &mut self.mods.menu_ops;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push((mod_id, op));
                     }
                 }
                 Output::UseItem {

@@ -122,9 +122,11 @@ pub enum Capability {
     Effects,
     /// Items, fluids and energy between blocks (interface `transfer`).
     Transfer,
+    /// Screens of the mod's own for its containers (interface `menus`).
+    Menus,
 }
 impl Capability {
-    pub const ALL: [Capability; 20] = [
+    pub const ALL: [Capability; 21] = [
         Capability::GameRead,
         Capability::Chat,
         Capability::Hud,
@@ -145,6 +147,7 @@ impl Capability {
         Capability::Items,
         Capability::Effects,
         Capability::Transfer,
+        Capability::Menus,
     ];
     /// Whether a server mod may have it: the others act on a local player.
     pub fn on_server(self) -> bool {
@@ -161,6 +164,7 @@ impl Capability {
                 | Capability::Items
                 | Capability::Effects
                 | Capability::Transfer
+                | Capability::Menus
         )
     }
     /// The WIT interface it grants, in `horizon:mods`.
@@ -186,6 +190,7 @@ impl Capability {
             Capability::Items => "items",
             Capability::Effects => "effects",
             Capability::Transfer => "transfer",
+            Capability::Menus => "menus",
         }
     }
     /// May change in any release: a mod uses it only with
@@ -205,6 +210,7 @@ impl Capability {
                 | Capability::Items
                 | Capability::Effects
                 | Capability::Transfer
+                | Capability::Menus
         )
     }
     /// What the player reads before turning the mod on: "May <this>".
@@ -233,6 +239,7 @@ impl Capability {
             Capability::Items => "drop items into your worlds",
             Capability::Effects => "play sounds and particles in your worlds",
             Capability::Transfer => "move items, fluids and energy in and out of blocks",
+            Capability::Menus => "show you screens of its own for its blocks",
             Capability::Recipes => {
                 "read the game's recipes and items and which recipes you know, place recipes in your crafting grid and, in creative mode, give you items"
             }
@@ -285,6 +292,7 @@ impl fmt::Display for Capability {
             Capability::Items => "items",
             Capability::Effects => "effects",
             Capability::Transfer => "transfer",
+            Capability::Menus => "menus",
         };
         f.write_str(name)
     }

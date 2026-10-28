@@ -7,8 +7,8 @@ use horizon_mod_sdk::{
     export_server_mod,
     server::{
         BlockPos, BlockTarget, Player, Pos, Registration, ServerMod, attachments, block_entities,
-        containers, effects, entities, files, items, net, peers, players, redstone, transfer,
-        world,
+        containers, effects, entities, files, items, menus, net, peers, players, redstone,
+        transfer, world,
     },
 };
 
@@ -42,6 +42,77 @@ fn read_press() -> Vec<(String, String, u32)> {
         .collect()
 }
 
+/// The crate's screen: its slots 0 and 1 as a press's input and output, the
+/// player's inventory where a container screen has it, a bar and a button.
+fn press_screen() -> menus::Layout {
+    use menus::{Button, Label, Layout, Progress, SlotPos, Widget};
+    let mut slots = vec![
+        SlotPos {
+            slot: 0,
+            x: 56,
+            y: 35,
+        },
+        SlotPos {
+            slot: 1,
+            x: 116,
+            y: 35,
+        },
+    ];
+    // The crate has 27 slots; the player's 27 main and 9 hotbar follow.
+    for k in 0..27 {
+        slots.push(SlotPos {
+            slot: 27 + k,
+            x: 8 + (k as i32 % 9) * 18,
+            y: 84 + (k as i32 / 9) * 18,
+        });
+    }
+    for k in 0..9 {
+        slots.push(SlotPos {
+            slot: 54 + k,
+            x: 8 + k as i32 * 18,
+            y: 142,
+        });
+    }
+    Layout {
+        width: 176,
+        height: 166,
+        slots,
+        widgets: vec![
+            Widget::Label(Label {
+                x: 8,
+                y: 6,
+                text: "Gear Press".into(),
+                color: 0x40_40_40,
+            }),
+            Widget::Label(Label {
+                x: 8,
+                y: 72,
+                text: "Inventory".into(),
+                color: 0x40_40_40,
+            }),
+            Widget::Progress(Progress {
+                x: 79,
+                y: 39,
+                width: 26,
+                height: 8,
+                value: 0,
+                max: 1,
+                vertical: false,
+                color: 0x55_AA_55,
+                background: 0x8B_8B_8B,
+            }),
+            Widget::Button(Button {
+                id: 1,
+                x: 8,
+                y: 52,
+                width: 40,
+                height: 16,
+                label: "Ping".into(),
+            }),
+        ],
+    }
+}
+
 struct Gears {
     /// Ticks seen by each counter since its last write.
     ticks: Vec<([i32; 3], u32)>,
@@ -54,6 +125,8 @@ struct Gears {
     press: Vec<(String, String, u32)>,
     /// Each lift on its way up: its position, the load and the ticks gone.
     lifts: Vec<([i32; 3], Contraption, u32)>,
+    /// The players who opened a crate's screen, fed its progress bar.
+    viewers: Vec<String>,
     /// Ticks the drills have seen.
     drill_ticks: u32,
     /// Each mill turning: its position, its wheel and the wheel's turn.
@@ -69,11 +142,12 @@ impl ServerMod for Gears {
             press: read_press(),
             lifts: Vec::new(),
             drill_ticks: 0,
+            viewers: Vec::new(),
             mills: Vec::new(),
         };
         // The crate holds items (capability `containers`) and opens as a chest.
         containers::register(CRATE)?;
-        Ok((this, Registration::new().on_blocks()))
+        Ok((this, Registration::new().on_blocks().on_tick()))
     }
 
     fn block_placed(&mut self, player: &Player, pos: BlockPos, state: &str) {
@@ -126,6 +200,22 @@ impl ServerMod for Gears {
                 }
                 !gone
             });
+        }
+    }
+
+    /// Each server tick the presses' bars move on.
+    fn tick(&mut self, tick: u64) {
+        let progress = (tick % 40) as i32;
+        for v in &self.viewers {
+            menus::set_data(v, 0, progress);
+            menus::set_data(v, 1, 40);
+        }
+    }
+
+    /// The press screen's button.
+    fn menu_button(&mut self, player: &str, id: u32) {
+        if id == 1 {
+            players::tell(player, "The press says hello");
         }
     }
 
@@ -422,7 +512,13 @@ impl ServerMod for Gears {
             let ingots = Some(vec!["minecraft:iron_ingot".to_string()]);
             let _ = containers::set_slot_rule(dimension, pos.x, pos.y, pos.z, 0, ingots.as_deref());
             let _ = containers::set_slot_rule(dimension, pos.x, pos.y, pos.z, 1, Some(&[]));
-            return containers::open(player, dimension, pos.x, pos.y, pos.z);
+            // Opened as a press of its own (capability `menus`): its input
+            // and output slots, a progress bar fed each tick and a button.
+            let opened = menus::open(player, dimension, pos.x, pos.y, pos.z, &press_screen());
+            if opened && !self.viewers.iter().any(|v| v == player) {
+                self.viewers.push(player.to_owned());
+            }
+            return opened;
         }
         if !state.starts_with(COUNTER) {
             return false;

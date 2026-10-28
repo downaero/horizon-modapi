@@ -27,6 +27,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
 | `items` | [`items`](#items) | drop items into your worlds |
 | `effects` | [`effects`](#effects) | play sounds and particles in your worlds |
 | `transfer` | [`transfer`](#transfer) | move items, fluids and energy in and out of blocks |
+| `menus` | [`menus`](#menus) | show you screens of its own for its blocks |
 
 ## World `horizon-mod`
 
@@ -46,8 +47,15 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `log`, `storage`, `players`, `world`
-- Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `item-events`, `peer-events`, `server-events`
+- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `log`, `storage`, `players`, `world`
+- Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `item-events`, `peer-events`, `menu-events`, `server-events`
+
+## World `menus-host`
+
+The game's side of capability `menus`.
+
+- Imports (what the game offers): `menus`
+- Exports (what the mod provides): `menu-events`
 
 ## World `peers-host`
 
@@ -1212,3 +1220,87 @@ What the server calls in a server mod a peer wrote to.
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `message` | `func(from: string, data: list<u8>)` | A message from the server mod `from` (its id). |
+
+## `menus`
+
+Access: capability `menus`.
+
+Capability `menus`, server mods only (experimental): a container of the mod's own (`containers.register`) opened with a screen of its own, as NeoForge's menus and screens are: where each slot is drawn, labels, progress bars fed by the menu's data values (`ContainerData`) and buttons the mod hears (`clickMenuButton`). Horizon's clients draw it; a vanilla client sees the container as a chest. Positions are in GUI pixels from the screen's top left corner, as a container screen's are.
+
+### record `slot-pos`
+
+A slot of the menu and where it is drawn: slots 0 up to the container's size are the container's, then 27 of the player's main inventory and 9 of the hotbar.
+
+| Field | Type | |
+| --- | --- | --- |
+| `slot` | `u32` |  |
+| `x` | `s32` |  |
+| `y` | `s32` |  |
+
+### record `label`
+
+| Field | Type | |
+| --- | --- | --- |
+| `x` | `s32` |  |
+| `y` | `s32` |  |
+| `text` | `string` |  |
+| `color` | `u32` | 0xRRGGBB. |
+
+### record `progress`
+
+A bar filled as data value `value` is to data value `max` (a furnace's arrow, a machine's progress, a tank's level).
+
+| Field | Type | |
+| --- | --- | --- |
+| `x` | `s32` |  |
+| `y` | `s32` |  |
+| `width` | `u32` |  |
+| `height` | `u32` |  |
+| `value` | `u32` |  |
+| `max` | `u32` |  |
+| `vertical` | `bool` | Fills upward instead of rightward. |
+| `color` | `u32` | 0xRRGGBB of the filled part and of the rest. |
+| `background` | `u32` |  |
+
+### record `button`
+
+| Field | Type | |
+| --- | --- | --- |
+| `id` | `u32` | What `menu-events.button` hears. |
+| `x` | `s32` |  |
+| `y` | `s32` |  |
+| `width` | `u32` |  |
+| `height` | `u32` |  |
+| `label` | `string` |  |
+
+### variant `widget`
+
+| Case | Payload | |
+| --- | --- | --- |
+| `label` | `label` |  |
+| `progress` | `progress` |  |
+| `button` | `button` |  |
+
+### record `layout`
+
+| Field | Type | |
+| --- | --- | --- |
+| `width` | `u32` | The screen's size, at most 512 x 512. |
+| `height` | `u32` |  |
+| `slots` | `list<slot-pos>` | Where the menu's slots are drawn (at most 72); a slot left out is not drawn and cannot be clicked. |
+| `widgets` | `list<widget>` | At most 64. |
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `open` | `func(player: string, dimension: string, x: s32, y: s32, z: s32, layout: layout) -> bool` | Opens the container at a position (one of the mod's registered containers) for a player, after the call, with this screen. False when the player is not online or the layout is too large. |
+| `set-data` | `func(player: string, index: u32, value: s32) -> bool` | Sets data value `index` (0 to 31) of the screen the player has open from this mod, sent to their client; the bars read it. |
+
+## `menu-events`
+
+Access: exported by the mod: the game calls it.
+
+What the server calls in a server mod about its screens.
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `button` | `func(player: string, id: u32)` | The player pressed button `id` on the mod's screen they have open. |
