@@ -192,6 +192,14 @@ mod neighbor_bindings {
     });
 }
 use neighbor_bindings::NeighborHost;
+mod item_event_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "item-host",
+    });
+}
+use item_event_bindings::ItemHost;
+pub use item_event_bindings::exports::horizon::mods::item_events::BlockTarget;
 use net_bindings::{NetHost, horizon::mods::net};
 use server_net_bindings::ServerNetHost;
 /// Capability `ui`'s world beyond `horizon-mod` (docs/mods.md): a second
@@ -596,6 +604,15 @@ pub enum Output {
         pos: [i32; 3],
         level: u8,
     },
+    /// `world.break-block`: break as a player with `tool` would; drops into
+    /// the inventory at `into`, or where the block stood.
+    Break {
+        mod_id: String,
+        dimension: String,
+        pos: [i32; 3],
+        tool: Option<String>,
+        into: Option<[i32; 3]>,
+    },
     /// `items.take`: remove this item entity.
     Take { mod_id: String, id: u32 },
     /// `items.drop`: a stack to drop as an item entity.
@@ -748,6 +765,8 @@ struct Running {
     server_net: Option<ServerNetHost>,
     /// A server mod's `neighbor-events` export, none for one built before it.
     neighbor: Option<NeighborHost>,
+    /// A server mod's `item-events` export.
+    item: Option<ItemHost>,
 }
 
 /// A running mod's exports and the hooks its `init` asked for.
@@ -1161,6 +1180,11 @@ impl Mods {
         } else {
             None
         };
+        let item = if server {
+            ItemHost::new(&mut store, &instance).ok()
+        } else {
+            None
+        };
         let mut blocks = None;
         let mut ticking = Vec::new();
         let (mut hooks, ui) = if server {
@@ -1234,6 +1258,7 @@ impl Mods {
             net,
             server_net,
             neighbor,
+            item,
         }))
     }
 
@@ -1569,6 +1594,55 @@ impl Mods {
                 None => Ok(()),
             });
         }
+    }
+    /// `player` used `item` on `target` (or in the air): true when a mod whose
+    /// namespace the item or the block is in took the click.
+    pub fn item_used(
+        &mut self,
+        player: &ServerPlayer,
+        item: &str,
+        sneaking: bool,
+        target: Option<&BlockTarget>,
+    ) -> bool {
+        let ns = |id: &str| {
+            id.split('[')
+                .next()
+                .unwrap_or(id)
+                .split_once(':')
+                .map(|(n, _)| n.to_owned())
+        };
+        let item_ns = ns(item);
+        let block_ns = target.and_then(|t| ns(&t.state));
+        let owners: Vec<usize> = (0..self.entries.len())
+            .filter(|&i| {
+                self.entries[i].run.as_ref().is_some_and(|r| {
+                    r.item.is_some()
+                        && r.store.data().block_namespaces.iter().any(|n| {
+                            item_ns.as_deref() == Some(n.as_str())
+                                || block_ns.as_deref() == Some(n.as_str())
+                        })
+                })
+            })
+            .collect();
+        let mut handled = false;
+        for i in owners {
+            handled |= self
+                .call(i, FUEL_EVENT, |run| match &run.item {
+                    Some(h) => h.horizon_mods_item_events().call_item_used(
+                        &mut run.store,
+                        &player.id,
+                        item,
+                        sneaking,
+                        target,
+                    ),
+                    None => Ok(false),
+                })
+                .unwrap_or(false);
+            if handled {
+                break;
+            }
+        }
+        handled
     }
     /// `player` used the block at `pos` with an empty hand: true when the
     /// mod that owns it handled that.
@@ -2442,6 +2516,40 @@ impl mod_world::Host for State {
             }
         }
         Ok(Region { palette, blocks })
+    }
+    fn break_block(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        tool: Option<String>,
+        into: Option<(i32, i32, i32)>,
+    ) -> Result<(), String> {
+        if tool.as_ref().is_some_and(|t| t.is_empty() || t.len() > 128) {
+            return Err("a tool id of at most 128 characters".into());
+        }
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Break { .. }))
+            .count();
+        if queued >= 256 {
+            return Err("at most 256 blocks broken a call".into());
+        }
+        if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref())
+            && !view.has_dimension(&dimension)
+        {
+            return Err(format!("no dimension {dimension}"));
+        }
+        self.out.push(Output::Break {
+            mod_id: self.id.clone(),
+            dimension,
+            pos: [x, y, z],
+            tool,
+            into: into.map(|(a, b, c)| [a, b, c]),
+        });
+        Ok(())
     }
     fn set_blocks(&mut self, dimension: String, blocks: Vec<BlockChange>) -> Result<(), String> {
         if blocks.len() > BLOCKS_PER_CALL {

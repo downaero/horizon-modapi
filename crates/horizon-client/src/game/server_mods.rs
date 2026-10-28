@@ -47,6 +47,14 @@ impl Game<'_> {
     ) -> bool {
         false
     }
+    pub(super) fn mod_item_use_by_guest(
+        &mut self,
+        _host: &mut LanHost,
+        _conn: u32,
+        _target: Option<([i32; 3], u8)>,
+    ) -> bool {
+        false
+    }
     pub(super) fn guest_mod_net(
         &mut self,
         _host: &LanHost,
@@ -640,6 +648,7 @@ mod run {
             self.apply_mod_containers();
             self.apply_mod_takes();
             self.apply_mod_pushes();
+            self.apply_mod_breaks();
             self.apply_mod_signals();
             self.apply_mod_drops();
             self.apply_mod_effects();
@@ -1092,6 +1101,93 @@ mod run {
             }
         }
 
+        /// Breaks the blocks server mods asked to as a player with the tool
+        /// would: loot, break particles and sound, air; the drops into the
+        /// inventory named (a chest's or a mod container's slots, like
+        /// stacks first), the rest dropped where the block stood.
+        pub(in crate::game) fn apply_mod_breaks(&mut self) {
+            use horizon_client::{containers::BlockEntity, items::ItemStack};
+            let breaks = std::mem::take(&mut self.mods.breaks);
+            if breaks.is_empty() {
+                return;
+            }
+            let registry = self.pack.assets.registry;
+            let Ok(air) = crate::game::render_control::parse_state(registry, "minecraft:air")
+            else {
+                return;
+            };
+            for (dimension, p, tool, into) in breaks {
+                if dimension != self.dim.id() {
+                    continue;
+                }
+                let state = self.world.block(p[0], p[1], p[2]);
+                let facts = self.res.facts();
+                if facts.is_air(state) || facts.get(state).hardness < 0.0 {
+                    continue;
+                }
+                let tool = tool.map(|t| ItemStack::new(t.as_str(), 1));
+                let drops = self.block_loot_at(p, state, tool.as_ref());
+                self.level_events
+                    .push(horizon_world::level::LevelEvent::LevelEvent {
+                        id: 2001,
+                        pos: horizon_core::position::BlockPos::new(p[0], p[1], p[2]),
+                        data: state.0 as i32,
+                    });
+                if let Err(e) = self.place_state(p, air, false) {
+                    log::debug!("Horizon: a server mod's break at {p:?}: {e:?}");
+                    continue;
+                }
+                let items = self.res.items();
+                let max = |s: &ItemStack| items.get(&s.item).map_or(64, |i| i.max_stack).max(1);
+                let maxes: Vec<u32> = drops.iter().map(max).collect();
+                let mut rest = Vec::new();
+                for (mut stack, cap) in drops.into_iter().zip(maxes) {
+                    if let Some(k) = into
+                        && let Some(BlockEntity::Chest(slots)) =
+                            self.world.block_entities.get_mut(&(k[0], k[1], k[2]))
+                    {
+                        for merge in [true, false] {
+                            for cell in slots.iter_mut() {
+                                if stack.count == 0 {
+                                    break;
+                                }
+                                match cell {
+                                    Some(s) if merge && s.same_item_same_components(&stack) => {
+                                        let put = stack.count.min(cap.saturating_sub(s.count));
+                                        s.count += put;
+                                        stack.count -= put;
+                                    }
+                                    None if !merge => {
+                                        let put = stack.count.min(cap);
+                                        let mut part = stack.clone();
+                                        part.count = put;
+                                        *cell = Some(part);
+                                        stack.count -= put;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        self.world.modified.insert((k[0] >> 4, k[2] >> 4));
+                    }
+                    if stack.count > 0 {
+                        rest.push(stack);
+                    }
+                }
+                let at = [
+                    f64::from(p[0]) + 0.5,
+                    f64::from(p[1]) + 0.5,
+                    f64::from(p[2]) + 0.5,
+                ];
+                for stack in rest {
+                    self.spawn_item(stack, at, [0.0, 0.1, 0.0], 10);
+                }
+            }
+            if let Err(e) = self.process_level_events() {
+                log::debug!("Horizon: a server mod's breaks: {e:?}");
+            }
+        }
+
         /// Sets the redstone signals server mods asked for, through the
         /// table a trapped chest's signal is read from, and tells the blocks
         /// around of a change. Only the dimension the window simulates.
@@ -1457,6 +1553,51 @@ mod run {
             self.mod_block_used_by(Some(host), players, &id, pos)
         }
 
+        /// A guest's right click with the item in their main hand, on a block
+        /// (`target`: position and face) or in the air, offered to the
+        /// server mods before the guest's turn runs: true when one took it.
+        pub(in crate::game) fn mod_item_use_by_guest(
+            &mut self,
+            host: &mut LanHost,
+            conn: u32,
+            target: Option<([i32; 3], u8)>,
+        ) -> bool {
+            if !self.hears_players() {
+                return false;
+            }
+            let Some(g) = host.hub.guests.iter().find(|g| g.conn == conn) else {
+                return false;
+            };
+            let Some(item) = g.inventory.get(g.selected).cloned().flatten() else {
+                return false;
+            };
+            let (id, sneaking) = (uuid_string(g.uuid), g.sneaking);
+            let players = self.server_players(Some(host));
+            let Some(me) = players.iter().find(|p| p.id == id).cloned() else {
+                return false;
+            };
+            let dimension = self.dim.id();
+            let target = target.map(|(p, face)| horizon_mods::BlockTarget {
+                dimension: dimension.to_owned(),
+                x: p[0],
+                y: p[1],
+                z: p[2],
+                face,
+                state: self.state_string(self.world.block(p[0], p[1], p[2])),
+            });
+            let snapshot = self.mod_snapshot_with(players);
+            self.mods.mods.set_snapshot(snapshot);
+            self.lend_world();
+            let used = self
+                .mods
+                .mods
+                .item_used(&me, &item.item, sneaking, target.as_ref());
+            self.return_world();
+            self.route_mod_output(Some(host));
+            self.apply_mod_block_writes();
+            used
+        }
+
         /// Offers the click of the player `id` on the block at `pos` to the
         /// server mods.
         fn mod_block_used_by(
@@ -1767,6 +1908,18 @@ mod run {
                     let queue = &mut self.mods.effects;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((dimension, pos, effect));
+                    }
+                }
+                Output::Break {
+                    dimension,
+                    pos,
+                    tool,
+                    into,
+                    ..
+                } => {
+                    let queue = &mut self.mods.breaks;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push((dimension, pos, tool, into));
                     }
                 }
                 Output::Signal {

@@ -1182,6 +1182,11 @@ impl Game<'_> {
                 // placed; the player is told and the blocks below go back.
                 if self.under_spawn_protection(host, gi, p.pos) {
                     self.spawn_protection_message(host, conn, p.pos);
+                } else if hand == Hand::Main
+                    && self.mod_item_use_by_guest(host, conn, Some((p.pos, p.face as u8)))
+                {
+                    // A server mod took the click with the item (`item-used`).
+                    self.lan_swing_back(host, conn, Some(true));
                 } else if hand == Hand::Main && self.mod_block_use_by_guest(host, conn, p.pos) {
                     // A server mod took the click (capability `block-entities`).
                     self.lan_swing_back(host, conn, Some(true));
@@ -1221,6 +1226,11 @@ impl Game<'_> {
                 let hand = if p.hand == 1 { Hand::Off } else { Hand::Main };
                 let g = &mut host.hub.guests[gi];
                 (g.yaw, g.pitch) = (p.yaw, p.pitch);
+                // A server mod's item used in the air (`item-used`).
+                if hand == Hand::Main && self.mod_item_use_by_guest(host, conn, None) {
+                    self.lan_swing_back(host, conn, Some(true));
+                    return;
+                }
                 let swung = self.as_guest(host, conn, |g| {
                     g.guest_use = Some(GuestUse::Item(hand));
                     let swings = g.swings_started;

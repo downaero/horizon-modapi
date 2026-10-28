@@ -692,6 +692,21 @@ by a cog) from each source to each member and marks a conflict where two disagre
 `members(start, limit, connects)` lists one pipe or cable network. A mod keeps what flows
 (stress, fluid amounts) in `block-entities` data and shows it with entities and effects.
 
+### Items used and blocks broken
+
+`ServerMod::item_used(player, item, sneaking, target)` hears a player's right click with the item
+in their main hand, on a block (`target`: dimension, position, face 0 to 5 and state) or in the
+air, before anything vanilla does with it. It goes to the mods whose namespace the item or the
+block is in, so a mod's wrench works on any block and a mod's machine hears any item used on it;
+true takes the click. The gears example shows a gears block's state when a stick is used on it.
+
+`world.break-block(dimension, x, y, z, tool, into)` (API level 29) breaks a block as a player with
+`tool` would, after the call: its loot table's drops, its break particles and sound, air in its
+place. The drops go into the inventory at `into`, and what does not fit, or all without one, drops
+where the block stood. Bedrock and other unbreakable blocks are left. The gears example's
+`gears:drill` mines the block under it once a second into the inventory above it. A tool's
+enchantments are not taken into account yet, and a container broken this way loses what it held.
+
 ### Capability `transfer`: items, fluids and energy between blocks
 
 **API level 28, experimental, server mods.** What NeoForge's capabilities (`IItemHandler`,

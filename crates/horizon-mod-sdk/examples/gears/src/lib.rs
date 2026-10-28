@@ -6,8 +6,8 @@ use horizon_mod_sdk::{
     contraption::{Contraption, ROTATION_STEP},
     export_server_mod,
     server::{
-        BlockPos, Player, Pos, Registration, ServerMod, attachments, block_entities, containers,
-        effects, entities, files, items, net, players, redstone, transfer,
+        BlockPos, BlockTarget, Player, Pos, Registration, ServerMod, attachments, block_entities,
+        containers, effects, entities, files, items, net, players, redstone, transfer, world,
     },
 };
 
@@ -17,6 +17,7 @@ const BELT: &str = "gears:belt";
 const GAUGE: &str = "gears:gauge";
 const LIFT: &str = "gears:lift";
 const MILL: &str = "gears:mill";
+const DRILL: &str = "gears:drill";
 /// Ticks a lift takes to raise its load three blocks.
 const LIFT_TICKS: u32 = 60;
 const DIMENSION: &str = "minecraft:overworld";
@@ -51,6 +52,8 @@ struct Gears {
     press: Vec<(String, String, u32)>,
     /// Each lift on its way up: its position, the load and the ticks gone.
     lifts: Vec<([i32; 3], Contraption, u32)>,
+    /// Ticks the drills have seen.
+    drill_ticks: u32,
     /// Each mill turning: its position, its wheel and the wheel's turn.
     mills: Vec<([i32; 3], Contraption, f32)>,
 }
@@ -63,6 +66,7 @@ impl ServerMod for Gears {
             spin: 0.0,
             press: read_press(),
             lifts: Vec::new(),
+            drill_ticks: 0,
             mills: Vec::new(),
         };
         // The crate holds items (capability `containers`) and opens as a chest.
@@ -75,6 +79,7 @@ impl ServerMod for Gears {
             || state.starts_with(GAUGE)
             || state.starts_with(LIFT)
             || state.starts_with(MILL)
+            || state.starts_with(DRILL)
         {
             // Data under it, so the server ticks it.
             let _ = block_entities::set(DIMENSION, pos.x, pos.y, pos.z, &[0]);
@@ -122,6 +127,24 @@ impl ServerMod for Gears {
         }
     }
 
+    /// A stick used on one of the mod's blocks shows its state and takes
+    /// the click (`item_used`).
+    fn item_used(
+        &mut self,
+        player: &str,
+        item: &str,
+        _sneaking: bool,
+        target: Option<&BlockTarget>,
+    ) -> bool {
+        match target {
+            Some(t) if item == "minecraft:stick" && t.state.starts_with("gears:") => {
+                players::tell(player, &format!("This is {}", t.state));
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// A block next to a counter changed (`block_neighbor_changed`): it rings.
     fn block_neighbor_changed(
         &mut self,
@@ -149,10 +172,27 @@ impl ServerMod for Gears {
             GAUGE.into(),
             LIFT.into(),
             MILL.into(),
+            DRILL.into(),
         ]
     }
 
     fn block_tick(&mut self, dimension: &str, pos: Pos, state: &str) {
+        if state.starts_with(DRILL) {
+            // Once a second it mines the block under it as an iron pickaxe
+            // would, the drops into the inventory above it (`world.break-block`).
+            self.drill_ticks = self.drill_ticks.wrapping_add(1);
+            if self.drill_ticks.is_multiple_of(20) {
+                let _ = world::break_block(
+                    dimension,
+                    pos.x,
+                    pos.y - 1,
+                    pos.z,
+                    Some("minecraft:iron_pickaxe"),
+                    Some((pos.x, pos.y + 1, pos.z)),
+                );
+            }
+            return;
+        }
         if state.starts_with(MILL) {
             // A mill turns its wheel 3 degrees a tick about x.
             let at = [pos.x, pos.y, pos.z];

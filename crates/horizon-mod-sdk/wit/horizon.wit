@@ -693,6 +693,14 @@ interface %world {
     /// in order after this call returns, before that dimension's next tick;
     /// one in a chunk not loaded then is skipped. At most 4096 per call.
     set-blocks: func(dimension: string, blocks: list<block-change>) -> result<_, string>;
+    /// Breaks a block as a player with `tool` (an item id, enchantments
+    /// left out; none for a bare hand) would, after the call: its loot
+    /// table's drops, its break particles and sound, and air in its place.
+    /// The drops go into the inventory at `into` (as `transfer` puts items
+    /// in), what does not fit and all of them without one dropping where the
+    /// block stood. A drill or a saw. At most 256 a call; unbreakable blocks
+    /// (bedrock) are refused.
+    break-block: func(dimension: string, x: s32, y: s32, z: s32, tool: option<string>, into: option<tuple<s32, s32, s32>>) -> result<_, string>;
 
     /// One block of a scanned region, its state an index into the palette.
     record scanned-block {
@@ -1140,6 +1148,28 @@ interface transfer {
     remove-storage: func(dimension: string, x: s32, y: s32, z: s32);
 }
 
+/// What the server calls in a server mod when a player uses an item
+/// (capability `block-entities`, as `block-used`).
+interface item-events {
+    /// The block a player clicked with the item.
+    record block-target {
+        dimension: string,
+        x: s32,
+        y: s32,
+        z: s32,
+        /// The face clicked: 0 down, 1 up, 2 north, 3 south, 4 west, 5 east.
+        face: u8,
+        /// `mymod:gear[axis=y]`.
+        state: string,
+    }
+    /// A player right-clicked with `item` in the main hand, on a block or in
+    /// the air, sneaking or not. Offered first to the mods whose namespace
+    /// the item or the block is in, before anything vanilla does with it:
+    /// true takes the click (a wrench turning a block, a filter set on a
+    /// machine), and nothing else happens.
+    item-used: func(player: string, item: string, sneaking: bool, target: option<block-target>) -> bool;
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -1180,6 +1210,12 @@ world horizon-block-mod {
     import files;
     import attachments;
     import transfer;
+    export item-events;
+}
+
+/// The game's side of `item-events`.
+world item-host {
+    export item-events;
 }
 
 /// The game's side of capability `transfer` (imports only).

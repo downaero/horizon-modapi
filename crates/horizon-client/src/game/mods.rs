@@ -77,6 +77,10 @@ pub(super) struct ModsState {
     /// Item entities server mods took, by id, for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) takes: Vec<u32>,
+    /// Blocks server mods break (dimension, position, tool, inventory the
+    /// drops go into), for the tick's end.
+    #[cfg(feature = "mods")]
+    pub(super) breaks: Vec<(String, [i32; 3], Option<String>, Option<[i32; 3]>)>,
     /// Server mods' block entities removed last tick, gone this one: their
     /// last move reaches the clients first.
     #[cfg(feature = "mods")]
@@ -768,6 +772,7 @@ impl Game<'_> {
                 | Output::Take { .. }
                 | Output::Push { .. }
                 | Output::Signal { .. }
+                | Output::Break { .. }
                 | Output::Effect { .. }
                 | Output::Container { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);

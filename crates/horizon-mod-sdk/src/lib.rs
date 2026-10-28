@@ -208,12 +208,15 @@ pub mod server {
     });
 
     pub use exports::horizon::mods::block_events::{Guest as __BlockGuest, Pos};
+    pub use exports::horizon::mods::item_events::{BlockTarget, Guest as __ItemGuest};
     pub use exports::horizon::mods::neighbor_events::Guest as __NeighborGuest;
     pub use exports::horizon::mods::server_events::{
         Argument, ArgumentKind, ArgumentValue, BlockPos, Guest as __Guest, Registration,
         ServerCommand,
     };
     pub use exports::horizon::mods::server_net_events::Guest as __NetGuest;
+    /// Data on players, dimensions and chunks, saved with the world.
+    pub use horizon::mods::attachments;
     /// Capability `block-entities`: bytes kept at the positions of the
     /// mod's own blocks.
     pub use horizon::mods::block_entities;
@@ -225,10 +228,6 @@ pub mod server {
     pub use horizon::mods::entities;
     /// The files in the mod's own package, read only.
     pub use horizon::mods::files;
-    /// Data on players, dimensions and chunks, saved with the world.
-    pub use horizon::mods::attachments;
-    /// Capability `transfer`: items, fluids and energy between blocks.
-    pub use horizon::mods::transfer;
     /// Capability `items`: item entities dropped into the world.
     pub use horizon::mods::items;
     /// Capability `net`: messages to and from the mod's client half.
@@ -236,6 +235,8 @@ pub mod server {
     pub use horizon::mods::players::{self, GameMode, Player};
     /// Capability `redstone`: the signal reaching the mod's blocks.
     pub use horizon::mods::redstone;
+    /// Capability `transfer`: items, fluids and energy between blocks.
+    pub use horizon::mods::transfer;
     pub use horizon::mods::world::{self, BlockChange};
 
     /// The server's calls into a mod. Only the hooks [`Registration`] asks
@@ -270,6 +271,17 @@ pub mod server {
         /// `init`. Only the mod's own namespaces count.
         fn ticking_blocks(&self) -> Vec<String> {
             Vec::new()
+        }
+        /// A player used `item` (on `target`, or in the air): true takes the
+        /// click before anything vanilla does with it.
+        fn item_used(
+            &mut self,
+            _player: &str,
+            _item: &str,
+            _sneaking: bool,
+            _target: Option<&BlockTarget>,
+        ) -> bool {
+            false
         }
         /// A block next to one of the mod's blocks that keeps data
         /// (`block_entities::set`) changed: `pos` in `state` is the mod's
@@ -523,6 +535,18 @@ macro_rules! export_server_mod {
                 ) -> bool {
                     let mut out = false;
                     with(|m| out = m.block_used(&player, &dimension, pos, &state));
+                    out
+                }
+            }
+            impl $crate::server::__ItemGuest for Export {
+                fn item_used(
+                    player: String,
+                    item: String,
+                    sneaking: bool,
+                    target: Option<$crate::server::BlockTarget>,
+                ) -> bool {
+                    let mut out = false;
+                    with(|m| out = m.item_used(&player, &item, sneaking, target.as_ref()));
                     out
                 }
             }
