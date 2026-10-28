@@ -6,7 +6,7 @@ use horizon_mod_sdk::{
     export_server_mod,
     server::{
         BlockPos, Player, Pos, Registration, ServerMod, block_entities, containers, entities, net,
-        items, players, redstone,
+        effects, items, players, redstone,
     },
 };
 
@@ -89,6 +89,16 @@ impl ServerMod for Gears {
         let _ = block_entities::set(dimension, pos.x, pos.y, pos.z, &(seconds + 1).to_le_bytes());
         // A minute of running makes an iron nugget (capability `items`).
         if (seconds + 1).is_multiple_of(60) {
+            let _ = effects::play_sound(
+                dimension,
+                pos.x,
+                pos.y,
+                pos.z,
+                "minecraft:block.anvil.use",
+                0.5,
+                1.5,
+            );
+            let _ = effects::level_event(dimension, pos.x, pos.y + 1, pos.z, 2000, 1);
             let _ = items::drop(
                 dimension,
                 f64::from(pos.x) + 0.5,

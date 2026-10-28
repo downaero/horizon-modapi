@@ -74,6 +74,9 @@ pub(super) struct ModsState {
     /// the tick's end.
     #[cfg(feature = "mods")]
     pub(super) drops: Vec<(String, [f64; 3], String, u32)>,
+    /// Sounds and level events server mods queued, for the tick's end.
+    #[cfg(feature = "mods")]
+    pub(super) effects: Vec<(String, [i32; 3], horizon_mods::EffectOp)>,
     /// Blocks server mods set, by dimension, made before that level's next
     /// tick.
     #[cfg(feature = "mods")]
@@ -748,6 +751,7 @@ impl Game<'_> {
                 | Output::BlockData { .. }
                 | Output::Entity { .. }
                 | Output::Drop { .. }
+                | Output::Effect { .. }
                 | Output::Container { .. }) => {
                     self.route_server_output(host.as_deref_mut(), server);
                     continue;

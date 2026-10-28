@@ -89,6 +89,7 @@ folder, loads no runtime and plays exactly like vanilla 26.3.
 | `storage` | `storage` | `get(key)`, `set(key, value)`, `delete(key)`: a per-mod folder of up to 64 files, 4 MiB total, at most 1 MiB written per call |
 | `command` | `command` | `run(line)`: a vanilla command run as the player, with the player's permissions, after the hook returns (8 per call); mods' own commands are not run. `run-quiet(lines)`: up to 256 a call, the same rights, nothing in the chat (single player and Horizon's servers run them 64 a tick and log one line a batch; elsewhere they go as chat commands and their feedback shows) |
 | `containers` | `containers` | server mods: `register`, `open`, `slots`, `set-slot` for the mod's own blocks that hold items and open as a chest ([below](#capability-containers)). **Experimental:** `experimental = ["containers"]` |
+| `effects` | `effects` | server mods: `play-sound` and `level-event` at the mod's blocks ([below](#capability-effects)). **Experimental:** `experimental = ["effects"]` |
 | `items` | `items` | server mods: `drop` puts item entities into the world ([below](#capability-items)). **Experimental:** `experimental = ["items"]` |
 | `redstone` | `redstone` | server mods: `power` reads the redstone signal reaching the mod's own blocks ([below](#capability-redstone)). **Experimental:** `experimental = ["redstone"]` |
 | `entities` | `entities` | server mods: `spawn`, `move-to`, `set-item`, `remove` of small marker entities drawn as an item ([below](#capability-entities)). **Experimental:** `experimental = ["entities"]` |
@@ -592,6 +593,17 @@ has a container, in the dimension the world is simulating, at most 4096 a
 tick; elsewhere it is `none`. There is no event for a change yet: a mod reads
 it from `block-tick`, and a block has to be a ticking one. It does not make a
 block a signal source.
+
+### Capability `effects`
+
+**API level 14, experimental, server mods.** `effects.play-sound(dimension, x,
+y, z, event, volume, pitch)` plays a sound event at a block (volume 0 to 4,
+pitch 0.5 to 2) and `level-event(dimension, x, y, z, id, data)` triggers a
+vanilla level event: 2000 smoke, 2004 spawner flames, 2005 bone meal
+particles, 2009 water evaporating (any other id is refused; data 0 to 15). Both
+run at the tick's end through the game's own level events, so LAN guests see
+and hear them as they do a vanilla block's; at most 64 a call, and only the
+dimension the world is simulating plays.
 
 ### Capability `items`
 

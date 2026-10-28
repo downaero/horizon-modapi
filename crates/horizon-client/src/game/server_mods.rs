@@ -457,6 +457,7 @@ mod run {
             self.apply_mod_entities();
             self.apply_mod_containers();
             self.apply_mod_drops();
+            self.apply_mod_effects();
             if self.mods.block_data_dirty && self.ticks % 200 == 0 {
                 self.flush_mod_block_data();
             }
@@ -796,6 +797,41 @@ mod run {
                         }
                     }
                 }
+            }
+        }
+
+        /// Plays the sounds and level events server mods queued, through the
+        /// game's own level events so LAN guests see and hear them too. Only
+        /// the dimension the window simulates is there; others are dropped.
+        pub(in crate::game) fn apply_mod_effects(&mut self) {
+            let queued = std::mem::take(&mut self.mods.effects);
+            if queued.is_empty() {
+                return;
+            }
+            let dim = self.dim.id();
+            for (dimension, p, effect) in queued {
+                if dimension != dim {
+                    continue;
+                }
+                let pos = horizon_core::position::BlockPos::new(p[0], p[1], p[2]);
+                self.level_events.push(match effect {
+                    horizon_mods::EffectOp::Sound {
+                        event,
+                        volume,
+                        pitch,
+                    } => horizon_world::level::LevelEvent::Sound {
+                        pos,
+                        sound: event.into(),
+                        volume,
+                        pitch,
+                    },
+                    horizon_mods::EffectOp::LevelEvent { id, data } => {
+                        horizon_world::level::LevelEvent::LevelEvent { id, pos, data }
+                    }
+                });
+            }
+            if let Err(e) = self.process_level_events() {
+                log::debug!("Horizon: a mod's effects: {e:?}");
             }
         }
 
@@ -1199,6 +1235,17 @@ mod run {
                     let queue = &mut self.mods.container_ops;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((mod_id, op));
+                    }
+                }
+                Output::Effect {
+                    dimension,
+                    pos,
+                    effect,
+                    ..
+                } => {
+                    let queue = &mut self.mods.effects;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push((dimension, pos, effect));
                     }
                 }
                 Output::Drop {

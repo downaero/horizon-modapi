@@ -25,6 +25,7 @@ The contract between Horizon and its mods: the WIT package `horizon:mods@0.1.0`,
 | `containers` | [`containers`](#containers) | keep items in its own blocks and open them for players |
 | `redstone` | [`redstone`](#redstone) | see the redstone signal reaching its own blocks |
 | `items` | [`items`](#items) | drop items into your worlds |
+| `effects` | [`effects`](#effects) | play sounds and particles in your worlds |
 
 ## World `horizon-mod`
 
@@ -44,8 +45,15 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `log`, `storage`, `players`, `world`
+- Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `log`, `storage`, `players`, `world`
 - Exports (what the mod provides): `block-events`, `server-net-events`, `server-events`
+
+## World `effects-host`
+
+The game's side of capability `effects` (imports only).
+
+- Imports (what the game offers): `effects`
+- Exports (what the mod provides): 
 
 ## World `items-host`
 
@@ -945,3 +953,14 @@ Capability `items`, server mods only (manifest `api = "0.3"`, experimental): ite
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `drop` | `func(dimension: string, x: f64, y: f64, z: f64, item: string, count: u32) -> result<_, string>` | Drops a stack as an item entity at a position (blocks, so x + 0.5 is a block's middle), after the call, in the dimension the world simulates; count 1 to 99. At most 64 drops a call. The item is any item id, a mod's own too. |
+
+## `effects`
+
+Access: capability `effects`.
+
+Capability `effects`, server mods only (manifest `api = "0.3"`, experimental): sounds and vanilla's level events (particles) that every player near the block sees and hears, LAN guests included.
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `play-sound` | `func(dimension: string, x: s32, y: s32, z: s32, event: string, volume: f32, pitch: f32) -> result<_, string>` | Plays a sound event (`minecraft:block.anvil.use`, or one a mod's pack adds) at a block's position, after the call; volume and pitch are clamped to 0 to 4 and 0.5 to 2. At most 64 effects a call. |
+| `level-event` | `func(dimension: string, x: s32, y: s32, z: s32, id: s32, data: s32) -> result<_, string>` | Vanilla's `levelEvent` at a block: 2000 smoke (data 0 to 8, the direction), 2004 spawner flames, 2005 bone meal particles (data 0 to 15, how many) and 2009 water evaporating. Others are refused. |

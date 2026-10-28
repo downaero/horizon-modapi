@@ -83,6 +83,14 @@ mod item_bindings {
     });
 }
 use item_bindings::{ItemsHost, horizon::mods::items};
+/// Capability `effects`' imports.
+mod effect_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "effects-host",
+    });
+}
+use effect_bindings::{EffectsHost, horizon::mods::effects};
 mod server_net_bindings {
     wasmtime::component::bindgen!({
         path: "../horizon-mod-sdk/wit",
@@ -189,6 +197,10 @@ pub const CONTAINER_SLOTS: u32 = 27;
 const CONTAINER_OPS_PER_CALL: usize = 4096;
 /// Item drops (capability `items`) a mod may queue in one call.
 const DROPS_PER_CALL: usize = 64;
+/// Sounds and level events (capability `effects`) a mod may queue in one call.
+const EFFECTS_PER_CALL: usize = 64;
+/// The vanilla level events capability `effects` allows.
+const EFFECT_EVENTS: [i32; 4] = [2000, 2004, 2005, 2009];
 const ENTITY_OPS_PER_CALL: usize = 4096;
 /// Chat lines a mod may show per call, HUD lines and their length.
 const CHAT_PER_CALL: usize = 8;
@@ -300,6 +312,20 @@ pub enum EntityOp {
 /// A stack in a mod container slot: the item and its count.
 pub type SlotStack = (String, u32);
 
+/// What an `effects` call asks for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum EffectOp {
+    Sound {
+        event: String,
+        volume: f32,
+        pitch: f32,
+    },
+    LevelEvent {
+        id: i32,
+        data: i32,
+    },
+}
+
 /// One change to a mod's containers.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ContainerOp {
@@ -388,6 +414,13 @@ pub enum Output {
     Container { mod_id: String, op: ContainerOp },
     /// `entities.*`: a change to the mod's entities, applied in order.
     Entity { mod_id: String, op: EntityOp },
+    /// `effects.*`: a sound or a level event at a block.
+    Effect {
+        mod_id: String,
+        dimension: String,
+        pos: [i32; 3],
+        effect: EffectOp,
+    },
     /// `items.drop`: a stack to drop as an item entity.
     Drop {
         mod_id: String,
@@ -777,6 +810,8 @@ impl Mods {
             RedstoneHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             ItemsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
+                .map_err(|e| e.to_string())?;
+            EffectsHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
             UiHost::add_to_linker::<State, HasSelf<State>>(&mut linker, |s| s)
                 .map_err(|e| e.to_string())?;
@@ -2153,6 +2188,67 @@ impl State {
     fn owns_container_block(&self, id: &str) -> bool {
         id.split_once(':')
             .is_some_and(|(ns, _)| self.block_namespaces.iter().any(|n| n == ns))
+    }
+}
+impl State {
+    /// Queues a sound or level event, within the per-call cap.
+    fn effect(&mut self, dimension: String, pos: [i32; 3], effect: EffectOp) -> Result<(), String> {
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Effect { .. }))
+            .count();
+        if queued >= EFFECTS_PER_CALL {
+            return Err(format!("at most {EFFECTS_PER_CALL} effects a call"));
+        }
+        self.out.push(Output::Effect {
+            mod_id: self.id.clone(),
+            dimension,
+            pos,
+            effect,
+        });
+        Ok(())
+    }
+}
+impl effects::Host for State {
+    fn play_sound(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        event: String,
+        volume: f32,
+        pitch: f32,
+    ) -> Result<(), String> {
+        if event.is_empty() || event.len() > 128 || event.contains(char::is_whitespace) {
+            return Err(format!("{event:?} is not a sound event"));
+        }
+        let clamp = |v: f32, lo: f32, hi: f32| if v.is_finite() { v.clamp(lo, hi) } else { lo };
+        let effect = EffectOp::Sound {
+            event,
+            volume: clamp(volume, 0.0, 4.0),
+            pitch: clamp(pitch, 0.5, 2.0),
+        };
+        self.effect(dimension, [x, y, z], effect)
+    }
+    fn level_event(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        id: i32,
+        data: i32,
+    ) -> Result<(), String> {
+        if !EFFECT_EVENTS.contains(&id) {
+            return Err(format!("level event {id} is not offered"));
+        }
+        let effect = EffectOp::LevelEvent {
+            id,
+            data: data.clamp(0, 15),
+        };
+        self.effect(dimension, [x, y, z], effect)
     }
 }
 impl items::Host for State {

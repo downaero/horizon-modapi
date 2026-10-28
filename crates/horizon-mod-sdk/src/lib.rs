@@ -217,6 +217,8 @@ pub mod server {
     pub use horizon::mods::redstone;
     /// Capability `items`: item entities dropped into the world.
     pub use horizon::mods::items;
+    /// Capability `effects`: sounds and particles.
+    pub use horizon::mods::effects;
     /// Capability `entities`: small marker entities.
     pub use horizon::mods::entities;
     /// Capability `net`: messages to and from the mod's client half.
