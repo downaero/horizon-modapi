@@ -179,6 +179,8 @@ mod run {
 
     /// Positions whose redstone signal is read for mods each tick.
     const MAX_POWER_READS: usize = 4096;
+    /// Block changes a tick that server mods are told about.
+    const MAX_NEIGHBOR_CHANGES: usize = 4096;
     /// Item entities lent to mods each tick.
     const MAX_LENT_ITEMS: usize = 4096;
     /// `net` messages waiting for a tick are kept up to this many.
@@ -405,8 +407,10 @@ mod run {
             }
             self.send_server_mod_commands();
             if !self.mods.server {
+                self.world.neighbor_log = None;
                 return;
             }
+            self.world.neighbor_log.get_or_insert_with(Vec::new);
             let players = self.server_players(None);
             let snapshot = self.mod_snapshot_with(players.clone());
             self.mods.mods.set_snapshot(snapshot);
@@ -466,6 +470,15 @@ mod run {
             self.sync_mod_block_data();
             for (mod_id, player, data) in std::mem::take(&mut self.mods.net_to_server) {
                 self.mods.mods.net_message(&mod_id, Some(&player), &data);
+            }
+            let mut changed = self.world.neighbor_log.take().unwrap_or_default();
+            self.world.neighbor_log = Some(Vec::new());
+            changed.sort_unstable();
+            changed.dedup();
+            changed.truncate(MAX_NEIGHBOR_CHANGES);
+            if !changed.is_empty() {
+                let changed: Vec<[i32; 3]> = changed.into_iter().map(|p| [p.0, p.1, p.2]).collect();
+                self.mods.mods.neighbors_changed(self.dim.id(), &changed);
             }
             self.mods.mods.server_tick(self.ticks);
             self.mods.mods.tick_blocks();
@@ -961,6 +974,26 @@ mod run {
                             && let Some(a) = self.armor_stands.iter_mut().find(|a| a.id == id)
                         {
                             a.equipment[0] = Some(ItemStack::new(item.as_str(), 1));
+                        }
+                    }
+                    horizon_mods::EntityOp::SetSlot { handle, slot, item } => {
+                        if let Some(&id) = self.mods.mod_entities.get(&(mod_id, handle))
+                            && let Some(a) = self.armor_stands.iter_mut().find(|a| a.id == id)
+                            && let Some(cell) = a.equipment.get_mut(slot)
+                        {
+                            *cell = item.map(|i| ItemStack::new(i.as_str(), 1));
+                        }
+                    }
+                    horizon_mods::EntityOp::SetPose {
+                        handle,
+                        part,
+                        rotation,
+                    } => {
+                        if let Some(&id) = self.mods.mod_entities.get(&(mod_id, handle))
+                            && let Some(a) = self.armor_stands.iter_mut().find(|a| a.id == id)
+                            && let Some(cell) = a.pose.get_mut(part)
+                        {
+                            *cell = rotation;
                         }
                     }
                     horizon_mods::EntityOp::Remove { handle } => {

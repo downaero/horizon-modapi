@@ -588,6 +588,17 @@ should work with it as with any block entity holding items, untested), and only 
 How the chest entity of a block that is not a vanilla chest saves and loads
 is not yet proven: keep what matters in `block-entities` too until it is.
 
+### Neighbour events (capability `block-entities`)
+
+A server mod's `ServerMod::block_neighbor_changed(dimension, pos, state, from,
+from_state)` is called when a block next to one of its blocks changes: `pos` is
+the mod's block (a position where it keeps data with `block-entities.set`),
+`from` the block that changed (any block, a player's or a piston's or the
+mod's own). It comes at the start of the next server tick, at most 1024 calls
+a tick to a mod; built before this, a mod simply hears nothing. A block that
+should send a redstone signal can be two blocks of the mod, one with template
+`minecraft:redstone_block`, swapped with `world.set-blocks`.
+
 ### Capability `redstone`
 
 **API level 12, experimental, server mods.** `redstone.power(dimension, x, y,
@@ -636,6 +647,14 @@ AI or physics, and is **not saved**: after a restart the mod places its
 entities again (from `block-entities` data or `storage`). Changes apply at
 the tick's end, in the dimension the world is simulating; others are dropped.
 A mod turned off mid-session leaves its entities until the world closes.
+
+`entities.set-slot(handle, slot, item)` (API level 18) puts an item in any of
+`mainhand`, `offhand`, `head`, `chest`, `legs`, `feet` (none empties it): a
+block's item on the head is drawn as the block, so a mod's own block can stand
+in the world as a model. `entities.set-pose(handle, part, x, y, z)` turns
+`head`, `body`, `left-arm`, `right-arm`, `left-leg` or `right-leg` in degrees,
+as an armor stand's pose does: a spinning gear is a block on the head turned a
+few degrees each tick.
 
 ### Capability `net`
 

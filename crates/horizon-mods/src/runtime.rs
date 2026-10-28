@@ -97,6 +97,13 @@ mod server_net_bindings {
         world: "server-net-host",
     });
 }
+mod neighbor_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "neighbor-host",
+    });
+}
+use neighbor_bindings::NeighborHost;
 use net_bindings::{NetHost, horizon::mods::net};
 use server_net_bindings::ServerNetHost;
 /// Capability `ui`'s world beyond `horizon-mod` (docs/mods.md): a second
@@ -201,6 +208,8 @@ const CONTAINER_OPS_PER_CALL: usize = 4096;
 const DROPS_PER_CALL: usize = 64;
 /// Item entities `items.nearby` lists, and `items.take`s a call.
 const NEARBY_ITEMS: usize = 256;
+/// `neighbor-changed` calls to one mod in a server tick.
+const NEIGHBOR_CALLS_PER_TICK: usize = 1024;
 /// Sounds and level events (capability `effects`) a mod may queue in one call.
 const EFFECTS_PER_CALL: usize = 64;
 /// The vanilla level events capability `effects` allows.
@@ -307,6 +316,18 @@ pub enum EntityOp {
     SetItem {
         handle: u32,
         item: String,
+    },
+    /// `entities.set-slot`: an equipment slot (0 mainhand to 5 head).
+    SetSlot {
+        handle: u32,
+        slot: usize,
+        item: Option<String>,
+    },
+    /// `entities.set-pose`: a part (0 head to 5 right leg), in degrees.
+    SetPose {
+        handle: u32,
+        part: usize,
+        rotation: [f32; 3],
     },
     Remove {
         handle: u32,
@@ -557,6 +578,8 @@ struct Running {
     net: Option<NetHost>,
     /// A server mod's `server-net-events` export.
     server_net: Option<ServerNetHost>,
+    /// A server mod's `neighbor-events` export, none for one built before it.
+    neighbor: Option<NeighborHost>,
 }
 
 /// A running mod's exports and the hooks its `init` asked for.
@@ -946,6 +969,11 @@ impl Mods {
         } else {
             (NetHost::new(&mut store, &instance).ok(), None)
         };
+        let neighbor = if server {
+            NeighborHost::new(&mut store, &instance).ok()
+        } else {
+            None
+        };
         let mut blocks = None;
         let mut ticking = Vec::new();
         let (mut hooks, ui) = if server {
@@ -1018,6 +1046,7 @@ impl Mods {
             ticking,
             net,
             server_net,
+            neighbor,
         }))
     }
 
@@ -1268,6 +1297,67 @@ impl Mods {
                         &dimension,
                         block_pos(pos),
                         &state,
+                    ),
+                    None => Ok(()),
+                });
+                if self.entries[i].run.is_none() {
+                    break;
+                }
+            }
+        }
+    }
+    /// Blocks changed since the last tick in `dimension`: each mod that
+    /// keeps data at a neighbour of one hears `neighbor-changed`, at most
+    /// [`NEIGHBOR_CALLS_PER_TICK`] calls to a mod.
+    pub fn neighbors_changed(&mut self, dimension: &str, changed: &[[i32; 3]]) {
+        const AROUND: [[i32; 3]; 6] = [
+            [1, 0, 0],
+            [-1, 0, 0],
+            [0, 1, 0],
+            [0, -1, 0],
+            [0, 0, 1],
+            [0, 0, -1],
+        ];
+        let world = self.world.clone();
+        for i in self.block_owners(|r| r.neighbor.is_some()) {
+            let mut calls = Vec::new();
+            {
+                let Ok(view) = world.lock() else { return };
+                let Some(view) = view.as_ref() else { return };
+                let run = self.entries[i].run.as_ref().expect("owner is running");
+                let data = &run.store.data().block_data;
+                'changes: for p in changed {
+                    let Some(from_state) = view.block(dimension, p[0], p[1], p[2]) else {
+                        continue;
+                    };
+                    for d in AROUND {
+                        let n = [p[0] + d[0], p[1] + d[1], p[2] + d[2]];
+                        if !data.contains_key(&(dimension.to_owned(), n)) {
+                            continue;
+                        }
+                        let Some(state) = view.block(dimension, n[0], n[1], n[2]) else {
+                            continue;
+                        };
+                        calls.push((n, state, *p, from_state.clone()));
+                        if calls.len() >= NEIGHBOR_CALLS_PER_TICK {
+                            break 'changes;
+                        }
+                    }
+                }
+            }
+            for (n, state, p, from_state) in calls {
+                self.call(i, FUEL_EVENT, |run| match &run.neighbor {
+                    Some(h) => h.horizon_mods_neighbor_events().call_neighbor_changed(
+                        &mut run.store,
+                        dimension,
+                        n[0],
+                        n[1],
+                        n[2],
+                        &state,
+                        p[0],
+                        p[1],
+                        p[2],
+                        &from_state,
                     ),
                     None => Ok(()),
                 });
@@ -2581,6 +2671,35 @@ impl entities::Host for State {
     }
     fn remove(&mut self, handle: u32) -> bool {
         self.entity_handles.remove(&handle) && self.entity_op(EntityOp::Remove { handle })
+    }
+    fn set_slot(&mut self, handle: u32, slot: String, item: Option<String>) -> bool {
+        const SLOTS: [&str; 6] = ["mainhand", "offhand", "feet", "legs", "chest", "head"];
+        let Some(slot) = SLOTS.iter().position(|s| *s == slot) else {
+            return false;
+        };
+        self.entity_handles.contains(&handle)
+            && item.as_ref().is_none_or(|i| i.len() <= 128)
+            && self.entity_op(EntityOp::SetSlot { handle, slot, item })
+    }
+    fn set_pose(&mut self, handle: u32, part: String, x: f32, y: f32, z: f32) -> bool {
+        const PARTS: [&str; 6] = [
+            "head",
+            "body",
+            "left-arm",
+            "right-arm",
+            "left-leg",
+            "right-leg",
+        ];
+        let Some(part) = PARTS.iter().position(|p| *p == part) else {
+            return false;
+        };
+        let wrap = |v: f32| if v.is_finite() { v % 360.0 } else { 0.0 };
+        self.entity_handles.contains(&handle)
+            && self.entity_op(EntityOp::SetPose {
+                handle,
+                part,
+                rotation: [wrap(x), wrap(y), wrap(z)],
+            })
     }
 }
 impl net::Host for State {

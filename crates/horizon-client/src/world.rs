@@ -87,6 +87,9 @@ pub struct World {
     /// Every block position written since the log was last drained, kept
     /// only while the world is open to the network (see `lan`).
     pub block_log: Option<Vec<(i32, i32, i32)>>,
+    /// Every block position written since server mods last heard of it, kept
+    /// only while a server mod with blocks runs.
+    pub neighbor_log: Option<Vec<(i32, i32, i32)>>,
     /// The sections whose light changed since the log was last drained, as
     /// a bit per section of each column, kept while `block_log` is
     /// (`ChunkHolder.sectionLightChanged`).
@@ -188,6 +191,7 @@ impl World {
             day_time: 1000,
             weather: Weather::default(),
             block_log: None,
+            neighbor_log: None,
             light_log: None,
             moving_piston_fallback: Vec::new(),
             moving_pistons: Vec::new(),
@@ -271,6 +275,9 @@ impl World {
             }
             self.revision = self.revision.wrapping_add(1);
             if let Some(log) = &mut self.block_log {
+                log.push((x, y, z));
+            }
+            if let Some(log) = &mut self.neighbor_log {
                 log.push((x, y, z));
             }
             self.modified.insert((x >> 4, z >> 4));

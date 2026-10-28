@@ -880,6 +880,15 @@ interface entities {
     set-item: func(handle: u32, item: string) -> bool;
     /// Removes one of the mod's entities.
     remove: func(handle: u32) -> bool;
+    /// Puts an item in an equipment slot of the entity (`mainhand`, `offhand`,
+    /// `head`, `chest`, `legs`, `feet`); none empties it. A block's item on
+    /// the head is drawn as the block, so a mod's own block (`mymod:gear`)
+    /// can stand in the world as a model that `set-pose` then turns.
+    set-slot: func(handle: u32, slot: string, item: option<string>) -> bool;
+    /// Turns a body part of the entity, in degrees about x, y and z as an armor
+    /// stand's `Pose` does: `head`, `body`, `left-arm`, `right-arm`,
+    /// `left-leg` or `right-leg`. Values are wrapped to -360 to 360.
+    set-pose: func(handle: u32, part: string, x: f32, y: f32, z: f32) -> bool;
 }
 
 /// Capability `containers`, server mods only (manifest `api = "0.3"`,
@@ -964,6 +973,17 @@ interface effects {
     level-event: func(dimension: string, x: s32, y: s32, z: s32, id: s32, data: s32) -> result<_, string>;
 }
 
+/// What the server calls in a server mod when a block next to one of its
+/// blocks changes (capability `block-entities`). The blocks asked about are
+/// those where the mod keeps data (`block-entities.set`).
+interface neighbor-events {
+    /// The block at (from-x, from-y, from-z) became `from-state`; the mod's
+    /// block next to it, at (x, y, z) in `state`, is told, in the tick the
+    /// change was noticed (the start of the next server tick). At most 1024
+    /// calls a tick; the rest are dropped.
+    neighbor-changed: func(dimension: string, x: s32, y: s32, z: s32, state: string, from-x: s32, from-y: s32, from-z: s32, from-state: string);
+}
+
 /// A client mod: runs in the player's game.
 world horizon-mod {
     import log;
@@ -1000,6 +1020,12 @@ world horizon-block-mod {
     import redstone;
     import items;
     import effects;
+    export neighbor-events;
+}
+
+/// The game's side of `neighbor-events`.
+world neighbor-host {
+    export neighbor-events;
 }
 
 /// The game's side of capability `effects` (imports only).

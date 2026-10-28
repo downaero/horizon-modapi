@@ -46,7 +46,14 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
 - Imports (what the game offers): `block-entities`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `log`, `storage`, `players`, `world`
-- Exports (what the mod provides): `block-events`, `server-net-events`, `server-events`
+- Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `server-events`
+
+## World `neighbor-host`
+
+The game's side of `neighbor-events`.
+
+- Imports (what the game offers): 
+- Exports (what the mod provides): `neighbor-events`
 
 ## World `effects-host`
 
@@ -934,6 +941,8 @@ Capability `entities`, server mods only (manifest `api = "0.3"`, experimental): 
 | `move-to` | `func(handle: u32, x: f64, y: f64, z: f64, yaw: f32) -> bool` | Moves one of the mod's entities; false for a handle it does not hold. |
 | `set-item` | `func(handle: u32, item: string) -> bool` | Changes the item an entity is drawn as. |
 | `remove` | `func(handle: u32) -> bool` | Removes one of the mod's entities. |
+| `set-slot` | `func(handle: u32, slot: string, item: option<string>) -> bool` | Puts an item in an equipment slot of the entity (`mainhand`, `offhand`, `head`, `chest`, `legs`, `feet`); none empties it. A block's item on the head is drawn as the block, so a mod's own block (`mymod:gear`) can stand in the world as a model that `set-pose` then turns. |
+| `set-pose` | `func(handle: u32, part: string, x: f32, y: f32, z: f32) -> bool` | Turns a body part of the entity, in degrees about x, y and z as an armor stand's `Pose` does: `head`, `body`, `left-arm`, `right-arm`, `left-leg` or `right-leg`. Values are wrapped to -360 to 360. |
 
 ## `containers`
 
@@ -1001,3 +1010,13 @@ Capability `effects`, server mods only (manifest `api = "0.3"`, experimental): s
 | --- | --- | --- |
 | `play-sound` | `func(dimension: string, x: s32, y: s32, z: s32, event: string, volume: f32, pitch: f32) -> result<_, string>` | Plays a sound event (`minecraft:block.anvil.use`, or one a mod's pack adds) at a block's position, after the call; volume and pitch are clamped to 0 to 4 and 0.5 to 2. At most 64 effects a call. |
 | `level-event` | `func(dimension: string, x: s32, y: s32, z: s32, id: s32, data: s32) -> result<_, string>` | Vanilla's `levelEvent` at a block: 2000 smoke (data 0 to 8, the direction), 2004 spawner flames, 2005 bone meal particles (data 0 to 15, how many) and 2009 water evaporating. Others are refused. |
+
+## `neighbor-events`
+
+Access: exported by the mod: the game calls it.
+
+What the server calls in a server mod when a block next to one of its blocks changes (capability `block-entities`). The blocks asked about are those where the mod keeps data (`block-entities.set`).
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `neighbor-changed` | `func(dimension: string, x: s32, y: s32, z: s32, state: string, from-x: s32, from-y: s32, from-z: s32, from-state: string)` | The block at (from-x, from-y, from-z) became `from-state`; the mod's block next to it, at (x, y, z) in `state`, is told, in the tick the change was noticed (the start of the next server tick). At most 1024 calls a tick; the rest are dropped. |

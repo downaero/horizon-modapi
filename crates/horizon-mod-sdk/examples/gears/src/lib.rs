@@ -5,8 +5,8 @@
 use horizon_mod_sdk::{
     export_server_mod,
     server::{
-        BlockPos, Player, Pos, Registration, ServerMod, block_entities, containers, entities, net,
-        effects, items, players, redstone,
+        BlockPos, Player, Pos, Registration, ServerMod, block_entities, containers, effects,
+        entities, items, net, players, redstone,
     },
 };
 
@@ -19,6 +19,8 @@ struct Gears {
     ticks: Vec<([i32; 3], u32)>,
     /// The floating gear above each counter (capability `entities`).
     gears: Vec<([i32; 3], u32)>,
+    /// The turn of the gears, in degrees (capability `entities`).
+    spin: f32,
 }
 
 impl ServerMod for Gears {
@@ -26,6 +28,7 @@ impl ServerMod for Gears {
         let this = Self {
             ticks: Vec::new(),
             gears: Vec::new(),
+            spin: 0.0,
         };
         // The crate holds items (capability `containers`) and opens as a chest.
         containers::register(CRATE)?;
@@ -43,6 +46,8 @@ impl ServerMod for Gears {
             if let Ok(handle) =
                 entities::spawn(DIMENSION, at[0], at[1], at[2], 0.0, "minecraft:iron_ingot")
             {
+                // The counter's own block on the head, turned each tick.
+                entities::set_slot(handle, "head", Some(COUNTER));
                 self.gears.push(([pos.x, pos.y, pos.z], handle));
             }
         }
@@ -61,6 +66,26 @@ impl ServerMod for Gears {
         }
     }
 
+    /// A block next to a counter changed (`block_neighbor_changed`): it rings.
+    fn block_neighbor_changed(
+        &mut self,
+        dimension: &str,
+        pos: Pos,
+        _state: &str,
+        _from: Pos,
+        _from_state: &str,
+    ) {
+        let _ = effects::play_sound(
+            dimension,
+            pos.x,
+            pos.y,
+            pos.z,
+            "minecraft:block.note_block.bell",
+            1.0,
+            1.0,
+        );
+    }
+
     fn ticking_blocks(&self) -> Vec<String> {
         vec![COUNTER.into()]
     }
@@ -71,6 +96,10 @@ impl ServerMod for Gears {
             return;
         }
         let at = [pos.x, pos.y, pos.z];
+        self.spin = (self.spin + 4.0) % 360.0;
+        if let Some(&(_, handle)) = self.gears.iter().find(|(p, _)| *p == at) {
+            entities::set_pose(handle, "head", 0.0, self.spin, 0.0);
+        }
         let seen = match self.ticks.iter_mut().find(|(p, _)| *p == at) {
             Some((_, n)) => n,
             None => {

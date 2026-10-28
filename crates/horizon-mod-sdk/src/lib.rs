@@ -207,6 +207,7 @@ pub mod server {
         Argument, ArgumentKind, ArgumentValue, BlockPos, Guest as __Guest, Registration,
         ServerCommand,
     };
+    pub use exports::horizon::mods::neighbor_events::Guest as __NeighborGuest;
     pub use exports::horizon::mods::server_net_events::Guest as __NetGuest;
     /// Capability `block-entities`: bytes kept at the positions of the
     /// mod's own blocks.
@@ -258,6 +259,18 @@ pub mod server {
         /// `init`. Only the mod's own namespaces count.
         fn ticking_blocks(&self) -> Vec<String> {
             Vec::new()
+        }
+        /// A block next to one of the mod's blocks that keeps data
+        /// (`block_entities::set`) changed: `pos` in `state` is the mod's
+        /// block, `from` in `from_state` the block that changed.
+        fn block_neighbor_changed(
+            &mut self,
+            _dimension: &str,
+            _pos: Pos,
+            _state: &str,
+            _from: Pos,
+            _from_state: &str,
+        ) {
         }
         /// An instance of a ticking block, each server tick.
         fn block_tick(&mut self, _dimension: &str, _pos: Pos, _state: &str) {}
@@ -500,6 +513,33 @@ macro_rules! export_server_mod {
                     let mut out = false;
                     with(|m| out = m.block_used(&player, &dimension, pos, &state));
                     out
+                }
+            }
+            impl $crate::server::__NeighborGuest for Export {
+                fn neighbor_changed(
+                    dimension: String,
+                    x: i32,
+                    y: i32,
+                    z: i32,
+                    state: String,
+                    from_x: i32,
+                    from_y: i32,
+                    from_z: i32,
+                    from_state: String,
+                ) {
+                    with(|m| {
+                        m.block_neighbor_changed(
+                            &dimension,
+                            $crate::server::Pos { x, y, z },
+                            &state,
+                            $crate::server::Pos {
+                                x: from_x,
+                                y: from_y,
+                                z: from_z,
+                            },
+                            &from_state,
+                        )
+                    })
                 }
             }
             impl $crate::server::__NetGuest for Export {
