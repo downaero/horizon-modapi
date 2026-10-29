@@ -475,8 +475,9 @@ as one model. A model with no geometry of its own takes its parent's loader
 with its own textures, as NeoForge does (Create's red valve handle over its
 valve handle's OBJ). Both turn with their blockstate variant as any model does, and
 so do visual parts drawing their states. Their other keys (`render_type`,
-OBJ normals, `emissive_ambient`) are not read; items draw such models only
-through a model file of their own.
+OBJ normals, `emissive_ambient`) are not read. Items drawing such a model (a
+block item whose model is the block's) bake it the same way, so its icon is the OBJ or the
+composite too.
 
 The fence: files go in the mod's own namespaces (`assets/<id>/`,
 `data/<id>/`, and those its manifest lists), plus additions to vanilla tags

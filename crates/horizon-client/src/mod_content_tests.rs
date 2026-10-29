@@ -597,6 +597,13 @@ fn neoforge_obj_and_composite_models_bake() {
     assert_eq!(quad.material.sprite, "minecraft:block/stone");
     // `flip_v`: the OBJ's bottom-up coordinates turned top-down.
     assert_eq!(quad.uv[0], [0.0, 1.0]);
+    // Items drawing these models bake them as blocks do: a red wheel's icon
+    // is its parent's OBJ with its own texture.
+    let items = crate::item_render::ItemRenderer::load(&root).unwrap();
+    let red = items.bake("loaders:block/red_wheel");
+    assert_eq!(red.quads.len(), 2);
+    assert_eq!(red.quads[0].material.sprite, "minecraft:block/oak_planks");
+    assert_eq!(items.bake("loaders:block/box").quads.len(), 4);
     fs::remove_dir_all(&scratch).unwrap();
 }
 

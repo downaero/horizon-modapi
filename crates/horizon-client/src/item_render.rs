@@ -548,6 +548,14 @@ impl ItemRenderer {
             return hit.clone();
         }
         let baked = bake_item_model(&self.library, &self.sprites, model)
+            .map(|mut baked| {
+                // A mod's model drawn by one of NeoForge's loaders (an OBJ,
+                // a composite): its quads as the block's, here unturned.
+                if let Some(quads) = self.loader_quads(model) {
+                    baked.quads = quads;
+                }
+                baked
+            })
             .or_else(|_| bake_item_model(&self.library, &self.sprites, MISSING_MODEL))
             .map(Arc::new)
             .unwrap_or_else(|_| {
@@ -565,6 +573,28 @@ impl ItemRenderer {
             cache.insert(model.to_owned(), baked.clone());
         }
         baked
+    }
+    /// The quads of a model drawn by a NeoForge loader, its own or a
+    /// parent's (`models::neoforge`), a sprite nobody has as the missing one;
+    /// none for any other model.
+    fn loader_quads(&self, model: &str) -> Option<Vec<horizon_assets::bake::ModelQuad>> {
+        let root = &self.sprites.root;
+        let json = crate::models::neoforge::loader(root, model)?;
+        let resolved = self.library.resolve(model).ok()?;
+        let transform = horizon_assets::bake::BlockModelTransform::new([0; 3], false);
+        let models = crate::model_library::ParsedModels::default();
+        let mut quads = crate::models::neoforge::bake(root, &json, &resolved, &models, transform)
+            .map_err(|e| log::warn!("Horizon: item model {model} not baked: {e}"))
+            .ok()?;
+        for q in &mut quads {
+            let sprite = &q.material.sprite;
+            if sprite != horizon_assets::item_bake::MISSING_SPRITE
+                && self.sprites.mask(sprite).is_none()
+            {
+                q.material.sprite = horizon_assets::item_bake::MISSING_SPRITE.to_owned();
+            }
+        }
+        Some(quads)
     }
     /// `CuboidItemModelWrapper.computeExtents`: the distinct quad corners.
     fn quad_extents(&self, model: &str, baked: &BakedItemModel) -> Arc<Vec<Vec3>> {
