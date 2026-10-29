@@ -301,6 +301,15 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
                 } => format!("hurt entity {id} by {amount} ({damage_type})"),
                 horizon_mods::LivingOp::Discard { id } => format!("discarded entity {id}"),
             },
+            Output::VisualOrientation {
+                orientations, pos, ..
+            } => format!(
+                "turned {} part(s) at {} {} {}",
+                orientations.len(),
+                pos[0],
+                pos[1],
+                pos[2]
+            ),
             Output::VisualScroll { scrolls, pos, .. } => format!(
                 "scrolled {} texture(s) at {} {} {}",
                 scrolls.len(),

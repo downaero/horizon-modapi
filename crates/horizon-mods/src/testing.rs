@@ -1325,11 +1325,13 @@ impl Step {
                     if parts.is_empty() {
                         game.visuals.remove(&at);
                     } else {
-                        // Scrolls stay on the parts by index, as in the game.
+                        // Scrolls and orientations stay on the parts by index,
+                        // as in the game.
                         let mut parts = parts.clone();
                         if let Some(old) = game.visuals.get(&at) {
                             for (p, o) in parts.iter_mut().zip(old) {
                                 p.scroll = o.scroll.clone();
+                                p.orientation = o.orientation;
                             }
                         }
                         game.visuals.insert(at, parts);
@@ -1344,6 +1346,22 @@ impl Step {
                     }
                     crate::LivingOp::Discard { id } => game.living.retain(|l| l.id != *id),
                 },
+                Output::VisualOrientation {
+                    dimension,
+                    pos,
+                    orientations,
+                    ..
+                } if overworld(dimension) => {
+                    if let Some(parts) = game.visuals.get_mut(&(pos[0], pos[1], pos[2])) {
+                        for (i, p) in parts.iter_mut().enumerate() {
+                            p.orientation = orientations
+                                .iter()
+                                .rev()
+                                .find(|(at, _)| *at as usize == i)
+                                .map(|(_, q)| *q);
+                        }
+                    }
+                }
                 Output::VisualScroll {
                     dimension,
                     pos,
@@ -1594,6 +1612,10 @@ impl Step {
                         }
                         if let Some(s) = &p.scroll {
                             line += &format!(" scroll {} {} {}", s.to, s.speed, s.span);
+                        }
+                        if let Some(q) = p.orientation {
+                            let q = q.map(|c| (c * 1000.0).round() / 1000.0);
+                            line += &format!(" turned {q:?}");
                         }
                         line
                     })

@@ -132,6 +132,32 @@ pub fn rpm(rpm: f32) -> f32 {
 pub struct Visual {
     parts: Vec<visuals::Part>,
     scrolls: Vec<visuals::Scroll>,
+    orientations: Vec<visuals::Orientation>,
+}
+
+/// A turn of `degrees` about `axis`, counterclockwise looking from its
+/// positive end, as a unit quaternion (x, y, z, w): JOML's
+/// `Axis.XP.rotationDegrees`, for [`Visual::oriented`].
+pub fn rotation_degrees(axis: Axis, degrees: f32) -> [f32; 4] {
+    let (s, c) = (degrees.to_radians() / 2.0).sin_cos();
+    match axis {
+        Axis::X => [s, 0.0, 0.0, c],
+        Axis::Y => [0.0, s, 0.0, c],
+        Axis::Z => [0.0, 0.0, s, c],
+    }
+}
+
+/// `a * b`: `b`'s turn first, then `a`'s, as JOML's `a.mul(b)` chains a
+/// renderer's turns (`Ry(base) * Rx(lower)`).
+pub fn mul_quaternions(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let [ax, ay, az, aw] = a;
+    let [bx, by, bz, bw] = b;
+    [
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+        aw * bw - ax * bx - ay * by - az * bz,
+    ]
 }
 
 impl Visual {
@@ -189,8 +215,27 @@ impl Visual {
         }
         self
     }
+    /// The last part's model turned by unit quaternion `q` (x, y, z, w)
+    /// about its pivot before its spin ([`rotation_degrees`],
+    /// [`mul_quaternions`]), as a mechanical arm's segments are drawn
+    /// (`visuals.set-orientations`).
+    pub fn oriented(&mut self, q: [f32; 4]) -> &mut Self {
+        if let Some(part) = self.parts.len().checked_sub(1) {
+            self.orientations.retain(|o| o.part as usize != part);
+            self.orientations.push(visuals::Orientation {
+                part: part as u32,
+                rotation: (q[0], q[1], q[2], q[3]),
+            });
+        }
+        self
+    }
     pub fn parts(&self) -> &[visuals::Part] {
         &self.parts
+    }
+    fn same_orientations(&self, other: &[visuals::Orientation]) -> bool {
+        let key = |o: &visuals::Orientation| (o.part, o.rotation);
+        self.orientations.len() == other.len()
+            && self.orientations.iter().map(key).eq(other.iter().map(key))
     }
     fn same_scrolls(&self, other: &[visuals::Scroll]) -> bool {
         let key = |s: &visuals::Scroll| (s.part, s.from.clone(), s.to.clone(), s.speed, s.span);
@@ -234,6 +279,12 @@ fn draw<T: BlockEntity>(entity: &T, level: &Level, pos: BlockPos, state: &BlockS
     if !visual.parts.is_empty()
         && !visual.same_scrolls(&last.scrolls)
         && visuals::set_scrolls(d, x, y, z, &visual.scrolls).is_err()
+    {
+        return;
+    }
+    if !visual.parts.is_empty()
+        && !visual.same_orientations(&last.orientations)
+        && visuals::set_orientations(d, x, y, z, &visual.orientations).is_err()
     {
         return;
     }

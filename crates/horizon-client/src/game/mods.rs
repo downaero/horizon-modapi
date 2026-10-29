@@ -903,6 +903,7 @@ impl Game<'_> {
                 | Output::BlockData { .. }
                 | Output::Visual { .. }
                 | Output::VisualScroll { .. }
+                | Output::VisualOrientation { .. }
                 | Output::Living { .. }
                 | Output::Structure { .. }
                 | Output::Entity { .. }

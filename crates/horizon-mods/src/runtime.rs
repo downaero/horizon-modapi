@@ -937,6 +937,14 @@ pub enum Output {
         pos: [i32; 3],
         scrolls: Vec<(u32, crate::visual::Scroll)>,
     },
+    /// `visuals.set-orientations`: unit quaternions on the parts drawn at
+    /// one of the mod's blocks, by part index (none: none any more).
+    VisualOrientation {
+        mod_id: String,
+        dimension: String,
+        pos: [i32; 3],
+        orientations: Vec<(u32, [f32; 4])>,
+    },
     /// `net.send`: a message on the mod's channel. `player` is the target
     /// of a server mod's message (none: every player); a client mod's goes to
     /// its server.
@@ -3653,6 +3661,43 @@ impl visuals::Host for State {
         });
         Ok(())
     }
+    fn set_orientations(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        orientations: Vec<visuals::Orientation>,
+    ) -> Result<(), String> {
+        if orientations.len() > crate::visual::PARTS {
+            return Err(format!(
+                "{} orientations: at most {}",
+                orientations.len(),
+                crate::visual::PARTS
+            ));
+        }
+        self.own_block(&dimension, x, y, z)?;
+        let orientations = orientations
+            .into_iter()
+            .map(|o| {
+                if o.part as usize >= crate::visual::PARTS {
+                    return Err(format!("part {}: a position has at most 16", o.part));
+                }
+                let (qx, qy, qz, qw) = o.rotation;
+                let q = crate::visual::unit_quaternion([qx, qy, qz, qw]).ok_or_else(|| {
+                    format!("part {}: a quaternion of finite numbers, not all 0", o.part)
+                })?;
+                Ok((o.part, q))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        self.out.push(Output::VisualOrientation {
+            mod_id: self.id.clone(),
+            dimension,
+            pos: [x, y, z],
+            orientations,
+        });
+        Ok(())
+    }
 }
 impl State {
     /// `visuals.set` and `set-in-phase`.
@@ -3685,6 +3730,7 @@ impl State {
                     item: p.item,
                     scale: p.scale,
                     scroll: None,
+                    orientation: None,
                 };
                 part.check()?;
                 if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref())

@@ -5,6 +5,11 @@
 join = "Alex"
 blocks = [{ x = 5, y = 64, z = 5, state = "gears:counter" }]
 place = { x = 5, y = 64, z = 5, state = "gears:counter" }
+# Its gear turns, the ingot on it laid flat and turning with it.
+expect.visuals = [
+    "5 64 5 minecraft:iron_trapdoor[half=bottom] 2.8125 offset [0.0, 1.1, 0.0] velocity [0.0, 0.0, 0.0]",
+    "5 64 5 minecraft:iron_ingot 2.8125 offset [0.0, 0.82, 0.0] velocity [0.0, 0.0, 0.0] turned [0.707, 0.0, 0.0, 0.707]",
+]
 
 # An ingot lying next to it is carried in within a second.
 [[step]]

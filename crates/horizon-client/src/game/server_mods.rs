@@ -1276,11 +1276,13 @@ mod run {
             let set_at = self.world.game_time;
             let start = if phased { 0 } else { set_at };
             let key = (mod_id, dimension, pos);
-            // Scrolls stay on the parts by index (`visuals.set-scrolls`).
+            // Scrolls and orientations stay on the parts by index
+            // (`visuals.set-scrolls`, `set-orientations`).
             let mut parts = parts;
             if let Some((_, _, old)) = self.mods.visuals.get(&key) {
                 for (p, o) in parts.iter_mut().zip(old) {
                     p.scroll = o.scroll.clone();
+                    p.orientation = o.orientation;
                 }
             }
             // Parts set again as they are change nothing, and keep the angle
@@ -1318,18 +1320,33 @@ mod run {
             host: Option<&mut LanHost>,
         ) {
             let key = (mod_id, dimension, pos);
-            let Some((start, set_at, parts)) = self.mods.visuals.get_mut(&key) else {
-                return;
-            };
-            let mut changed = false;
-            for (i, p) in parts.iter_mut().enumerate() {
+            self.change_mod_visual(key, host, |i, p| {
                 let scroll = scrolls
                     .iter()
                     .rev()
                     .find(|(at, _)| *at as usize == i)
                     .map(|(_, s)| s.clone());
-                changed |= p.scroll != scroll;
+                let changed = p.scroll != scroll;
                 p.scroll = scroll;
+                changed
+            });
+        }
+
+        /// Changes each part a mod draws at a position (`change` takes its
+        /// index and says whether it changed it), and sends them on when one
+        /// changed; nothing where none are drawn.
+        fn change_mod_visual(
+            &mut self,
+            key: (String, String, [i32; 3]),
+            host: Option<&mut LanHost>,
+            mut change: impl FnMut(usize, &mut horizon_mods::visual::VisualPart) -> bool,
+        ) {
+            let Some((start, set_at, parts)) = self.mods.visuals.get_mut(&key) else {
+                return;
+            };
+            let mut changed = false;
+            for (i, p) in parts.iter_mut().enumerate() {
+                changed |= change(i, p);
             }
             if !changed {
                 return;
@@ -3734,10 +3751,15 @@ mod run {
                 for (model, part) in &v.parts {
                     let axis = [Vec3::X, Vec3::Y, Vec3::Z][usize::from(part.axis.min(2))];
                     let pivot = Vec3::from(part.pivot);
-                    // Turned about the pivot, scaled about the model's centre.
+                    // Turned about the pivot (its orientation, then its spin),
+                    // scaled about the model's centre.
+                    let orientation = part
+                        .orientation
+                        .map_or(glam::Quat::IDENTITY, glam::Quat::from_array);
                     let transform =
                         Mat4::from_translation(o + pivot + Vec3::from(part.moved_at(moved)))
                             * Mat4::from_axis_angle(axis, part.angle_at(ticks).to_radians())
+                            * Mat4::from_quat(orientation)
                             * Mat4::from_translation(Vec3::from(part.offset) - pivot)
                             * Mat4::from_translation(Vec3::splat(0.5))
                             * Mat4::from_scale(Vec3::splat(part.scale));
@@ -3901,6 +3923,24 @@ mod run {
                     pos,
                     scrolls,
                 } => self.store_mod_visual_scrolls(mod_id, dimension, pos, scrolls, host),
+                Output::VisualOrientation {
+                    mod_id,
+                    dimension,
+                    pos,
+                    orientations,
+                } => {
+                    let key = (mod_id, dimension, pos);
+                    self.change_mod_visual(key, host, |i, p| {
+                        let q = orientations
+                            .iter()
+                            .rev()
+                            .find(|(at, _)| *at as usize == i)
+                            .map(|(_, q)| *q);
+                        let changed = p.orientation != q;
+                        p.orientation = q;
+                        changed
+                    });
+                }
                 Output::Structure { dimension, payload } => {
                     self.store_mod_structure(dimension, payload, host)
                 }

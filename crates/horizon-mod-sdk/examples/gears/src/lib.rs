@@ -8,7 +8,7 @@ use horizon_mod_sdk::{
     block::{self, Block, BlockEntity, BlockHitResult, InteractionResult},
     contraption::{Contraption, ROTATION_STEP},
     export_server_mod,
-    level::{BlockState, Direction, Level},
+    level::{Axis, BlockState, Direction, Level},
     player_ops,
     server::{
         BlockPos, BlockTarget, Living, Player, Pos, Registration, ServerMod, attachments,
@@ -246,33 +246,41 @@ struct Gears {
 
 /// The gear over a counter: an iron trapdoor's model a tenth of a block above
 /// it, turning about its upright axis while the counter runs, with an iron
-/// ingot lying on it (`visuals`).
+/// ingot lying on it and turning with it (`visuals`).
 fn gear(dimension: &str, x: i32, y: i32, z: i32, running: bool) {
+    let speed = if running { 2.0 * ROTATION_STEP } else { 0.0 };
     let part = visuals::Part {
         state: "minecraft:iron_trapdoor[half=bottom]".into(),
         axis: 1,
         pivot: (0.5, 1.1, 0.5),
         offset: (0.0, 1.1, 0.0),
-        speed: if running { 2.0 * ROTATION_STEP } else { 0.0 },
+        speed,
         angle: 0.0,
         velocity: (0.0, 0.0, 0.0),
         item: false,
         scale: 1.0,
     };
-    // An iron ingot lying on the gear, laid flat (a quarter turn about x),
-    // half size as an item frame shows it.
+    // An iron ingot lying on the gear, half size as an item frame shows it,
+    // turning with it about the upright axis.
     let ingot = visuals::Part {
         state: "minecraft:iron_ingot".into(),
-        axis: 0,
+        axis: 1,
         pivot: (0.5, 1.32, 0.5),
         offset: (0.0, 0.82, 0.0),
-        speed: 0.0,
-        angle: 90.0,
+        speed,
+        angle: 0.0,
         velocity: (0.0, 0.0, 0.0),
         item: true,
         scale: 0.5,
     };
     let _ = visuals::set(dimension, x, y, z, &[part, ingot]);
+    // Laid flat first, a quarter turn about x (`set-orientations`).
+    let [qx, qy, qz, qw] = block::rotation_degrees(Axis::X, 90.0);
+    let flat = visuals::Orientation {
+        part: 1,
+        rotation: (qx, qy, qz, qw),
+    };
+    let _ = visuals::set_orientations(dimension, x, y, z, &[flat]);
 }
 
 /// A belt's rubber, a block's sixteenth on top of it (`gears:belt_strip`,

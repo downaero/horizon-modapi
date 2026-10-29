@@ -1079,11 +1079,21 @@ A texture running across a part as it works, as Create's belts and treads (`Spri
 | `speed` | `f32` | `to`'s heights a tick it runs down (16 at most); negative runs up, 0 not at all. |
 | `span` | `f32` | The part of `to`'s height it runs over before it starts again (more than 0, at most 1): 0.5 for Create's belts. |
 
+### record `orientation`
+
+A part turned any way, as a chain of turns draws a mechanical arm's segments: a unit quaternion (x, y, z, w; 0, 0, 0, 1 not turned; any other length is made unit) turning the part's model about its `pivot` first, then its spin about `axis` turns it. A model may reach outside its block, -16 to 32 as vanilla's models may.
+
+| Field | Type | |
+| --- | --- | --- |
+| `part` | `u32` | The part, by its index in the parts drawn at the position. |
+| `rotation` | `tuple<f32, f32, f32, f32>` |  |
+
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `set` | `func(dimension: string, x: s32, y: s32, z: s32, parts: list<part>) -> result<_, string>` | Draws `parts` (at most 16) at a block of the mod's own, replacing what it drew there, after the call; none draws nothing there any more. |
 | `set-in-phase` | `func(dimension: string, x: s32, y: s32, z: s32, parts: list<part>) -> result<_, string>` | `set`, with each part's `angle` its angle at game time 0 instead of at the tick it was set: parts at one speed turn in step however far apart they were set, as Flywheel turns Create's cogs (angle = time x speed + offset), so their teeth mesh. |
 | `set-scrolls` | `func(dimension: string, x: s32, y: s32, z: s32, scrolls: list<scroll>) -> result<_, string>` | The scrolls on the parts drawn at a block of the mod's own (at most 16), replacing those there, after the call; none stops them. They stay on the parts by index when `set` draws them again, and go when no parts are drawn there. Measured from game time 0, so belts set apart run in step. |
+| `set-orientations` | `func(dimension: string, x: s32, y: s32, z: s32, orientations: list<orientation>) -> result<_, string>` | The orientations of the parts drawn at a block of the mod's own (at most 16), replacing those there, after the call; a part named by none is not turned. They stay on the parts by index when `set` draws them again, as scrolls do; a mod animating them sets them each tick. |
 
 ## `block-data`
 

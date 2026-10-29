@@ -1007,6 +1007,21 @@ interface visuals {
     /// parts are drawn there. Measured from game time 0, so belts set apart
     /// run in step.
     set-scrolls: func(dimension: string, x: s32, y: s32, z: s32, scrolls: list<scroll>) -> result<_, string>;
+    /// A part turned any way, as a chain of turns draws a mechanical arm's
+    /// segments: a unit quaternion (x, y, z, w; 0, 0, 0, 1 not turned; any
+    /// other length is made unit) turning the part's model about its `pivot`
+    /// first, then its spin about `axis` turns it. A model may reach outside
+    /// its block, -16 to 32 as vanilla's models may.
+    record orientation {
+        /// The part, by its index in the parts drawn at the position.
+        part: u32,
+        rotation: tuple<f32, f32, f32, f32>,
+    }
+    /// The orientations of the parts drawn at a block of the mod's own (at
+    /// most 16), replacing those there, after the call; a part named by none
+    /// is not turned. They stay on the parts by index when `set` draws them
+    /// again, as scrolls do; a mod animating them sets them each tick.
+    set-orientations: func(dimension: string, x: s32, y: s32, z: s32, orientations: list<orientation>) -> result<_, string>;
 }
 
 /// Capability `net`, client mods: the bytes the mod's server half keeps

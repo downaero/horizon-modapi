@@ -31,6 +31,16 @@ pub struct VisualPart {
     pub scale: f32,
     /// A texture running across it (`visuals.set-scrolls`).
     pub scroll: Option<Scroll>,
+    /// A unit quaternion (x, y, z, w) turning its model about `pivot`
+    /// before its spin about `axis` (`visuals.set-orientations`).
+    pub orientation: Option<[f32; 4]>,
+}
+
+/// A quaternion as a mod gave it, made unit length; none for one that is
+/// not finite or too short to turn by.
+pub fn unit_quaternion(q: [f32; 4]) -> Option<[f32; 4]> {
+    let len = q.iter().map(|c| c * c).sum::<f32>().sqrt();
+    (q.iter().all(|c| c.is_finite()) && len > 1e-4).then(|| q.map(|c| c / len))
 }
 
 /// A texture running across a part as it works, as Create's belts'
@@ -115,6 +125,11 @@ impl VisualPart {
         if let Some(scroll) = &self.scroll {
             scroll.check()?;
         }
+        if let Some(q) = self.orientation
+            && unit_quaternion(q).is_none()
+        {
+            return Err("an orientation is a quaternion of finite numbers, not all 0".into());
+        }
         Ok(())
     }
 }
@@ -124,10 +139,11 @@ impl VisualPart {
 /// were set, or 0 for parts set in phase) and the tick they were set
 /// (i64), then each part's state (u16 length and bytes), axis (u8), whether it
 /// is an item (u8), pivot, offset, speed, angle, velocity and scale (f32),
-/// little-endian. Scrolls follow when a part has one: 0xFFFF (u16, no
-/// state's length), then for each the part's index (u8), from and to (u16
-/// length and bytes), speed and span (f32). No parts: none drawn there any
-/// more.
+/// little-endian. Orientations follow when a part has one: 0xFFFE (u16, no
+/// state's length), their count (u8), then for each the part's index (u8)
+/// and x, y, z, w (f32). Then scrolls, when a part has one: 0xFFFF, then for
+/// each the part's index (u8), from and to (u16 length and bytes), speed and
+/// span (f32), to the end. No parts: none drawn there any more.
 pub fn encode(
     mod_id: &str,
     pos: [i32; 3],
@@ -157,6 +173,21 @@ pub fn encode(
             out.extend(v.to_le_bytes());
         }
     }
+    let turned: Vec<(usize, [f32; 4])> = parts
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| Some((i, p.orientation?)))
+        .collect();
+    if !turned.is_empty() {
+        out.extend(ORIENTATIONS.to_le_bytes());
+        out.push(turned.len() as u8);
+        for (i, q) in turned {
+            out.push(i as u8);
+            for c in q {
+                out.extend(c.to_le_bytes());
+            }
+        }
+    }
     if parts.iter().any(|p| p.scroll.is_some()) {
         out.extend(SCROLLS.to_le_bytes());
         for (i, p) in parts.iter().enumerate() {
@@ -175,6 +206,8 @@ pub fn encode(
 
 /// Where [`encode`]'s scrolls start: a length no state has.
 const SCROLLS: u16 = 0xFFFF;
+/// Where [`encode`]'s orientations start, before the scrolls.
+const ORIENTATIONS: u16 = 0xFFFE;
 
 /// [`encode`]'s inverse; none for damaged bytes.
 pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPart>)> {
@@ -193,10 +226,24 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPar
     let start = i64::from_le_bytes(take(&mut b, 8)?.try_into().ok()?);
     let set_at = i64::from_le_bytes(take(&mut b, 8)?.try_into().ok()?);
     let mut parts = Vec::new();
+    let mut turned = Vec::new();
     while !b.is_empty() {
         let n = u16::from_le_bytes(take(&mut b, 2)?.try_into().ok()?);
         if n == SCROLLS {
             break;
+        }
+        if n == ORIENTATIONS {
+            for _ in 0..take(&mut b, 1)?[0] {
+                let i = usize::from(take(&mut b, 1)?[0]);
+                let mut q = [0f32; 4];
+                for c in &mut q {
+                    *c = f32::from_le_bytes(take(&mut b, 4)?.try_into().ok()?);
+                }
+                // Unit already: checked, kept as sent.
+                unit_quaternion(q)?;
+                turned.push((i, q));
+            }
+            continue;
         }
         if parts.len() == PARTS {
             return None;
@@ -224,9 +271,13 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPar
             item,
             scale: f[11],
             scroll: None,
+            orientation: None,
         };
         part.check().ok()?;
         parts.push(part);
+    }
+    for (i, q) in turned {
+        parts.get_mut(i)?.orientation = Some(q);
     }
     while !b.is_empty() {
         let i = usize::from(take(&mut b, 1)?[0]);
@@ -266,6 +317,7 @@ mod tests {
             item: false,
             scale: 1.0,
             scroll: None,
+            orientation: None,
         }
     }
 
@@ -313,6 +365,29 @@ mod tests {
         assert_eq!(decode(&bytes[..bytes.len() - 1]), None);
         parts[1].scroll.as_mut().unwrap().span = 0.0;
         assert_eq!(decode(&encode("gears", [0; 3], 0, 7, &parts)), None);
+    }
+
+    /// Orientations come before the scrolls and are read with them.
+    #[test]
+    fn orientations_round_trip_with_scrolls() {
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        let mut parts = [shaft(0.0), shaft(1.0), shaft(2.0)];
+        parts[0].orientation = Some([half, 0.0, 0.0, half]);
+        parts[2].orientation = Some([0.0, 0.0, 0.0, 1.0]);
+        parts[1].scroll = Some(belt());
+        let bytes = encode("gears", [0; 3], 0, 7, &parts);
+        assert_eq!(decode(&bytes).unwrap().4, parts.to_vec());
+        parts[1].scroll = None;
+        assert_eq!(
+            decode(&encode("gears", [0; 3], 0, 7, &parts)).unwrap().4,
+            parts.to_vec()
+        );
+        assert_eq!(
+            unit_quaternion([0.0, 0.0, 0.0, 2.0]),
+            Some([0.0, 0.0, 0.0, 1.0])
+        );
+        assert_eq!(unit_quaternion([0.0; 4]), None);
+        assert_eq!(unit_quaternion([f32::NAN, 0.0, 0.0, 1.0]), None);
     }
 
     #[test]

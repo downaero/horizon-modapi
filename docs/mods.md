@@ -844,6 +844,18 @@ with them, and an empty list stops them; block parts only. In the SDK, `Visual::
 speed, span)` scrolls the part added last. The gears example's belt draws its rubber on top
 (`gears:belt_strip`, a block never placed), its ribs running east.
 
+`visuals.set-orientations(dimension, x, y, z, orientations)` (API level 48) turns parts any way,
+as a chain of turns draws Create's mechanical arm: each names a part by index and a unit quaternion
+(x, y, z, w; another length is made unit) that turns the part's model about its `pivot` first;
+its spin about `axis` then turns the result. So a part's points are drawn at
+`pivot + spin(axis, angle + speed * t) * orientation * (point - pivot)`, moved by its `velocity`.
+Models may reach outside their block, -16 to 32 as vanilla's may. Orientations stay on the parts
+by index as scrolls do, are saved and sent with them, and a part named by none is not turned; a mod
+animating an arm sets them each tick. In the SDK, `Visual::oriented(q)` turns the part added last,
+with `block::rotation_degrees(axis, degrees)` and `block::mul_quaternions(a, b)` (`b` first, then
+`a`, as JOML's `a.mul(b)`) to build `q`. The gears example's counter lays the ingot on its gear
+flat and turns it with the gear.
+
 ### Moving structures and networks
 
 `entities.spawn-block(dimension, x, y, z, state)` (API level 24) places a block state as an
