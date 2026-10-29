@@ -809,11 +809,19 @@ impl Mesher<'_> {
                                 )
                                 .unwrap_or(true);
                     }
+                    // Connected textures: a face's sprite swapped for the cell
+                    // its neighbours pick.
+                    let rules = catalog.connected(BlockStateId(id));
                     for model in &models {
                         for face in &model.faces {
                             if face.quad.cull.is_some_and(|d| !visible[d as usize]) {
                                 continue;
                             }
+                            let cell = rules.iter().find_map(|r| {
+                                r.cell(face.layer, face.quad.facing, |[dx, dy, dz]| {
+                                    pad.blocks[pi(x + dx, y + dy, z + dz)]
+                                })
+                            });
                             self.face(
                                 &pad,
                                 &mut tints,
@@ -821,6 +829,7 @@ impl Mesher<'_> {
                                 [x, y, z],
                                 origin,
                                 face,
+                                cell,
                                 ao,
                                 state,
                             );
@@ -860,10 +869,16 @@ impl Mesher<'_> {
         pos: [i32; 3],
         origin: [f32; 3],
         face: &BakedFace,
+        cell: Option<(u32, bool)>,
         ao: bool,
         state: &Info,
     ) {
         let q = &face.quad;
+        // A connected texture's cell instead of the face's own sprite.
+        let (layer, opaque) = match cell {
+            Some((layer, opaque)) => (layer, face.opaque && opaque),
+            None => (face.layer, face.opaque),
+        };
         let shade_face = q.shade_direction_override.unwrap_or(q.facing);
         let directional = lighting::cardinal(self.nether_shading, shade_face);
         // Grey level per vertex before tinting, and vanilla light coords.
@@ -898,10 +913,10 @@ impl Mesher<'_> {
                 q.uv[i],
                 // Opaque leaves (forceOpaque) and quads over opaque texels draw in the
                 // solid layer: no alpha cutout (a dirt path's side skips its clear top row).
-                if face.opaque && !face.translucent || !self.cutout_leaves && state.leaves {
-                    face.layer as u16 | OPAQUE_LAYER
+                if opaque && !face.translucent || !self.cutout_leaves && state.leaves {
+                    layer as u16 | OPAQUE_LAYER
                 } else {
-                    face.layer as u16
+                    layer as u16
                 },
                 emitting(pack_rgb(rgb), state.emission.max(q.light_emission)),
                 pack_coords(lighting::with_emission(coords[i], q.light_emission)),

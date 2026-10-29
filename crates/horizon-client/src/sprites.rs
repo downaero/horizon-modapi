@@ -200,6 +200,74 @@ impl Sprites {
             }
         }
     }
+    /// The cells of a sheet `n` across and down (a connected texture's,
+    /// `models::connected`), each a layer named `<sheet>#<index>`, row by
+    /// row, so a face swaps layers and keeps its UVs.
+    pub fn insert_cells(&mut self, root: &Path, sheet: &str, n: u32) -> Result<Vec<u32>> {
+        let (namespace, path) = sheet.split_once(':').ok_or("invalid sprite identifier")?;
+        let file = root.join(format!("assets/{namespace}/textures/{path}.png"));
+        let (width, height, pixels) =
+            crate::hud::decode(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+        if n == 0 || width % n != 0 || height % n != 0 {
+            return Err(format!("{sheet} is not {n} cells across and down").into());
+        }
+        let (w, h) = (width / n, height / n);
+        let side = w.max(h);
+        let mut out = Vec::new();
+        for i in 0..n * n {
+            let name = format!("{sheet}#{i}");
+            if let Some(&layer) = self.layers.get(&name) {
+                out.push(layer);
+                continue;
+            }
+            let (x, y) = (i % n * w, i / n * h);
+            let mut frame = Vec::with_capacity((side * side * 4) as usize);
+            for row in 0..side {
+                let source_row = y + row * h / side;
+                for column in 0..side {
+                    let offset = ((source_row * width + x + column * w / side) * 4) as usize;
+                    frame.extend_from_slice(&pixels[offset..offset + 4]);
+                }
+            }
+            out.push(self.push_still(&name, side, frame));
+        }
+        Ok(out)
+    }
+    /// A still frame as a layer named `name`, or the layer already holding
+    /// the same pixels.
+    fn push_still(&mut self, name: &str, side: u32, frame: Vec<u8>) -> u32 {
+        let alpha = || frame.as_chunks::<4>().0.iter().map(|p| p[3]);
+        let opaque = alpha().all(|a| a == 255);
+        let translucent = alpha().any(|a| a != 0 && a != 255);
+        let settings = crate::mipmap::Settings {
+            native_size: side,
+            strategy: Default::default(),
+            alpha_cutoff_bias: 0.0,
+            has_transparent: alpha().any(|a| a == 0),
+            item: false,
+        };
+        let key = (
+            frame.clone(),
+            side,
+            [
+                settings.strategy as u32,
+                settings.alpha_cutoff_bias.to_bits(),
+            ],
+            [settings.has_transparent, settings.item, opaque, translucent],
+        );
+        if let Some(&same) = self.still.get(&key) {
+            self.layers.insert(name.to_owned(), same);
+            return same;
+        }
+        let layer = self.native.len() as u32;
+        self.still.insert(key, layer);
+        self.mips.push(settings);
+        self.opaque.push(opaque);
+        self.translucent.push(translucent);
+        self.layers.insert(name.to_owned(), layer);
+        self.native.push((side, Arc::new(vec![frame]), 0));
+        layer
+    }
     fn load(&mut self, root: &Path, name: &str) -> Result<u32> {
         let (namespace, path) = name.split_once(':').ok_or("invalid sprite identifier")?;
         let path = root.join(format!("assets/{namespace}/textures/{path}.png"));

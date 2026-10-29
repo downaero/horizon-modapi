@@ -1,5 +1,6 @@
 //! A blockstate-driven inspection gallery, separate from gameplay simulation.
 pub mod catalog;
+pub mod connected;
 mod cube;
 pub(crate) mod neoforge;
 use crate::{Result, sprites::Sprites};

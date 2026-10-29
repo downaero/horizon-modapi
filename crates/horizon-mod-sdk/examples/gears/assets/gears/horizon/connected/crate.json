@@ -1,0 +1,7 @@
+{
+  "blocks": ["gears:crate"],
+  "sprite": "gears:block/crate_side",
+  "sheet": "gears:block/crate_connected",
+  "type": "vertical",
+  "faces": ["north", "south", "west", "east"]
+}

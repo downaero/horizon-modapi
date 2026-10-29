@@ -49,6 +49,8 @@ pub struct StateModels {
     states: Vec<Option<(usize, SelectedModels)>>,
     /// Every transformed model once, with the variant it was baked from.
     baked: Vec<(Variant, BakedModel)>,
+    /// Faces drawn from a sheet's cells by their neighbours.
+    connected: super::connected::Connected,
 }
 fn key(variant: &Variant) -> VariantKey {
     (variant.model.clone(), variant.rotations, variant.uv_lock)
@@ -264,11 +266,18 @@ impl StateModels {
         }
         // Every variant of every definition was baked above.
         let choices = choices.iter().map(|c| c.map(|v| index[&key(v)])).collect();
+        let connected = super::connected::Connected::load(root, registry, sprites);
         Ok(Self {
             choices,
             states,
             baked,
+            connected,
         })
+    }
+    /// The connected-texture rules of a state's faces (`models::connected`);
+    /// empty for most.
+    pub fn connected(&self, state: BlockStateId) -> &[super::connected::Rule] {
+        self.connected.rules(state.0)
     }
     pub fn collect(
         &self,

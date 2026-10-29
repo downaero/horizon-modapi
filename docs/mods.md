@@ -488,6 +488,18 @@ lets comparators read the block, for what the mod gives with `redstone.set-compa
 `"signal_source": true` makes it a redstone signal source dust connects to, giving what the mod
 sets with `redstone.set-output`.
 
+Connected textures, as Create's `CTModel` joins its casings, framed glass and windows (and
+OptiFine's and Fusion's CTM), go in `assets/<ns>/horizon/connected/*.json`, each an object or a
+list of them: `blocks` (the blocks it draws), `sprite` (the texture their faces are drawn with),
+`sheet` (a texture of cells, as Create's `_connected` ones), `type` (Create's: `horizontal`,
+`horizontal_kryppers`, `vertical`, `omnidirectional`, `roof`, `roof_stair`, `cross` or
+`rectangle`, with sheets 2, 2, 2, 8, 4, 4, 4 and 4 cells across), and optionally `faces` (the faces
+it changes; all by default) and `when` (properties a state must have, `{"axis": "y"}`). A face drawn
+with `sprite` takes the cell Create's type picks from which neighbours in the face's plane are the
+same block, not covered on the face's side by the same block again, with the face's right and up
+as Create turns them; the cell keeps the face's UVs, as each cell is a texture of its own. The
+gears example's crates stacked join their sides.
+
 Creative inventory tabs, as NeoForge's `CreativeModeTab`, go in
 `data/<id>/horizon/creative_tab/<name>.json` (tab id `<id>:<name>`): a `title` (a translation key
 from the mod's lang files, `itemGroup.create.base`, or the title itself), an `icon` item and the
