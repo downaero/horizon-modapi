@@ -20,6 +20,10 @@ pub struct Tab {
     pub column: u32,
     pub search: bool,
     pub inventory: bool,
+    /// The page it is on: 0 vanilla's, then mods' tabs ten a page, as
+    /// NeoForge's `CreativeTabsScreenPage`. Search, saved hotbars and the
+    /// inventory (columns 5 and 6) are on every page.
+    pub page: u32,
 }
 /// What the client's creative search trees (SessionSearchTrees) index for one
 /// stack of the search tab: its creative tooltip lines and its item tags.
@@ -36,6 +40,8 @@ struct SearchEntry {
 pub struct Creative {
     pub tabs: Vec<Tab>,
     pub selected: usize,
+    /// The page of tabs shown.
+    pub page: u32,
     /// Scroll position 0..1 (scrollOffs).
     pub scroll: f32,
     /// The scrollbar is held (scrolling): dragging moves it.
@@ -244,6 +250,7 @@ impl Creative {
                 column: t["column"].as_u64().unwrap_or(0) as u32,
                 search: kind == "SEARCH",
                 inventory: kind == "INVENTORY",
+                page: t["page"].as_u64().unwrap_or(0) as u32,
             });
         }
         Ok(Self::new(tabs, search_items, search_index))
@@ -277,6 +284,7 @@ impl Creative {
                 column: t["column"].as_u64().unwrap_or(0) as u32,
                 search: kind == "SEARCH",
                 inventory: kind == "INVENTORY",
+                page: 0,
             });
         }
         let search_index = search_items
@@ -296,6 +304,7 @@ impl Creative {
         Self {
             tabs,
             selected: 0,
+            page: 0,
             scroll: 0.0,
             scrolling: false,
             search: {
@@ -333,8 +342,32 @@ impl Creative {
                 column: t.column,
                 search: t.search,
                 inventory: t.inventory,
+                page: t.page,
             })
             .collect()
+    }
+    /// How many pages of tabs: more than one only with mods' tabs.
+    pub fn pages(&self) -> u32 {
+        self.tabs.iter().map(|t| t.page + 1).max().unwrap_or(1)
+    }
+    /// Whether `tab` is on the page shown; search, saved hotbars and the
+    /// inventory are on every page.
+    pub fn on_page(&self, tab: &Tab) -> bool {
+        tab.column >= 5 || tab.page == self.page
+    }
+    /// Turns to `page`, keeping the selected tab when it is there, else
+    /// selecting the page's first (NeoForge's `setCurrentPage`).
+    pub fn set_page(&mut self, page: u32) {
+        self.page = page.min(self.pages() - 1);
+        if !self.on_page(self.tab()) {
+            let first = self
+                .tabs
+                .iter()
+                .position(|t| t.column < 5 && t.page == self.page);
+            if let Some(first) = first {
+                self.select(first);
+            }
+        }
     }
     pub fn tab(&self) -> &Tab {
         &self.tabs[self.selected.min(self.tabs.len() - 1)]
@@ -345,6 +378,12 @@ impl Creative {
             self.search.set_value("");
         }
         self.selected = tab;
+        // A tab of another page turns to it.
+        if let Some(t) = self.tabs.get(tab)
+            && t.column < 5
+        {
+            self.page = t.page;
+        }
         self.scroll = 0.0;
         if self.tab().search {
             self.search.focused = true;
@@ -514,6 +553,9 @@ impl Creative {
     pub fn scroller_offset(&self) -> f32 {
         ((Self::SCROLL_HEIGHT - 17.0) * self.scroll) as i32 as f32
     }
+    /// The previous and next page buttons, 20 across, relative to the screen
+    /// origin, as NeoForge places them above the tabs.
+    pub const PAGE_BUTTONS: [(f32, f32); 2] = [(0.0, -50.0), (Self::WIDTH - 20.0, -50.0)];
     /// Tab button position relative to the screen origin (CreativeModeInventoryScreen.getTabX/Y).
     pub fn tab_position(tab: &Tab) -> (f32, f32) {
         let mut x = tab.column as f32 * 27.0;

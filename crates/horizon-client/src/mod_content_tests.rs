@@ -360,6 +360,65 @@ fn a_declared_shape_reaches_outline_and_collision() {
     fs::remove_dir_all(&scratch).unwrap();
 }
 
+/// A mod's creative tab: after vanilla's, on page 1, its items in its
+/// order (an id nobody registers left out), and its items in Search.
+#[test]
+#[ignore = "full content root: CI and pr_ready run it"]
+fn a_mods_creative_tab_comes_after_vanillas() {
+    let Some(base) = prepared() else {
+        return;
+    };
+    let scratch = std::env::temp_dir().join(format!("horizon-mod-tabs-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let m = folder_mod(
+        &scratch.join("cogs"),
+        &[
+            ("horizon-mod.toml", &manifest("cogs", "")),
+            (
+                "data/cogs/horizon/block/cog.json",
+                r#"{"template": "minecraft:iron_block", "item": true}"#,
+            ),
+            (
+                "data/cogs/horizon/item/oil.json",
+                r#"{"template": "minecraft:honey_bottle"}"#,
+            ),
+            (
+                "data/cogs/horizon/creative_tab/base.json",
+                r#"{"title": "itemGroup.cogs", "icon": "cogs:cog",
+                    "items": ["cogs:cog", "cogs:missing", "minecraft:stick"]}"#,
+            ),
+        ],
+    );
+    let root = resource_root(&base, std::slice::from_ref(&m), &scratch.join("cache")).unwrap();
+    let mut creative = crate::creative::Creative::load(&root).unwrap();
+    let tab = creative.tabs.last().unwrap().clone();
+    assert_eq!(tab.id, "cogs:base");
+    assert_eq!((tab.page, tab.top, tab.column), (1, true, 0));
+    let items: Vec<&str> = tab.items.iter().map(|s| s.item.as_ref()).collect();
+    assert_eq!(items, ["cogs:cog", "minecraft:stick"]);
+    assert_eq!(creative.pages(), 2);
+    // Search ends with the tab's items, then the rest.
+    let search: Vec<&str> = creative
+        .search_items()
+        .iter()
+        .map(|s| s.item.as_ref())
+        .collect();
+    assert_eq!(search[search.len() - 2..], ["cogs:cog", "cogs:oil"]);
+    // Page 1 shows the mod's tab, search and the inventory, not vanilla's.
+    creative.set_page(1);
+    assert_eq!(creative.tab().id, "cogs:base");
+    let shown: Vec<&str> = creative
+        .tabs
+        .iter()
+        .filter(|t| creative.on_page(t))
+        .map(|t| t.id.as_str())
+        .collect();
+    assert!(shown.contains(&"minecraft:search") && !shown.contains(&"minecraft:combat"));
+    creative.set_page(0);
+    assert_eq!(creative.tab().page, 0);
+    fs::remove_dir_all(&scratch).unwrap();
+}
+
 /// A block with properties of its own: their every state, in vanilla's
 /// order, behaving as the template's default does, loading in every table,
 /// with a model and its own shape by those properties.

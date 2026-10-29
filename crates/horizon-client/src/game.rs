@@ -11094,10 +11094,18 @@ impl Game<'_> {
     fn creative_origin(batch: &HudBatch) -> (f32, f32) {
         batch.centered_origin(Creative::WIDTH, Creative::HEIGHT)
     }
-    /// A creative tab's title: `itemGroup.*`, else the export's English title.
+    /// A creative tab's title: `itemGroup.*`, else the export's English
+    /// title, or a mod tab's translation key in the selected language.
     fn creative_tab_title(&self, tab: &horizon_client::creative::Tab) -> String {
-        horizon_client::creative::item_group_key(&tab.id)
-            .map_or_else(|| tab.title.clone(), |key| self.translate(key, &tab.title))
+        horizon_client::creative::item_group_key(&tab.id).map_or_else(
+            || {
+                self.pack
+                    .names
+                    .display_get(&tab.title)
+                    .unwrap_or_else(|| tab.title.clone())
+            },
+            |key| self.translate(key, &tab.title),
+        )
     }
     /// Vanilla tooltip: dark box with a purple gradient border.
     fn tooltip(&self, batch: &mut HudBatch, text: &str, x: f32, y: f32) {
@@ -11133,7 +11141,7 @@ impl Game<'_> {
         );
         // Unselected tabs behind the panel, then the panel, then the selected tab.
         for (i, t) in tabs.iter().enumerate() {
-            if i != selected {
+            if i != selected && self.creative_screen.on_page(t) {
                 let (tx, ty) = Creative::tab_position(t);
                 batch.sprite(&self.gui.atlas, &tab_sprite(t, false), ox + tx, oy + ty);
             }
@@ -11152,7 +11160,7 @@ impl Game<'_> {
         }
         let (tx, ty) = Creative::tab_position(&tab);
         batch.sprite(&self.gui.atlas, &tab_sprite(&tab, true), ox + tx, oy + ty);
-        for t in &tabs {
+        for t in tabs.iter().filter(|t| self.creative_screen.on_page(t)) {
             let (tx, ty) = Creative::tab_position(t);
             let stack = ItemStack {
                 item: Arc::from(t.icon.as_str()),
@@ -11272,7 +11280,44 @@ impl Game<'_> {
                 oy + Creative::SCROLL_Y + self.creative_screen.scroller_offset(),
             );
         }
-        for t in &tabs {
+        // Pages of mods' tabs: NeoForge's buttons and "1 / 2" above them.
+        let pages = self.creative_screen.pages();
+        if pages > 1 {
+            let page = self.creative_screen.page;
+            for (i, (bx, by)) in Creative::PAGE_BUTTONS.into_iter().enumerate() {
+                let (x, y) = (ox + bx, oy + by);
+                let hover = self.cursor.0 >= x
+                    && self.cursor.0 < x + 20.0
+                    && self.cursor.1 >= y
+                    && self.cursor.1 < y + 20.0;
+                let (label, active) = match i {
+                    0 => ("<", page > 0),
+                    _ => (">", page + 1 < pages),
+                };
+                horizon_client::ui::button(
+                    batch,
+                    &self.gui.atlas,
+                    x,
+                    y,
+                    20.0,
+                    20.0,
+                    &horizon_client::text::Text::literal(label),
+                    active,
+                    hover,
+                );
+            }
+            let text = format!("{} / {pages}", page + 1);
+            let w = HudBatch::text_width(&self.gui.atlas, &text);
+            batch.text(
+                &self.gui.atlas,
+                &text,
+                ox + ((Creative::WIDTH - w) / 2.0).floor(),
+                oy - 44.0,
+                u32::MAX,
+                true,
+            );
+        }
+        for t in tabs.iter().filter(|t| self.creative_screen.on_page(t)) {
             let (tx, ty) = Creative::tab_position(t);
             if self.cursor.0 >= ox + tx
                 && self.cursor.0 < ox + tx + 26.0
@@ -11320,8 +11365,34 @@ impl Game<'_> {
         let batch = HudBatch::new(size);
         let (ox, oy) = Self::creative_origin(&batch);
         let (cx, cy) = self.cursor;
+        let pages = self.creative_screen.pages();
+        for (i, (bx, by)) in Creative::PAGE_BUTTONS.into_iter().enumerate() {
+            let page = self.creative_screen.page;
+            let to = if i == 0 {
+                page.checked_sub(1)
+            } else {
+                Some(page + 1)
+            };
+            if pages > 1
+                && let Some(to) = to.filter(|p| *p < pages)
+                && cx >= ox + bx
+                && cx < ox + bx + 20.0
+                && cy >= oy + by
+                && cy < oy + by + 20.0
+            {
+                self.creative_screen.set_page(to);
+                self.inv_clicks = Default::default();
+                self.inv_clicks.skip_release();
+                self.inv_drag = None;
+                self.last_inv_click = None;
+                return;
+            }
+        }
         let tabs = self.creative_screen.tabs.clone();
         for (i, t) in tabs.iter().enumerate() {
+            if !self.creative_screen.on_page(t) {
+                continue;
+            }
             let (tx, ty) = Creative::tab_position(t);
             if cx >= ox + tx && cx < ox + tx + 26.0 && cy >= oy + ty && cy < oy + ty + 32.0 {
                 select_creative_tab(&mut self.creative_screen, &mut self.inv_clicks, i);

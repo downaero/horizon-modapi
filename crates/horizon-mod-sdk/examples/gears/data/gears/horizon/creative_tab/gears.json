@@ -1,0 +1,17 @@
+{
+  "title": "itemGroup.gears",
+  "icon": "gears:counter",
+  "items": [
+    "gears:shaft",
+    "gears:clutch",
+    "gears:belt",
+    "gears:mill",
+    "gears:counter",
+    "gears:drill",
+    "gears:deployer",
+    "gears:lift",
+    "gears:crate",
+    "gears:gauge",
+    "minecraft:iron_ingot"
+  ]
+}

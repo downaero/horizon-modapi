@@ -1,6 +1,7 @@
 //! A content mod's `assets/` and `data/` (API 0.2, docs/modpacks.md): the
 //! files it adds to the game's resource tree, and the blocks and items it
-//! declares in `data/<id>/horizon/block/` and `data/<id>/horizon/item/`.
+//! declares in `data/<id>/horizon/block/` and `data/<id>/horizon/item/`, with
+//! its creative inventory tabs in `data/<id>/horizon/creative_tab/`.
 //!
 //! Content is data, not code: nothing here runs in the sandbox. What a mod
 //! may add is fenced instead. Its own namespaces (its id and the ones its
@@ -206,6 +207,28 @@ struct ItemFile {
     rarity: Option<Rarity>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreativeTabFile {
+    title: String,
+    icon: String,
+    items: Vec<String>,
+}
+
+/// A creative inventory tab the mod adds, as NeoForge's `CreativeModeTab`:
+/// shown after vanilla's, a mod's in its files' order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CreativeTab {
+    /// `<id>:<file name>`.
+    pub id: String,
+    /// A translation key (`itemGroup.create.base`), or the title itself.
+    pub title: String,
+    /// The item drawn on the tab.
+    pub icon: String,
+    /// The items it shows, in order: the mod's own or vanilla's.
+    pub items: Vec<String>,
+}
+
 /// An item the mod adds: a vanilla template item's components under a new
 /// id, with these changed.
 #[derive(Clone, Debug, PartialEq)]
@@ -231,6 +254,8 @@ pub struct Content {
     pub files: Vec<String>,
     pub blocks: Vec<Block>,
     pub items: Vec<Item>,
+    /// Its creative inventory tabs, by file name.
+    pub tabs: Vec<CreativeTab>,
     /// The namespaces it owns: the mod id, then the manifest's `namespaces`.
     pub namespaces: Vec<String>,
 }
@@ -317,6 +342,7 @@ impl Content {
             files,
             blocks: Vec::new(),
             items: Vec::new(),
+            tabs: Vec::new(),
             namespaces: manifest.owned_namespaces().map(str::to_owned).collect(),
         };
         content.check(manifest)?;
@@ -359,6 +385,7 @@ impl Content {
         }
         let mut blocks = Vec::new();
         let mut items = Vec::new();
+        let mut tabs = Vec::new();
         for name in &self.files {
             let mut parts = name.splitn(3, '/');
             let (top, namespace, rest) = (
@@ -399,9 +426,11 @@ impl Content {
                 blocks.push((block, name.clone()));
             } else if let Some(item) = parse("item") {
                 items.push((item, name.clone()));
+            } else if let Some(tab) = parse("creative_tab") {
+                tabs.push((tab, name.clone()));
             } else {
                 return Err(format!(
-                    "{name}: data/{id}/horizon/ holds block/*.json and item/*.json only"
+                    "{name}: data/{id}/horizon/ holds block/*.json, item/*.json and creative_tab/*.json only"
                 ));
             }
         }
@@ -444,6 +473,16 @@ impl Content {
                 template: file.template,
                 max_stack_size: file.max_stack_size,
                 rarity: file.rarity,
+            });
+        }
+        for (tab, name) in tabs {
+            let file: CreativeTabFile =
+                serde_json::from_slice(&self.file(&name)?).map_err(|e| format!("{name}: {e}"))?;
+            self.tabs.push(CreativeTab {
+                id: tab,
+                title: file.title,
+                icon: file.icon,
+                items: file.items,
             });
         }
         Ok(())

@@ -1840,6 +1840,8 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
         .collect();
     namespaces.sort();
     overlay.write(MARKER, &serde_json::to_vec(&namespaces)?)?;
+    let new_items: Vec<&str> = plan.items.iter().map(|i| i.rename.to.as_str()).collect();
+    creative_tabs(base, mods, &new_items, &overlay, &mut warnings)?;
     overlay.write(WARNINGS, warnings.join("\n").as_bytes())?;
     Ok(warnings)
 }
@@ -1867,6 +1869,90 @@ pub fn resource_root(base: &Path, mods: &[ContentMod], cache: &Path) -> Result<P
     }
     fs::write(out.join(STAMP), stamp)?;
     Ok(out)
+}
+
+/// The creative inventory with the mods' tabs after vanilla's, ten a page
+/// from page 1 as NeoForge pages them (five on top, five below), and every
+/// new item in Search after vanilla's: the tabs' first, in their order. An
+/// id that is neither vanilla's nor a new item is left out with a warning.
+fn creative_tabs(
+    base: &Path,
+    mods: &[ContentMod],
+    new_items: &[&str],
+    overlay: &Overlay<'_>,
+    warnings: &mut Vec<String>,
+) -> Result<()> {
+    use serde_json::{Value, json};
+    let path = base.join("creative-inventory.json");
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut doc: Value = serde_json::from_slice(&fs::read(&path)?)?;
+    let known = |id: &str| id.starts_with("minecraft:") || new_items.contains(&id);
+    let stack = |id: &str| Value::String(format!("{{count:1,id:\"{id}\"}}"));
+    let mut sorted: Vec<&ContentMod> = mods.iter().collect();
+    sorted.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut tabs = Vec::new();
+    let mut listed: Vec<&str> = Vec::new();
+    for m in sorted {
+        for t in &m.content.tabs {
+            let mut items = Vec::new();
+            for id in &t.items {
+                if !known(id) {
+                    warnings.push(format!(
+                        "mod {}: creative tab {}: {id} is no item, left out",
+                        m.id, t.id
+                    ));
+                    continue;
+                }
+                items.push(stack(id));
+                if !id.starts_with("minecraft:") && !listed.contains(&id.as_str()) {
+                    listed.push(id);
+                }
+            }
+            let icon = if known(&t.icon) {
+                t.icon.as_str()
+            } else {
+                "minecraft:barrier"
+            };
+            let k = tabs.len();
+            let slot = k % 10;
+            tabs.push(json!({
+                "id": t.id,
+                "type": "CATEGORY",
+                "row": if slot < 5 { "TOP" } else { "BOTTOM" },
+                "column": slot % 5,
+                "page": 1 + k / 10,
+                "title": t.title,
+                "icon": stack(icon),
+                "visible": true,
+                "items": items,
+            }));
+        }
+    }
+    let rest = new_items.iter().filter(|id| !listed.contains(id));
+    let searched: Vec<&str> = listed.iter().copied().chain(rest.copied()).collect();
+    let Some(all) = doc["tabs"].as_array_mut() else {
+        return Err("creative-inventory.json: no tabs".into());
+    };
+    if let Some(search) = all.iter_mut().find(|t| t["type"] == "SEARCH") {
+        for (key, value) in [
+            ("items", None),
+            ("lines", Some(json!([]))),
+            ("tags", Some(json!([]))),
+        ] {
+            if let Some(list) = search[key].as_array_mut() {
+                // No tooltip lines: Search matches the name the game gives it.
+                list.extend(
+                    searched
+                        .iter()
+                        .map(|id| value.clone().unwrap_or_else(|| stack(id))),
+                );
+            }
+        }
+    }
+    all.extend(tabs);
+    overlay.write("creative-inventory.json", &serde_json::to_vec(&doc)?)
 }
 
 /// In a root built by [`build`]: its warnings, one per line.

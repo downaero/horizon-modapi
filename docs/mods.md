@@ -487,6 +487,16 @@ lets comparators read the block, for what the mod gives with `redstone.set-compa
 `"signal_source": true` makes it a redstone signal source dust connects to, giving what the mod
 sets with `redstone.set-output`.
 
+Creative inventory tabs, as NeoForge's `CreativeModeTab`, go in
+`data/<id>/horizon/creative_tab/<name>.json` (tab id `<id>:<name>`): a `title` (a translation key
+from the mod's lang files, `itemGroup.create.base`, or the title itself), an `icon` item and the
+`items` it shows, in order, the mod's own or vanilla's (an id that is neither is left out, with a
+warning in the log). The tabs come after vanilla's, mods in id order and a mod's by file name,
+ten a page (five on top, five below) from page 2 on, as NeoForge pages them: the `<` and `>`
+buttons above the tabs turn the pages, and search, saved hotbars and the inventory are on every
+page. Every item a content mod adds is in Search too, after vanilla's: those in tabs first, in
+their order. The gears example's `Gears` tab holds its blocks.
+
 Some Java mods ship their files under other names than their mod id (Towns
 and Towers, mod id `t_and_t`, under `kaisyn` and `towns_and_towers`). A
 content mod lists those in its manifest:

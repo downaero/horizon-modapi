@@ -1,0 +1,13 @@
+{
+  "itemGroup.gears": "Gears",
+  "block.gears.belt": "Belt",
+  "block.gears.clutch": "Clutch",
+  "block.gears.counter": "Counter",
+  "block.gears.crate": "Gear Crate",
+  "block.gears.deployer": "Deployer",
+  "block.gears.drill": "Drill",
+  "block.gears.gauge": "Gauge",
+  "block.gears.lift": "Lift",
+  "block.gears.mill": "Mill",
+  "block.gears.shaft": "Shaft"
+}
