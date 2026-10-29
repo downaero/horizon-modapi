@@ -868,6 +868,20 @@ impl LevelAccess for GameLevel<'_> {
                 .map_or(0, |_| i32::from(frame.rotation % 8) + 1),
         )
     }
+    fn mod_signal(
+        &self,
+        pos: BlockPos,
+        _state: BlockStateId,
+        direction: Direction,
+    ) -> Option<[i32; 2]> {
+        if self.world.mod_outputs.is_empty() {
+            return None;
+        }
+        let o = self.world.mod_outputs.get(&(pos.x, pos.y, pos.z))?;
+        // The face toward the block asking.
+        let face = direction.opposite() as usize;
+        Some([i32::from(o.weak[face]), i32::from(o.strong[face])])
+    }
     fn block_entity_signal(
         &self,
         pos: BlockPos,

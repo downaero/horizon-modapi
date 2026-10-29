@@ -1221,6 +1221,7 @@ mod run {
             self.apply_mod_console();
             self.apply_mod_player_stacks();
             self.apply_mod_signals();
+            self.apply_mod_outputs();
             self.apply_mod_comparator_signals();
             self.apply_mod_drops();
             self.apply_mod_effects();
@@ -2902,6 +2903,90 @@ mod run {
             }
         }
 
+        /// Sets the signals server mods' blocks give (`redstone.set-output`)
+        /// and tells the blocks around of a change as a lever does: its
+        /// neighbours, and those of each block a strong signal it changed
+        /// goes into. Only blocks declared `signal_source`, in the dimension
+        /// the window simulates. Then the blocks a broken mod block powered
+        /// strongly tell theirs.
+        pub(in crate::game) fn apply_mod_outputs(&mut self) {
+            use horizon_core::geometry::Direction;
+            use horizon_world::level::data::state_flags;
+            let at = |p: (i32, i32, i32)| horizon_core::position::BlockPos::new(p.0, p.1, p.2);
+            for (dimension, p, face, weak, strong) in std::mem::take(&mut self.mods.outputs) {
+                if dimension != self.dim.id() {
+                    continue;
+                }
+                let state = self.world.block(p[0], p[1], p[2]);
+                if self.res.behaviours().facts(state).flags & state_flags::SIGNAL_SOURCE == 0 {
+                    continue;
+                }
+                let key = (p[0], p[1], p[2]);
+                let before = match self.world.mod_outputs.get(&key) {
+                    Some(o) => *o,
+                    None => horizon_client::world::ModOutput {
+                        states: self.block_states(state),
+                        ..Default::default()
+                    },
+                };
+                let mut o = before;
+                for f in 0..6 {
+                    if face.is_none_or(|face| usize::from(face) == f) {
+                        o.weak[f] = weak;
+                        o.strong[f] = strong;
+                    }
+                }
+                if o == before {
+                    continue;
+                }
+                if o.weak == [0; 6] && o.strong == [0; 6] {
+                    self.world.mod_outputs.remove(&key);
+                } else {
+                    self.world.mod_outputs.insert(key, o);
+                }
+                let pos = at(key);
+                self.with_level(|b, level, ticks| {
+                    let block = b.block(state);
+                    b.update_neighbors_at(level, ticks, pos, block);
+                    for d in Direction::ALL {
+                        if o.strong[d as usize] != before.strong[d as usize] {
+                            let [dx, dy, dz] = d.normal();
+                            b.update_neighbors_at(level, ticks, pos.offset(dx, dy, dz), block);
+                        }
+                    }
+                });
+            }
+            for (key, strong) in std::mem::take(&mut self.world.mod_outputs_lost) {
+                let state = self.world.block(key.0, key.1, key.2);
+                let pos = at(key);
+                self.with_level(|b, level, ticks| {
+                    let block = b.block(state);
+                    for d in Direction::ALL {
+                        if strong[d as usize] > 0 {
+                            let [dx, dy, dz] = d.normal();
+                            b.update_neighbors_at(level, ticks, pos.offset(dx, dy, dz), block);
+                        }
+                    }
+                });
+            }
+        }
+
+        /// The first and last state of `state`'s block: a block's states
+        /// are numbered one after another.
+        fn block_states(&self, state: BlockStateId) -> (u32, u32) {
+            let registry = self.pack.assets.registry;
+            let name = |id: u32| registry.state(BlockStateId(id)).map(|s| s.name.as_str());
+            let own = name(state.0);
+            let (mut first, mut last) = (state.0, state.0);
+            while first > 0 && name(first - 1) == own {
+                first -= 1;
+            }
+            while name(last + 1) == own {
+                last += 1;
+            }
+            (first, last)
+        }
+
         /// Applies the pushes server mods asked for: to item entities, and to
         /// players (the window's own, or a guest, whose client is sent the
         /// motion).
@@ -4231,6 +4316,19 @@ mod run {
                     let queue = &mut self.mods.signals;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((dimension, pos, level));
+                    }
+                }
+                Output::RedstoneOutput {
+                    dimension,
+                    pos,
+                    face,
+                    weak,
+                    strong,
+                    ..
+                } => {
+                    let queue = &mut self.mods.outputs;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push((dimension, pos, face, weak, strong));
                     }
                 }
                 Output::ComparatorSignal {

@@ -1,5 +1,6 @@
 # gears:counter swallows iron ingots beside it, stops while powered, and
-# chimes and drops a nugget each minute (items, redstone, effects).
+# chimes and drops a nugget each minute, and powers the block under it while
+# it runs (items, redstone, effects).
 
 [[step]]
 join = "Alex"
@@ -21,6 +22,8 @@ items = [
 ticks = 20
 expect.taken = [7]
 expect.drops = ["minecraft:iron_nugget x9 at 5.5 65 5.5"]
+# Running, it powers the block under it, strongly, as a lever would.
+expect.outputs = ["5 64 5 down 15 15"]
 
 # A redstone signal stops it.
 [[step]]
@@ -29,6 +32,7 @@ items = [{ id = 10, item = "minecraft:iron_ingot", x = 5.5, y = 64.5, z = 5.5 }]
 ticks = 40
 expect.taken = []
 expect.drops = []
+expect.outputs = []
 
 # Without it, a minute of running: the anvil chimes and smoke rises.
 [[step]]

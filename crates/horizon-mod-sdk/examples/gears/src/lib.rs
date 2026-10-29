@@ -523,8 +523,10 @@ impl ServerMod for Gears {
                 .and_then(|d| <[u8; 4]>::try_from(d).ok())
                 .map_or(0, u32::from_le_bytes);
             let _ = attachments::set(&me, "counters", &(placed + 1).to_le_bytes());
-            // A gear above it, turning while the counter runs.
+            // A gear above it, turning while the counter runs, and the block
+            // under it powered.
             gear(DIMENSION, pos.x, pos.y, pos.z, true);
+            let _ = redstone::set_output(DIMENSION, pos.x, pos.y, pos.z, Some(0), 15, 15);
             self.gears.push(([pos.x, pos.y, pos.z], true));
         }
     }
@@ -851,19 +853,26 @@ impl ServerMod for Gears {
             return;
         }
         // A redstone signal stops the counter (capability `redstone`), and
-        // its gear: players' games are told only when that changes.
+        // its gear: players' games are told only when that changes. While it
+        // runs it powers the block under it (`redstone::set_output`), a lamp
+        // there lit, as a lever does the block it sits on.
         let at = [pos.x, pos.y, pos.z];
         let running = !redstone::power(dimension, pos.x, pos.y, pos.z).is_some_and(|p| p > 0);
-        match self.gears.iter_mut().find(|(p, _)| *p == at) {
-            Some((_, was)) if *was == running => {}
+        let changed = match self.gears.iter_mut().find(|(p, _)| *p == at) {
+            Some((_, was)) if *was == running => false,
             Some((_, was)) => {
                 *was = running;
-                gear(dimension, pos.x, pos.y, pos.z, running);
+                true
             }
             None => {
                 self.gears.push((at, running));
-                gear(dimension, pos.x, pos.y, pos.z, running);
+                true
             }
+        };
+        if changed {
+            gear(dimension, pos.x, pos.y, pos.z, running);
+            let level = if running { 15 } else { 0 };
+            let _ = redstone::set_output(dimension, pos.x, pos.y, pos.z, Some(0), level, level);
         }
         if !running {
             return;

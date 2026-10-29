@@ -8,6 +8,16 @@ use std::{
     sync::Arc,
 };
 
+/// The signal a server mod's block gives (`redstone.set-output`), by face
+/// (0 down, 1 up, 2 north, 3 south, 4 west, 5 east): weak to its neighbour
+/// there, strong through it. `states` are its block's first and last state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ModOutput {
+    pub states: (u32, u32),
+    pub weak: [u8; 6],
+    pub strong: [u8; 6],
+}
+
 /// Sections (x, section index, z) waiting to be remeshed, kept by column
 /// (a bit per section index), so the mesh scheduler looks at each column once
 /// rather than at every section of it.
@@ -117,6 +127,12 @@ pub struct World {
     /// The signal comparators read from a server mod's block, set by the mod
     /// in place of vanilla's (`redstone.set-comparator-signal`).
     pub comparator_signals: HashMap<(i32, i32, i32), u8>,
+    /// The signals server mods' blocks give (`redstone.set-output`), kept
+    /// while the block there is the same, whatever its state.
+    pub mod_outputs: HashMap<(i32, i32, i32), ModOutput>,
+    /// Where a mod block giving a strong signal went, with the faces it gave
+    /// one by: the blocks it powered tell their neighbours at the tick's end.
+    pub mod_outputs_lost: Vec<((i32, i32, i32), [u8; 6])>,
     /// The sections whose light changed since the log was last drained, as
     /// a bit per section of each column, kept while `block_log` is
     /// (`ChunkHolder.sectionLightChanged`).
@@ -223,6 +239,8 @@ impl World {
             hopper_rules: HashMap::new(),
             forwards: HashMap::new(),
             comparator_signals: HashMap::new(),
+            mod_outputs: HashMap::new(),
+            mod_outputs_lost: Vec::new(),
             light_log: None,
             moving_piston_fallback: Vec::new(),
             moving_pistons: Vec::new(),
@@ -311,6 +329,14 @@ impl World {
             }
             if !self.comparator_signals.is_empty() {
                 self.comparator_signals.remove(&(x, y, z));
+            }
+            if let Some(o) = self.mod_outputs.get(&(x, y, z))
+                && !(o.states.0..=o.states.1).contains(&state.0)
+            {
+                if o.strong != [0; 6] {
+                    self.mod_outputs_lost.push(((x, y, z), o.strong));
+                }
+                self.mod_outputs.remove(&(x, y, z));
             }
             let watches = |id: u32| self.watched.get(id as usize).copied().unwrap_or(false);
             if watches(previous) || watches(state.0) {

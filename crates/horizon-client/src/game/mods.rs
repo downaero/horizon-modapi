@@ -183,6 +183,10 @@ pub(super) struct ModsState {
     /// the tick's end.
     #[cfg(feature = "mods")]
     pub(super) signals: Vec<(String, [i32; 3], u8)>,
+    /// Signals server mods' blocks give (dimension, position, face or every
+    /// face, weak, strong), for the tick's end.
+    #[cfg(feature = "mods")]
+    pub(super) outputs: Vec<(String, [i32; 3], Option<u8>, u8, u8)>,
     /// Capability `redstone`: what comparators read from mod blocks (none:
     /// vanilla's), applied at the tick's end.
     #[cfg(feature = "mods")]
@@ -916,6 +920,7 @@ impl Game<'_> {
                 | Output::Take { .. }
                 | Output::Push { .. }
                 | Output::Signal { .. }
+                | Output::RedstoneOutput { .. }
                 | Output::ComparatorSignal { .. }
                 | Output::Break { .. }
                 | Output::Peer { .. }

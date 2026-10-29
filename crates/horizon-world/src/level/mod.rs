@@ -403,6 +403,18 @@ pub trait LevelAccess {
     ) -> Option<(bool, bool)> {
         None
     }
+    /// The weak and strong signal a server mod's block gives toward
+    /// `direction` (as `getSignal` and `getDirectSignal` take it: from the
+    /// block asking to this one), none where no mod set one. Asked of a
+    /// signal source before its own class.
+    fn mod_signal(
+        &self,
+        _pos: BlockPos,
+        _state: BlockStateId,
+        _direction: Direction,
+    ) -> Option<[i32; 2]> {
+        None
+    }
     /// Weak/strong signal of a block-entity-driven source (trapped chest
     /// openers); other sources are evaluated by the library.
     fn block_entity_signal(

@@ -40,6 +40,9 @@ pub struct TestGame {
     pub items: Vec<crate::DroppedStack>,
     /// The Overworld's `transfer.forward`s: a block's storage is another's.
     pub forwards: std::collections::BTreeMap<(i32, i32, i32), [i32; 3]>,
+    /// The signals the mod's blocks give (`redstone.set-output`): weak and
+    /// strong by face, while the block is the same.
+    pub outputs: std::collections::BTreeMap<(i32, i32, i32), [[u8; 2]; 6]>,
     /// What the mod showed during the last ticks, already applied to the
     /// world: [`TestGame::drain`] hands it out.
     shown: Vec<Output>,
@@ -479,6 +482,7 @@ impl TestGame {
             items: Vec::new(),
             living: Vec::new(),
             forwards: Default::default(),
+            outputs: Default::default(),
             shown: Vec::new(),
             visuals: Default::default(),
             containers: Default::default(),
@@ -749,7 +753,13 @@ impl TestGame {
                     dimension, blocks, ..
                 } if overworld(dimension) => {
                     for b in blocks {
-                        self.world.insert((b.x, b.y, b.z), b.state.clone());
+                        let at = (b.x, b.y, b.z);
+                        let block = |s: &str| s.split('[').next().unwrap_or_default().to_owned();
+                        let was = self.world.get(&at).map(|s| block(s));
+                        if was.as_deref() != Some(block(&b.state).as_str()) {
+                            self.outputs.remove(&at);
+                        }
+                        self.world.insert(at, b.state.clone());
                     }
                 }
                 Output::Container {
@@ -788,6 +798,26 @@ impl TestGame {
                 // A block the mod broke is air; its drops are the game's.
                 Output::Break { dimension, pos, .. } if overworld(dimension) => {
                     self.world.remove(&(pos[0], pos[1], pos[2]));
+                    self.outputs.remove(&(pos[0], pos[1], pos[2]));
+                }
+                Output::RedstoneOutput {
+                    dimension,
+                    pos,
+                    face,
+                    weak,
+                    strong,
+                    ..
+                } if overworld(dimension) => {
+                    let at = (pos[0], pos[1], pos[2]);
+                    let faces = self.outputs.entry(at).or_default();
+                    for (f, out) in faces.iter_mut().enumerate() {
+                        if face.is_none_or(|face| usize::from(face) == f) {
+                            *out = [*weak, *strong];
+                        }
+                    }
+                    if *faces == [[0; 2]; 6] {
+                        self.outputs.remove(&at);
+                    }
                 }
                 Output::Visual {
                     dimension,
@@ -1191,6 +1221,10 @@ pub struct Expect {
     /// then `" offset [x, y, z] velocity [x, y, z]"` when it is off its block's
     /// corner or moving.
     visuals: Option<Vec<String>>,
+    /// Capability `redstone`: the signals the mod's blocks give after the
+    /// step (`set-output`), a face to a line as `"x y z face weak strong"`,
+    /// faces giving none left out.
+    outputs: Option<Vec<String>>,
     /// The mod is turned off during this step, for a reason holding this text.
     /// Without it, a mod that stops fails the test.
     stopped: Option<String>,
@@ -1672,6 +1706,19 @@ impl Step {
                 })
                 .collect();
             same("inventory", want, &got)?;
+        }
+        if let Some(want) = &e.outputs {
+            let faces = ["down", "up", "north", "south", "west", "east"];
+            let got: Vec<String> = game
+                .outputs
+                .iter()
+                .flat_map(|((x, y, z), out)| {
+                    out.iter().zip(faces).filter(|(o, _)| **o != [0; 2]).map(
+                        move |([weak, strong], face)| format!("{x} {y} {z} {face} {weak} {strong}"),
+                    )
+                })
+                .collect();
+            same("outputs", want, &got)?;
         }
         if let Some(want) = &e.visuals {
             let got: Vec<String> = game

@@ -336,6 +336,7 @@ checked:
 | `effects = ["sound minecraft:block.anvil.use at 5 64 5", "event 2000 1 at 5 65 5"]` | server mods with `effects`: every sound and level event, in order |
 | `names = ["Gear Crate at 5 64 5"]` | server mods with `containers`: every `set-name` (`-` for none) |
 | `visuals = ["0 64 0 mymod:shaft[axis=x] 4.8"]` | server mods with `block-entities`: the parts drawn at the mod's blocks after the step, by position, with their speed in degrees a tick, and ` offset [x, y, z] velocity [x, y, z]` after it for a part off its block's corner or moving (`[]`: none); a block the mod breaks with `world.break-block` is air |
+| `outputs = ["0 64 0 down 15 15"]` | server mods with `redstone`: the signals the mod's blocks give after the step (`set-output`), a face to a line as `x y z face weak strong`, faces giving none left out |
 | `stopped = "panic"` | the mod was turned off, for a reason holding this text; without it, a mod that traps, panics or overruns fails the test |
 
 A step may also set what the mod reads: `power = [{ x, y, z, level }]` (the redstone signal at those positions from then on, capability `redstone`) and `items = [{ id, item, count, x, y, z }]` (item entities lying in the Overworld, capability `items`; the ones `take` removes are gone for later steps).
@@ -481,7 +482,9 @@ The fence: files go in the mod's own namespaces (`assets/<id>/`,
 (`data/minecraft/tags/`) and to the convention tags NeoForge and Fabric mods
 share (`data/c/tags/`).
 Templates and `sounds` name vanilla blocks; unknown keys are refused. `"analog_output": true`
-lets comparators read the block, for what the mod gives with `redstone.set-comparator-signal`.
+lets comparators read the block, for what the mod gives with `redstone.set-comparator-signal`;
+`"signal_source": true` makes it a redstone signal source dust connects to, giving what the mod
+sets with `redstone.set-output`.
 
 Some Java mods ship their files under other names than their mod id (Towns
 and Towers, mod id `t_and_t`, under `kaisyn` and `towns_and_towers`). A
@@ -728,6 +731,17 @@ with the template `minecraft:trapped_chest` has one, and its container
 openers share the number, so a mod keeps such a block for signals only. It is
 not saved: the mod sets it again after a load. The gears example's
 `gears:gauge` gives 5 for each item lying on it.
+
+`redstone.set-output(dimension, x, y, z, face, weak, strong)` (API level 51) is the signal a
+block of the mod's own gives by a face (0 down, 1 up, 2 north, 3 south, 4 west, 5 east; none for
+every face), as a block's `getSignal` and `getDirectSignal` give it in NeoForge: `weak` (0 to
+15) powers the neighbour on that face and the dust beside it, `strong` (at most `weak`) powers
+through that neighbour, as a lever does the block it sits on. Any template will do, with
+`"signal_source": true` in the block's `properties`; dust connects to it. The blocks around are
+told at the tick's end. The signal stays while the block is there, whatever its state (a latch
+flipping its own `powered`), and goes with the block; it is not saved, so a mod sets it again
+after a load. The gears example's `gears:counter` powers the block under it while it runs, so
+a lamp there lights.
 
 `redstone.set-comparator-signal(dimension, x, y, z, level)` (API level 42) is what a
 comparator reads from a block of the mod's (`getAnalogOutputSignal`: a depot's or a

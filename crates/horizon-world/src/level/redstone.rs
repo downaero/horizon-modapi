@@ -47,6 +47,9 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
         if !b.has_flag(state, state_flags::SIGNAL_SOURCE) {
             return 0;
         }
+        if let Some([weak, _]) = self.level.mod_signal(pos, state, direction) {
+            return weak;
+        }
         let data = b.data(state);
         match data.class {
             Class::RedstoneWire => self.wire_signal(state, pos, direction),
@@ -73,6 +76,9 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
         let b = self.b;
         if !b.has_flag(state, state_flags::SIGNAL_SOURCE) {
             return 0;
+        }
+        if let Some([_, strong]) = self.level.mod_signal(pos, state, direction) {
+            return strong;
         }
         match b.data(state).class {
             Class::RedstoneWire => {

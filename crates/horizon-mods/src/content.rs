@@ -76,6 +76,9 @@ pub struct BlockProperties {
     /// Comparators read it (`hasAnalogOutputSignal`): what the mod gives
     /// with `redstone.set-comparator-signal`, 0 until it does.
     pub analog_output: Option<bool>,
+    /// A redstone signal source (`isSignalSource`): dust connects to it, and
+    /// it gives what the mod sets with `redstone.set-output`, 0 until then.
+    pub signal_source: Option<bool>,
 }
 
 /// One box of a shape in pixels, `[x0, y0, z0, x1, y1, z1]` with a block 16

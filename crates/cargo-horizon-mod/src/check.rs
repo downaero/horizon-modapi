@@ -347,6 +347,12 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
                 format!("broke the block at {} {} {}", pos[0], pos[1], pos[2])
             }
             Output::Signal { level, .. } => format!("gave a redstone signal of {level}"),
+            Output::RedstoneOutput {
+                face, weak, strong, ..
+            } => match face {
+                Some(face) => format!("gave a signal of {weak} (strong {strong}) by face {face}"),
+                None => format!("gave a signal of {weak} (strong {strong})"),
+            },
             Output::ComparatorSignal { level, .. } => match level {
                 Some(level) => format!("gave comparators a signal of {level}"),
                 None => "gave comparators vanilla's signal".to_string(),

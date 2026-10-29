@@ -998,6 +998,16 @@ pub enum Output {
         pos: [i32; 3],
         level: u8,
     },
+    /// `redstone.set-output`: the weak and strong signal a mod block gives
+    /// by a face (0 down ... 5 east; none: every face).
+    RedstoneOutput {
+        mod_id: String,
+        dimension: String,
+        pos: [i32; 3],
+        face: Option<u8>,
+        weak: u8,
+        strong: u8,
+    },
     /// `redstone.set-comparator-signal`: what comparators read from a mod
     /// block (none: vanilla's).
     ComparatorSignal {
@@ -3523,7 +3533,14 @@ impl State {
         let queued = self
             .out
             .iter()
-            .filter(|o| matches!(o, Output::Signal { .. } | Output::ComparatorSignal { .. }))
+            .filter(|o| {
+                matches!(
+                    o,
+                    Output::Signal { .. }
+                        | Output::RedstoneOutput { .. }
+                        | Output::ComparatorSignal { .. }
+                )
+            })
             .count();
         if queued >= 1024 {
             return Err("at most 1024 signals a call".into());
@@ -5194,6 +5211,38 @@ impl redstone::Host for State {
             dimension,
             pos: [x, y, z],
             level,
+        });
+        Ok(())
+    }
+    fn set_output(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        face: Option<u8>,
+        weak: u8,
+        strong: u8,
+    ) -> Result<(), String> {
+        if let Some(face) = face.filter(|f| *f > 5) {
+            return Err(format!(
+                "face {face}: 0 down, 1 up, 2 north, 3 south, 4 west, 5 east"
+            ));
+        }
+        if weak > 15 || strong > weak {
+            return Err(format!(
+                "weak {weak}, strong {strong}: 0 to 15, strong at most weak"
+            ));
+        }
+        self.own_block(&dimension, x, y, z)?;
+        self.signals_left()?;
+        self.out.push(Output::RedstoneOutput {
+            mod_id: self.id.clone(),
+            dimension,
+            pos: [x, y, z],
+            face,
+            weak,
+            strong,
         });
         Ok(())
     }

@@ -753,23 +753,29 @@ impl<'a> Plan<'a> {
             "gameplay-facts.json" => states(doc, "states", false, true)?,
             "block-behaviours.json" => {
                 states(doc, "states", false, false)?;
-                // `analog_output`: the flag comparators read a block by
-                // (`state_flags::ANALOG_OUTPUT`, in a row's flags column).
+                // `analog_output` and `signal_source`: the flags comparators
+                // and dust read a block by (`state_flags`, in a row's flags
+                // column).
+                use horizon_world::level::data::state_flags::{ANALOG_OUTPUT, SIGNAL_SOURCE};
                 if let Some(J::Arr(rows)) = doc.at("states") {
                     for b in &self.blocks {
-                        let Some(analog) = b.decl.properties.analog_output else {
-                            continue;
-                        };
-                        for i in 0..b.sources.len() {
-                            let Some(J::Arr(row)) = rows.get_mut(b.rename.first as usize + i)
-                            else {
-                                continue;
-                            };
-                            if let Some(flags) = row.get_mut(1) {
-                                let bits = flags.as_u32().unwrap_or(0);
-                                let flag = horizon_world::level::data::state_flags::ANALOG_OUTPUT;
-                                let bits = if analog { bits | flag } else { bits & !flag };
-                                *flags = J::Num(bits.into());
+                        let p = &b.decl.properties;
+                        let set = [
+                            (p.analog_output, ANALOG_OUTPUT),
+                            (p.signal_source, SIGNAL_SOURCE),
+                        ];
+                        for (on, flag) in set {
+                            let Some(on) = on else { continue };
+                            for i in 0..b.sources.len() {
+                                let Some(J::Arr(row)) = rows.get_mut(b.rename.first as usize + i)
+                                else {
+                                    continue;
+                                };
+                                if let Some(flags) = row.get_mut(1) {
+                                    let bits = flags.as_u32().unwrap_or(0);
+                                    let bits = if on { bits | flag } else { bits & !flag };
+                                    *flags = J::Num(bits.into());
+                                }
                             }
                         }
                     }
