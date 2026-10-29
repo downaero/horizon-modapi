@@ -40,6 +40,9 @@ pub struct TestGame {
     pub items: Vec<crate::DroppedStack>,
     /// The Overworld's `transfer.forward`s: a block's storage is another's.
     pub forwards: std::collections::BTreeMap<(i32, i32, i32), [i32; 3]>,
+    /// What the mod showed during the last ticks, already applied to the
+    /// world: [`TestGame::drain`] hands it out.
+    shown: Vec<Output>,
     /// The mobs in the Overworld (`entities.living-nearby`): a step's
     /// `living`, then what the mod's `hurt` and `discard` leave of them.
     pub living: Vec<crate::Living>,
@@ -476,6 +479,7 @@ impl TestGame {
             items: Vec::new(),
             living: Vec::new(),
             forwards: Default::default(),
+            shown: Vec::new(),
             visuals: Default::default(),
             containers: Default::default(),
             inventories: Default::default(),
@@ -536,6 +540,8 @@ impl TestGame {
     }
 
     /// `n` game ticks; each moves the clock one tick on, as the game does.
+    /// What the mod changed on a tick is in the world for the next, as the
+    /// game applies it before the dimension's next tick.
     pub fn tick(&mut self, n: u64) {
         for _ in 0..n {
             self.tick += 1;
@@ -547,7 +553,30 @@ impl TestGame {
             self.mods.tick(self.tick);
             self.mods.server_tick(self.tick);
             self.mods.tick_blocks();
+            let lent = self.mods.take_world().is_some();
+            let out = self.mods.drain();
+            self.apply(&out);
+            self.shown.extend(out);
+            if lent {
+                self.lend();
+            }
         }
+    }
+    /// Lends the mod the world as it is now: blocks, signals, item entities,
+    /// mobs, forwards and containers.
+    fn lend(&mut self) {
+        self.mods.lend_world(Box::new(ScriptWorld {
+            blocks: self.world.clone(),
+            power: self.power.clone(),
+            dropped: self.items.clone(),
+            living: self.living.clone(),
+            forwards: self.forwards.clone(),
+            recipes: self.recipes.clone(),
+            tags: self.tags.clone(),
+            block_tags: self.block_tags.clone(),
+            item_ids: self.item_ids.clone(),
+            containers: self.containers.clone(),
+        }));
     }
     /// `n` frames, 1/60 s apart.
     pub fn frames(&mut self, n: u64) {
@@ -701,9 +730,176 @@ impl TestGame {
     pub fn status(&self) -> &Status {
         &self.mods.entries()[0].status
     }
-    /// What the mod showed since the last call.
+    /// What the mod showed since the last call, applied to the world.
     pub fn drain(&mut self) -> Vec<Output> {
-        self.mods.drain()
+        let fresh = self.mods.drain();
+        self.apply(&fresh);
+        let mut out = std::mem::take(&mut self.shown);
+        out.extend(fresh);
+        out
+    }
+    /// What `out` changes, as the game applies it: blocks set and broken,
+    /// slots, player stacks, visuals, forwards, mobs, item entities taken.
+    fn apply(&mut self, out: &[Output]) {
+        let overworld = |d: &str| d == "minecraft:overworld";
+        for o in out {
+            match o {
+                Output::SetBlocks {
+                    dimension, blocks, ..
+                } if overworld(dimension) => {
+                    for b in blocks {
+                        self.world.insert((b.x, b.y, b.z), b.state.clone());
+                    }
+                }
+                Output::Container {
+                    op:
+                        crate::ContainerOp::SetSlot {
+                            dimension,
+                            pos,
+                            slot,
+                            stack,
+                        },
+                    ..
+                } if overworld(dimension) => {
+                    if let Ok(mut all) = self.containers.lock() {
+                        let slots = all
+                            .entry((pos[0], pos[1], pos[2]))
+                            .or_insert_with(|| vec![None; 27]);
+                        if let Some(s) = slots.get_mut(*slot as usize) {
+                            *s = stack.clone();
+                        }
+                    }
+                }
+                Output::SetPlayerStack {
+                    player,
+                    slot,
+                    stack,
+                    ..
+                } => {
+                    let slots = self
+                        .inventories
+                        .entry(player.clone())
+                        .or_insert_with(|| vec![None; 41]);
+                    if let Some(s) = slots.get_mut(*slot as usize) {
+                        *s = stack.clone();
+                    }
+                }
+                // A block the mod broke is air; its drops are the game's.
+                Output::Break { dimension, pos, .. } if overworld(dimension) => {
+                    self.world.remove(&(pos[0], pos[1], pos[2]));
+                }
+                Output::Visual {
+                    dimension,
+                    pos,
+                    parts,
+                    ..
+                } if overworld(dimension) => {
+                    let at = (pos[0], pos[1], pos[2]);
+                    if parts.is_empty() {
+                        self.visuals.remove(&at);
+                    } else {
+                        // Scrolls and orientations stay on the parts by index,
+                        // and fluid boxes after them, as in the self.
+                        let mut parts = parts.clone();
+                        if let Some(old) = self.visuals.get(&at) {
+                            let own = old.iter().filter(|o| o.fluid.is_none());
+                            for (p, o) in parts.iter_mut().zip(own) {
+                                p.scroll = o.scroll.clone();
+                                p.orientation = o.orientation;
+                            }
+                            parts.extend(old.iter().filter(|o| o.fluid.is_some()).cloned());
+                        }
+                        self.visuals.insert(at, parts);
+                    }
+                }
+                Output::Living { op, .. } => match op {
+                    crate::LivingOp::Hurt { id, amount, .. } => {
+                        if let Some(l) = self.living.iter_mut().find(|l| l.id == *id) {
+                            l.health -= amount;
+                        }
+                        self.living.retain(|l| l.health > 0.0);
+                    }
+                    crate::LivingOp::Discard { id } => self.living.retain(|l| l.id != *id),
+                },
+                Output::VisualFluids {
+                    dimension,
+                    pos,
+                    boxes,
+                    ..
+                } if overworld(dimension) => {
+                    let at = (pos[0], pos[1], pos[2]);
+                    let mut parts: Vec<_> = self
+                        .visuals
+                        .get(&at)
+                        .into_iter()
+                        .flatten()
+                        .filter(|p| p.fluid.is_none())
+                        .cloned()
+                        .collect();
+                    parts.extend(boxes.iter().cloned());
+                    if parts.is_empty() {
+                        self.visuals.remove(&at);
+                    } else {
+                        self.visuals.insert(at, parts);
+                    }
+                }
+                Output::Forward { dimension, pos, to } if overworld(dimension) => {
+                    let at = (pos[0], pos[1], pos[2]);
+                    match to {
+                        Some(t) => self.forwards.insert(at, *t),
+                        None => self.forwards.remove(&at),
+                    };
+                }
+                Output::VisualOrientation {
+                    dimension,
+                    pos,
+                    orientations,
+                    ..
+                } if overworld(dimension) => {
+                    if let Some(parts) = self.visuals.get_mut(&(pos[0], pos[1], pos[2])) {
+                        for (i, p) in parts.iter_mut().enumerate() {
+                            p.orientation = orientations
+                                .iter()
+                                .rev()
+                                .find(|(at, _)| *at as usize == i)
+                                .map(|(_, q)| *q);
+                        }
+                    }
+                }
+                Output::VisualScroll {
+                    dimension,
+                    pos,
+                    scrolls,
+                    ..
+                } if overworld(dimension) => {
+                    if let Some(parts) = self.visuals.get_mut(&(pos[0], pos[1], pos[2])) {
+                        for (i, p) in parts.iter_mut().enumerate() {
+                            p.scroll = scrolls
+                                .iter()
+                                .find(|(at, _)| *at as usize == i)
+                                .map(|(_, s)| s.clone());
+                        }
+                    }
+                }
+                Output::BlockData {
+                    dimension,
+                    pos,
+                    data: None,
+                    ..
+                } if overworld(dimension) => {
+                    self.visuals.remove(&(pos[0], pos[1], pos[2]));
+                }
+                _ => {}
+            }
+        }
+        let taken: Vec<u32> = out
+            .iter()
+            .filter_map(|o| match o {
+                Output::Take { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        self.items.retain(|i| !taken.contains(&i.id));
     }
 }
 
@@ -1142,18 +1338,7 @@ impl Step {
                 slots[s.slot as usize] = (s.count > 0).then(|| (s.item.clone(), s.count));
             }
         }
-        game.mods.lend_world(Box::new(ScriptWorld {
-            blocks: game.world.clone(),
-            power: game.power.clone(),
-            dropped: game.items.clone(),
-            living: game.living.clone(),
-            forwards: game.forwards.clone(),
-            recipes: game.recipes.clone(),
-            tags: game.tags.clone(),
-            block_tags: game.block_tags.clone(),
-            item_ids: game.item_ids.clone(),
-            containers: game.containers.clone(),
-        }));
+        game.lend();
         // Blocks a step set, as /setblock sets them: a mod's ticking blocks
         // among them get their data as in the game.
         let set: Vec<[i32; 3]> = self.blocks.iter().map(|b| [b.x, b.y, b.z]).collect();
@@ -1277,157 +1462,6 @@ impl Step {
         }
         game.mods.take_world();
         let out = game.drain();
-        let overworld = |d: &str| d == "minecraft:overworld";
-        for o in &out {
-            match o {
-                Output::SetBlocks {
-                    dimension, blocks, ..
-                } if overworld(dimension) => {
-                    for b in blocks {
-                        game.world.insert((b.x, b.y, b.z), b.state.clone());
-                    }
-                }
-                Output::Container {
-                    op:
-                        crate::ContainerOp::SetSlot {
-                            dimension,
-                            pos,
-                            slot,
-                            stack,
-                        },
-                    ..
-                } if overworld(dimension) => {
-                    if let Ok(mut all) = game.containers.lock() {
-                        let slots = all
-                            .entry((pos[0], pos[1], pos[2]))
-                            .or_insert_with(|| vec![None; 27]);
-                        if let Some(s) = slots.get_mut(*slot as usize) {
-                            *s = stack.clone();
-                        }
-                    }
-                }
-                Output::SetPlayerStack {
-                    player,
-                    slot,
-                    stack,
-                    ..
-                } => {
-                    let slots = game
-                        .inventories
-                        .entry(player.clone())
-                        .or_insert_with(|| vec![None; 41]);
-                    if let Some(s) = slots.get_mut(*slot as usize) {
-                        *s = stack.clone();
-                    }
-                }
-                // A block the mod broke is air; its drops are the game's.
-                Output::Break { dimension, pos, .. } if overworld(dimension) => {
-                    game.world.remove(&(pos[0], pos[1], pos[2]));
-                }
-                Output::Visual {
-                    dimension,
-                    pos,
-                    parts,
-                    ..
-                } if overworld(dimension) => {
-                    let at = (pos[0], pos[1], pos[2]);
-                    if parts.is_empty() {
-                        game.visuals.remove(&at);
-                    } else {
-                        // Scrolls and orientations stay on the parts by index,
-                        // and fluid boxes after them, as in the game.
-                        let mut parts = parts.clone();
-                        if let Some(old) = game.visuals.get(&at) {
-                            let own = old.iter().filter(|o| o.fluid.is_none());
-                            for (p, o) in parts.iter_mut().zip(own) {
-                                p.scroll = o.scroll.clone();
-                                p.orientation = o.orientation;
-                            }
-                            parts.extend(old.iter().filter(|o| o.fluid.is_some()).cloned());
-                        }
-                        game.visuals.insert(at, parts);
-                    }
-                }
-                Output::Living { op, .. } => match op {
-                    crate::LivingOp::Hurt { id, amount, .. } => {
-                        if let Some(l) = game.living.iter_mut().find(|l| l.id == *id) {
-                            l.health -= amount;
-                        }
-                        game.living.retain(|l| l.health > 0.0);
-                    }
-                    crate::LivingOp::Discard { id } => game.living.retain(|l| l.id != *id),
-                },
-                Output::VisualFluids {
-                    dimension,
-                    pos,
-                    boxes,
-                    ..
-                } if overworld(dimension) => {
-                    let at = (pos[0], pos[1], pos[2]);
-                    let mut parts: Vec<_> = game
-                        .visuals
-                        .get(&at)
-                        .into_iter()
-                        .flatten()
-                        .filter(|p| p.fluid.is_none())
-                        .cloned()
-                        .collect();
-                    parts.extend(boxes.iter().cloned());
-                    if parts.is_empty() {
-                        game.visuals.remove(&at);
-                    } else {
-                        game.visuals.insert(at, parts);
-                    }
-                }
-                Output::Forward { dimension, pos, to } if overworld(dimension) => {
-                    let at = (pos[0], pos[1], pos[2]);
-                    match to {
-                        Some(t) => game.forwards.insert(at, *t),
-                        None => game.forwards.remove(&at),
-                    };
-                }
-                Output::VisualOrientation {
-                    dimension,
-                    pos,
-                    orientations,
-                    ..
-                } if overworld(dimension) => {
-                    if let Some(parts) = game.visuals.get_mut(&(pos[0], pos[1], pos[2])) {
-                        for (i, p) in parts.iter_mut().enumerate() {
-                            p.orientation = orientations
-                                .iter()
-                                .rev()
-                                .find(|(at, _)| *at as usize == i)
-                                .map(|(_, q)| *q);
-                        }
-                    }
-                }
-                Output::VisualScroll {
-                    dimension,
-                    pos,
-                    scrolls,
-                    ..
-                } if overworld(dimension) => {
-                    if let Some(parts) = game.visuals.get_mut(&(pos[0], pos[1], pos[2])) {
-                        for (i, p) in parts.iter_mut().enumerate() {
-                            p.scroll = scrolls
-                                .iter()
-                                .find(|(at, _)| *at as usize == i)
-                                .map(|(_, s)| s.clone());
-                        }
-                    }
-                }
-                Output::BlockData {
-                    dimension,
-                    pos,
-                    data: None,
-                    ..
-                } if overworld(dimension) => {
-                    game.visuals.remove(&(pos[0], pos[1], pos[2]));
-                }
-                _ => {}
-            }
-        }
         let taken: Vec<u32> = out
             .iter()
             .filter_map(|o| match o {
@@ -1435,7 +1469,6 @@ impl Step {
                 _ => None,
             })
             .collect();
-        game.items.retain(|i| !taken.contains(&i.id));
         let stopped = out.iter().find_map(|o| match o {
             Output::Stopped { reason, .. } => Some(reason.as_str()),
             _ => None,

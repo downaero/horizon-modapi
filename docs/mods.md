@@ -301,7 +301,7 @@ A step's parts happen in this order:
 | `title-screen = true` | no player and no clock until a step sets them |
 | `blocks = [{ x = 0, y = 63, z = 0, state = "minecraft:stone" }]` | server mods with `world`: those blocks of the Overworld, before the rest of the step (every other block is air, every biome the dimension's plainest: plains, nether wastes, the end) |
 | `player = { x = 3.0, ... }`, `clock = { day-time = 0 }` | changes those fields (`x y z yaw pitch health food dimension`, `game-time day-time`) |
-| `ticks = n`, `frames = n` | that many ticks (the game's tick counter and the clock move on), then frames 1/60 s apart |
+| `ticks = n`, `frames = n` | that many ticks (the game's tick counter and the clock move on; what the mod changed on a tick, blocks, slots, mobs, is in the world for the next, as in the game), then frames 1/60 s apart |
 | `chat = "<Steve> hi"` | a chat line the player receives |
 | `command = "where north"` | the player types `/where north`; a command the mod doesn't own fails the step |
 | `break = { x = 1, y = 63, z = 0, state = "minecraft:stone" }`, `place = { ... }` | server mods: the player breaks or places that block |
