@@ -532,6 +532,32 @@ A pool addition holds `"elements"` as a pool does. This is what lithostitched's
 `add_structure_set_entries` and `add_template_pool_elements` modifiers do on
 NeoForge and Fabric, and `horizon-port-pack carry` writes them from those.
 
+Ores and other features reach biomes as on NeoForge: the mod's configured and
+placed features (`data/<ns>/worldgen/configured_feature/`, `placed_feature/`)
+and a biome modifier in `data/<ns>/neoforge/biome_modifier/` (Forge's
+`data/<ns>/forge/biome_modifier/` too). `neoforge:add_features` puts its
+`features` at the end of decoration step `step` (`underground_ores`, vanilla's
+`GenerationStep.Decoration` names) of each of its `biomes`, once per step;
+`neoforge:remove_features` takes them out of `steps` (one name or a list;
+every step when none is given). Both name biomes and features by id, list or
+`#tag`, the tags as the game holds them with every mod's added (placed feature
+tags in `data/<ns>/tags/worldgen/placed_feature/` merge into the game's like
+biome tags). A biome nobody defines is skipped; a modifier whose step or
+selector the game cannot read (a loader's own `{"type": ...}` set) is left out,
+with the reason in the log. Modifiers apply in mod, then file order, before
+the world loads; other kinds (spawns, carvers) are not read. Features are
+26.3's shape: a configured feature's fields beside its `type` (1.21.1's
+`"config": {...}` is refused) and states as `"minecraft:stone"` or
+`{"id": ..., "properties": {...}}`; `horizon-port-pack carry` rewrites a
+1.21.1 mod's. A feature the generator cannot run (a type vanilla does not
+have, a mod's own `Feature` class, or the old shape) is skipped, named in the
+log with the reason.
+
+```json
+{ "type": "neoforge:add_features", "biomes": "#minecraft:is_overworld",
+  "features": "mymod:ore_zinc", "step": "underground_ores" }
+```
+
 A structure (and any of its pool elements, in place of the structure's) may
 hold `horizon:enhanced_terrain_adaptation`: MoogsStructureLib's terrain
 kernel, which carves or buries terrain around the
@@ -1008,8 +1034,15 @@ own types are its machines', which another mod's or a pack's data adds to as wit
 table crafts once from the first nine slots of the chest below it; `gears:counter` has a crafting
 recipe of its own.
 
+Every recipe file is the game's recipe `<namespace>:<path>`, as the data pack's would be: `/recipe
+give` and `/recipe take` name them (`/recipe give @s gears:counter`, `*` for all), an
+advancement's `rewards.recipes` grants them, crafting one learns it, and the player's book keeps
+them across saves. Vanilla's types are shown in the recipe book; a mod's own types have no book
+display, so `/recipe give` learns them but counts none (`Recipe.display` is empty by default).
+
 `cargo horizon-mod test` answers `of-type` from the package's own recipe files and tests
-ingredients by item id only; it has no vanilla recipes or tags.
+ingredients by item id and by item tags (the package's over vanilla's, when the prepared
+resources are found); it has no vanilla recipes.
 
 ### Capability `entities`
 

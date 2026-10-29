@@ -130,7 +130,8 @@ const ELEMENTS: [(&str, &str); 3] = [
 pub struct Upgrade {
     /// Files rewritten to vanilla types.
     pub mapped: usize,
-    /// Files whose block and fluid states were written in 26.3's shape.
+    /// Files whose block and fluid states, or configured features, were
+    /// written in 26.3's shape.
     pub block_states: usize,
     /// Types left as they are (Horizon skips what it cannot run), by type.
     pub unsupported: BTreeMap<String, usize>,
@@ -167,7 +168,8 @@ pub fn upgrade(
     report: &mut Upgrade,
     set_tags: &BTreeMap<String, Vec<String>>,
 ) -> bool {
-    let states = block_states(v);
+    let features = matches!(kind, "configured_feature" | "placed_feature") && feature_configs(v);
+    let states = block_states(v) | features;
     report.block_states += usize::from(states);
     let renamed = crate::carry::renamed_ids(v);
     let dropped = crate::processors::each_list(kind, v, &mut |list| {
@@ -240,6 +242,33 @@ fn block_states(v: &mut Value) -> bool {
         Value::Array(a) => a
             .iter_mut()
             .fold(false, |changed, x| block_states(x) | changed),
+        _ => false,
+    }
+}
+
+/// 1.21.1 writes a configured feature as `{"type": ..., "config": {...}}`;
+/// 26.3's codec reads the config's fields beside `type` and refuses the
+/// old shape, which leaves the feature out of every biome that places it.
+/// Inline features (a placed feature's, a random patch's) too. Whether
+/// anything changed.
+fn feature_configs(v: &mut Value) -> bool {
+    match v {
+        Value::Object(o) => {
+            let mut changed = false;
+            if o.len() == 2
+                && o.get("type").is_some_and(Value::is_string)
+                && o.get("config").is_some_and(Value::is_object)
+                && let Some(Value::Object(config)) = o.remove("config")
+            {
+                o.extend(config);
+                changed = true;
+            }
+            o.values_mut()
+                .fold(changed, |changed, x| feature_configs(x) | changed)
+        }
+        Value::Array(a) => a
+            .iter_mut()
+            .fold(false, |changed, x| feature_configs(x) | changed),
         _ => false,
     }
 }
@@ -1250,7 +1279,28 @@ mod tests {
             &mut report,
             &NO_TAGS
         ));
-        assert_eq!(spring["config"]["state"], json!({"id": "minecraft:water"}));
+        assert_eq!(
+            spring,
+            json!({"type": "minecraft:spring_feature", "state": {"id": "minecraft:water"},
+                "valid_blocks": ["minecraft:stone"]})
+        );
+        // A placed feature's inline feature, and one inside its config.
+        let mut placed = json!({"feature": {"type": "minecraft:random_patch", "config": {
+            "tries": 4, "feature": {"feature": {"type": "minecraft:simple_block", "config": {
+            "to_place": {"type": "minecraft:simple_state_provider",
+            "state": {"Name": "minecraft:dandelion"}}}}, "placement": []}}}, "placement": []});
+        assert!(upgrade(
+            "placed_feature",
+            &mut placed,
+            &mut report,
+            &NO_TAGS
+        ));
+        assert_eq!(
+            placed["feature"]["feature"]["feature"],
+            json!({"type": "minecraft:simple_block", "to_place": {
+                "type": "minecraft:simple_state_provider", "state": {"id": "minecraft:dandelion"}}})
+        );
+        assert_eq!(placed["feature"]["tries"], 4);
         // An object with other keys is not a state; a 26.3 state is left as it is.
         let mut other = json!({"Name": "x", "weight": 1, "state": {"id": "minecraft:stone"}});
         assert!(!upgrade(
@@ -1259,7 +1309,7 @@ mod tests {
             &mut report,
             &NO_TAGS
         ));
-        assert_eq!(report.block_states, 2);
+        assert_eq!(report.block_states, 3);
         assert_eq!(report.mapped, 0);
     }
 

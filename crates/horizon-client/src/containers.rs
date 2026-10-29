@@ -36,11 +36,7 @@ impl FurnaceKind {
 /// keeping both forms would write a key twice, and vanilla refuses such a furnace
 /// ("Duplicate entry for key").
 pub fn recipe_used_key(id: &str) -> String {
-    if id.contains(':') {
-        id.to_owned()
-    } else {
-        format!("minecraft:{id}")
-    }
+    crate::crafting::recipe_id(id)
 }
 /// A hopper's slots: the only plain container with five.
 pub const HOPPER_SLOTS: usize = 5;

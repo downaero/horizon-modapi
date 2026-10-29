@@ -114,6 +114,10 @@ impl VanillaTerrain {
                 .unwrap_or(0),
         }
     }
+    /// The placed features the generator cannot run, with why.
+    pub fn unsupported_features(&self) -> Vec<(String, String)> {
+        self.generator.unsupported_features()
+    }
     pub fn new(
         dir: &Path,
         registry: &'static BlockRegistry,
@@ -156,6 +160,9 @@ impl VanillaTerrain {
                 "Horizon: {} placed features cannot run and will be skipped",
                 unsupported.len()
             );
+            for (name, why) in &unsupported {
+                log::warn!("Horizon: placed feature {name}: {why}");
+            }
             if !dir.join("blocks/block-properties.nbt").exists() {
                 log::warn!(
                     "Horizon: the worldgen bundle lacks the block behavior exports (worldgen/blocks/*.nbt); \

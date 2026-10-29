@@ -1126,6 +1126,16 @@ fn bounds(v: Option<&Value>, default: (i64, i64), open: (i64, i64)) -> (i64, i64
 }
 /// `Util.isSymmetrical` is not needed: both orientations are tried.
 /// `ShapedRecipePattern.shrink`: the pattern without empty border rows and columns.
+/// A recipe's full id from its name here: vanilla's go by their file name,
+/// a content mod's by `<ns>:<path>` already.
+pub fn recipe_id(name: &str) -> String {
+    if name.contains(':') {
+        name.to_owned()
+    } else {
+        format!("minecraft:{name}")
+    }
+}
+
 fn shrink(pattern: &[Vec<char>]) -> Vec<Vec<char>> {
     let rows: Vec<&Vec<char>> = pattern
         .iter()

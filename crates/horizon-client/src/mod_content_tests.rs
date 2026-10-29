@@ -1137,3 +1137,155 @@ fn a_replacing_mod_tag_reaches_the_root() {
     );
     let _ = fs::remove_dir_all(&scratch);
 }
+
+/// A biome modifier reads ids, lists and tags, through the tags a tag
+/// names, and adds a feature to a step once, past the steps a biome lists.
+#[test]
+fn biome_modifiers_add_and_remove_features() {
+    let tags = |registry: &str, id: &str| -> Option<Vec<String>> {
+        match (registry, id) {
+            ("biome", "c:is_hot") => Some(vec!["minecraft:desert".into(), "#c:is_hotter".into()]),
+            ("biome", "c:is_hotter") => Some(vec!["minecraft:badlands".into()]),
+            _ => None,
+        }
+    };
+    let add = BiomeModifier::read(
+        r##"{"type": "neoforge:add_features", "biomes": "#c:is_hot",
+            "features": ["ruby:ore_ruby", "ruby:ore_ruby_buried"], "step": "underground_ores"}"##,
+        &tags,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        add,
+        BiomeModifier::Add {
+            biomes: vec!["minecraft:desert".into(), "minecraft:badlands".into()],
+            features: vec!["ruby:ore_ruby".into(), "ruby:ore_ruby_buried".into()],
+            step: 6,
+        }
+    );
+    let remove = BiomeModifier::read(
+        r#"{"type": "forge:remove_features", "biomes": "minecraft:desert",
+            "features": "minecraft:ore_gold"}"#,
+        &tags,
+    )
+    .unwrap()
+    .unwrap();
+    let spawns = r#"{"type": "neoforge:add_spawns", "biomes": "minecraft:desert", "spawners": []}"#;
+    assert_eq!(BiomeModifier::read(spawns, &tags).unwrap(), None);
+    let misspelt = r#"{"type": "neoforge:add_features", "biomes": "minecraft:desert",
+        "features": "ruby:ore_ruby", "step": "ores"}"#;
+    assert!(BiomeModifier::read(misspelt, &tags).is_err());
+
+    let biomes = |desert: &str| -> J {
+        let mut doc = J::Obj(Vec::new());
+        doc.set("minecraft:desert", J::Str(desert.into()));
+        doc
+    };
+    let mut doc = biomes(
+        r#"{"features": [[], ["minecraft:lake_lava"], [], [], [], [], ["minecraft:ore_gold"]]}"#,
+    );
+    add.apply(&mut doc).unwrap();
+    add.apply(&mut doc).unwrap();
+    remove.apply(&mut doc).unwrap();
+    let J::Str(desert) = doc.get("minecraft:desert").unwrap() else {
+        panic!()
+    };
+    let desert: serde_json::Value = serde_json::from_str(desert).unwrap();
+    assert_eq!(
+        desert["features"],
+        serde_json::json!([
+            [],
+            ["minecraft:lake_lava"],
+            [],
+            [],
+            [],
+            [],
+            ["ruby:ore_ruby", "ruby:ore_ruby_buried"]
+        ])
+    );
+    assert!(doc.get("minecraft:badlands").is_none());
+    let mut short = biomes(r#"{"features": [[]]}"#);
+    add.apply(&mut short).unwrap();
+    let J::Str(desert) = short.get("minecraft:desert").unwrap() else {
+        panic!()
+    };
+    let desert: serde_json::Value = serde_json::from_str(desert).unwrap();
+    assert_eq!(desert["features"].as_array().unwrap().len(), 7);
+}
+
+/// An ore mod's biome modifier reaches the worldgen loader's biomes: its
+/// feature ends the ore step of each Overworld biome and of no Nether one,
+/// its placed feature tag joins the bundle, and the terrain loads.
+#[test]
+#[ignore = "full content root: CI and pr_ready run it"]
+fn content_root_carries_an_ore_mod() {
+    let Some(base) = prepared() else {
+        return;
+    };
+    let scratch = std::env::temp_dir().join(format!("horizon-mod-ore-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let m = folder_mod(
+        &scratch.join("orey"),
+        &[
+            ("horizon-mod.toml", &manifest("orey", "")),
+            (
+                "data/orey/worldgen/configured_feature/ore_gem.json",
+                r#"{"type": "minecraft:ore", "discard_chance_on_air_exposure": 0.0, "size": 9,
+                    "targets": [{"target": {"predicate_type": "minecraft:tag_match",
+                    "tag": "minecraft:stone_ore_replaceables"}, "state": "minecraft:emerald_ore"}]}"#,
+            ),
+            (
+                "data/orey/worldgen/placed_feature/ore_gem.json",
+                r#"{"feature": "orey:ore_gem", "placement": [{"type": "minecraft:count", "count": 8},
+                    {"type": "minecraft:in_square"}, {"type": "minecraft:height_range", "height":
+                    {"type": "minecraft:uniform", "min_inclusive": {"absolute": 0},
+                    "max_inclusive": {"absolute": 64}}}, {"type": "minecraft:biome"}]}"#,
+            ),
+            (
+                "data/orey/tags/worldgen/placed_feature/gems.json",
+                r#"{"values": ["orey:ore_gem"]}"#,
+            ),
+            (
+                "data/orey/neoforge/biome_modifier/ore_gem.json",
+                r##"{"type": "neoforge:add_features", "biomes": "#minecraft:is_overworld",
+                    "features": "#orey:gems", "step": "underground_ores"}"##,
+            ),
+        ],
+    );
+    let root = resource_root(&base, &[m], &scratch.join("cache")).unwrap();
+    let biomes: BTreeMap<String, String> =
+        serde_json::from_slice(&fs::read(root.join("worldgen/biomes.json")).unwrap()).unwrap();
+    let ores = |id: &str| -> Vec<String> {
+        let v: serde_json::Value = serde_json::from_str(&biomes[id]).unwrap();
+        serde_json::from_value(v["features"][6].clone()).unwrap()
+    };
+    for id in [
+        "minecraft:plains",
+        "minecraft:desert",
+        "minecraft:deep_dark",
+    ] {
+        assert_eq!(
+            ores(id).last().map(String::as_str),
+            Some("orey:ore_gem"),
+            "{id}"
+        );
+    }
+    assert!(!ores("minecraft:nether_wastes").contains(&"orey:ore_gem".to_owned()));
+    let tags: BTreeMap<String, String> =
+        serde_json::from_slice(&fs::read(root.join("worldgen/feature_tags.json")).unwrap())
+            .unwrap();
+    assert!(tags.contains_key("orey:gems"));
+
+    let assets = Assets::load(&root).unwrap();
+    let biomes = crate::biome::Biomes::load(&root).unwrap();
+    let terrain = crate::vanillagen::VanillaTerrain::new(
+        &root.join("worldgen"),
+        assets.registry,
+        &biomes,
+        1234,
+    )
+    .unwrap();
+    assert_eq!(terrain.unsupported_features(), []);
+    let _ = fs::remove_dir_all(&scratch);
+}

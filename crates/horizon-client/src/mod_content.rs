@@ -1035,6 +1035,32 @@ pub const MAX_STATES: u32 = 1 << 20;
 const TAG_BUNDLES: [&str; 2] = ["block-tags.json", "worldgen/block_tags.json"];
 /// The worldgen loader's bundle of biome tags.
 const BIOME_TAGS: &str = "worldgen/biome_tags.json";
+/// The worldgen loader's bundles of tags besides block tags, and the
+/// folder of a pack's tag files each holds.
+const WORLDGEN_TAGS: [(&str, &str); 2] = [
+    (BIOME_TAGS, "/tags/worldgen/biome/"),
+    (
+        "worldgen/feature_tags.json",
+        "/tags/worldgen/placed_feature/",
+    ),
+];
+/// The worldgen loader's biomes (id → the file's text).
+const BIOMES: &str = "worldgen/biomes.json";
+/// Vanilla's decoration steps (`GenerationStep.Decoration`), in the order a
+/// biome's `features` lists them.
+const DECORATION_STEPS: [&str; 11] = [
+    "raw_generation",
+    "lakes",
+    "local_modifications",
+    "underground_structures",
+    "surface_structures",
+    "strongholds",
+    "underground_ores",
+    "underground_decoration",
+    "fluid_springs",
+    "vegetal_decoration",
+    "top_layer_modification",
+];
 /// Worldgen registries a content mod may add to, and the bundle the
 /// worldgen loader reads each from (id → the file's text): what structure
 /// mods hold. Biomes, noise and density functions change the terrain and
@@ -1126,6 +1152,169 @@ impl Addition {
         }
         Ok(())
     }
+}
+
+/// A biome modifier file of a pack (`data/<ns>/neoforge/biome_modifier/`,
+/// Forge's `data/<ns>/forge/biome_modifier/`): placed features added to or
+/// removed from biomes' decoration steps, how NeoForge mods put their ores
+/// in the world.
+#[derive(Debug, PartialEq)]
+enum BiomeModifier {
+    /// `neoforge:add_features`: `features` at the end of `step`.
+    Add {
+        biomes: Vec<String>,
+        features: Vec<String>,
+        step: usize,
+    },
+    /// `neoforge:remove_features`: `features` out of `steps` (every step
+    /// when the file names none).
+    Remove {
+        biomes: Vec<String>,
+        features: Vec<String>,
+        steps: Vec<usize>,
+    },
+}
+
+/// Whether `file` is a biome modifier file.
+fn is_biome_modifier(file: &str) -> bool {
+    file.strip_prefix("data/")
+        .and_then(|r| r.split_once('/'))
+        .is_some_and(|(_, rest)| {
+            rest.starts_with("neoforge/biome_modifier/")
+                || rest.starts_with("forge/biome_modifier/")
+        })
+        && file.ends_with(".json")
+}
+
+impl BiomeModifier {
+    /// A modifier file, none for a kind that is not about features (spawns,
+    /// carvers, `neoforge:none`), whose `#` tags are read from `tags` (a
+    /// bundle, by registry: biome tags, placed feature tags).
+    fn read(text: &str, tags: &dyn Fn(&str, &str) -> Option<Vec<String>>) -> Result<Option<Self>> {
+        let doc: J = serde_json::from_str(text)?;
+        let kind = match doc.get("type") {
+            Some(J::Str(t)) => t.split_once(':').map_or(t.as_str(), |(_, k)| k),
+            _ => return Err("no type".into()),
+        };
+        if kind != "add_features" && kind != "remove_features" {
+            return Ok(None);
+        }
+        let set = |key: &str, registry: &str| -> Result<Vec<String>> {
+            let mut out = Vec::new();
+            let values = match doc.get(key) {
+                Some(J::Arr(a)) => a.iter().collect(),
+                Some(v) => vec![v],
+                None => return Err(format!("no {key}").into()),
+            };
+            for v in values {
+                let J::Str(s) = v else {
+                    return Err(format!("{key}: not an id, a tag or a list of ids").into());
+                };
+                match s.strip_prefix('#') {
+                    Some(tag) => out.extend(expand_tag(tags, registry, tag, 0)),
+                    None => out.push(s.clone()),
+                }
+            }
+            Ok(out)
+        };
+        let step = |name: &J| -> Result<usize> {
+            match name {
+                J::Str(s) => DECORATION_STEPS
+                    .iter()
+                    .position(|d| d == s)
+                    .ok_or_else(|| format!("step {s}: none of vanilla's").into()),
+                _ => Err("step: not a name".into()),
+            }
+        };
+        let biomes = set("biomes", "biome")?;
+        let features = set("features", "placed_feature")?;
+        Ok(Some(if kind == "add_features" {
+            Self::Add {
+                biomes,
+                features,
+                step: step(doc.get("step").ok_or("no step")?)?,
+            }
+        } else {
+            Self::Remove {
+                biomes,
+                features,
+                steps: match doc.get("steps") {
+                    None => (0..DECORATION_STEPS.len()).collect(),
+                    Some(J::Arr(a)) => a.iter().map(step).collect::<Result<_>>()?,
+                    Some(s) => vec![step(s)?],
+                },
+            }
+        }))
+    }
+
+    /// Changes the biomes of `doc` (the biomes bundle) it names; a biome
+    /// nobody defines is skipped, as a tag entry naming an unknown id is.
+    fn apply(&self, doc: &mut J) -> Result<()> {
+        let biomes = match self {
+            Self::Add { biomes, .. } | Self::Remove { biomes, .. } => biomes,
+        };
+        for biome in biomes {
+            let Some(J::Str(text)) = doc.get(biome) else {
+                continue;
+            };
+            let mut v: J = serde_json::from_str(text).map_err(|e| format!("{biome}: {e}"))?;
+            if v.get("features").is_none() {
+                v.set("features", J::Arr(Vec::new()));
+            }
+            let Some(J::Arr(steps)) = v.get_mut("features") else {
+                continue;
+            };
+            match self {
+                Self::Add { features, step, .. } => {
+                    if steps.len() <= *step {
+                        steps.resize(*step + 1, J::Arr(Vec::new()));
+                    }
+                    if let J::Arr(list) = &mut steps[*step] {
+                        for f in features {
+                            // Once in a step: vanilla's feature order refuses
+                            // a feature twice.
+                            if !list.contains(&J::Str(f.clone())) {
+                                list.push(J::Str(f.clone()));
+                            }
+                        }
+                    }
+                }
+                Self::Remove {
+                    features,
+                    steps: which,
+                    ..
+                } => {
+                    for i in which {
+                        if let Some(J::Arr(list)) = steps.get_mut(*i) {
+                            list.retain(|f| !matches!(f, J::Str(s) if features.contains(s)));
+                        }
+                    }
+                }
+            }
+            doc.set(biome, J::Str(serde_json::to_string(&v)?));
+        }
+        Ok(())
+    }
+}
+
+/// The ids in tag `id` of `registry`, through the tags it names, 16 deep.
+fn expand_tag(
+    tags: &dyn Fn(&str, &str) -> Option<Vec<String>>,
+    registry: &str,
+    id: &str,
+    depth: u32,
+) -> Vec<String> {
+    if depth >= 16 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for v in tags(registry, id).unwrap_or_default() {
+        match v.strip_prefix('#') {
+            Some(inner) => out.extend(expand_tag(tags, registry, inner, depth + 1)),
+            None => out.push(v),
+        }
+    }
+    out
 }
 
 /// The overlay being written: `out` mirrors `base` through links, and a
@@ -1440,6 +1629,7 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
     let mut warnings = Vec::new();
     let mut worldgen: BTreeMap<&str, Vec<(String, String)>> = BTreeMap::new();
     let mut additions: BTreeMap<&str, Vec<Addition>> = BTreeMap::new();
+    let mut modifiers: Vec<(&str, &str, String)> = Vec::new();
     for m in mods {
         let declarations = format!("data/{}/horizon/", m.id);
         let mut reader = m.content.reader()?;
@@ -1458,7 +1648,10 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
                 warnings.extend(merge.add(&m.id, file, replace, shared, values));
             } else if !file.starts_with(&declarations) {
                 overlay.write(file, &bytes)?;
-                if let Some((bundle, id)) = worldgen_entry(file) {
+                if is_biome_modifier(file) {
+                    let text = String::from_utf8(bytes).map_err(|e| format!("{file}: {e}"))?;
+                    modifiers.push((&m.id, file, text));
+                } else if let Some((bundle, id)) = worldgen_entry(file) {
                     let text = String::from_utf8(bytes).map_err(|e| format!("{file}: {e}"))?;
                     let entries = worldgen.entry(bundle).or_default();
                     match Addition::read(bundle, &text).map_err(|e| format!("{file}: {e}"))? {
@@ -1519,27 +1712,61 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
     for (name, doc) in &bundles {
         overlay.write(name, &serde_json::to_vec(doc)?)?;
     }
-    // Biome tags, merged into the worldgen loader's bundle as block tags are.
-    let biome_tags: Vec<(String, &TagMerge)> = tags
-        .iter()
-        .filter_map(|(file, merge)| {
-            let (ns, path) = file
-                .strip_prefix("data/")?
-                .split_once("/tags/worldgen/biome/")?;
-            Some((format!("{ns}:{}", path.strip_suffix(".json")?), merge))
-        })
-        .collect();
-    if !biome_tags.is_empty() && base.join(BIOME_TAGS).exists() {
-        let mut doc = read_json(&base.join(BIOME_TAGS))?;
-        for (id, merge) in biome_tags {
-            let text = match doc.get(&id) {
-                Some(J::Str(t)) if !merge.replaced => Some(t.clone()),
-                _ => None,
-            };
-            let merged = merge_tag(text.as_deref(), &merge.values, BIOME_TAGS)?;
-            doc.set(&id, J::Str(merged));
+    // Biome and placed feature tags, merged into the worldgen loader's
+    // bundles as block tags are.
+    let mut worldgen_tags: BTreeMap<&str, J> = BTreeMap::new();
+    for (bundle, folder) in WORLDGEN_TAGS {
+        if !base.join(bundle).exists() {
+            continue;
         }
-        overlay.write(BIOME_TAGS, &serde_json::to_vec(&doc)?)?;
+        let mut doc = read_json(&base.join(bundle))?;
+        let ours: Vec<(String, &TagMerge)> = tags
+            .iter()
+            .filter_map(|(file, merge)| {
+                let (ns, path) = file.strip_prefix("data/")?.split_once(folder)?;
+                Some((format!("{ns}:{}", path.strip_suffix(".json")?), merge))
+            })
+            .collect();
+        if !ours.is_empty() {
+            for (id, merge) in ours {
+                let text = match doc.get(&id) {
+                    Some(J::Str(t)) if !merge.replaced => Some(t.clone()),
+                    _ => None,
+                };
+                let merged = merge_tag(text.as_deref(), &merge.values, bundle)?;
+                doc.set(&id, J::Str(merged));
+            }
+            overlay.write(bundle, &serde_json::to_vec(&doc)?)?;
+        }
+        worldgen_tags.insert(bundle, doc);
+    }
+    // Biome modifiers, in mod and file order, on the biomes' feature steps.
+    if !modifiers.is_empty() && base.join(BIOMES).exists() {
+        let tag = |registry: &str, id: &str| -> Option<Vec<String>> {
+            let (bundle, _) = WORLDGEN_TAGS[usize::from(registry != "biome")];
+            let Some(J::Str(text)) = worldgen_tags.get(bundle)?.get(id) else {
+                return None;
+            };
+            let file: serde_json::Value = serde_json::from_str(text).ok()?;
+            let values = file["values"]
+                .as_array()?
+                .iter()
+                .filter_map(|v| v.as_str().or_else(|| v["id"].as_str()).map(str::to_owned));
+            Some(values.collect())
+        };
+        let mut doc = read_json(&base.join(BIOMES))?;
+        for (id, file, text) in &modifiers {
+            match BiomeModifier::read(text, &tag) {
+                Ok(Some(modifier)) => modifier
+                    .apply(&mut doc)
+                    .map_err(|e| format!("{id}: {file}: {e}"))?,
+                Ok(None) => {}
+                // A loader's own selector or a misspelt step leaves the
+                // biomes as they are, as a bad tag entry does.
+                Err(e) => warnings.push(format!("mod {id}: {file}: {e}, left out")),
+            }
+        }
+        overlay.write(BIOMES, &serde_json::to_vec(&doc)?)?;
     }
     // Structures and the pools, sets, processors and features they use, then
     // what mods add to sets and pools, in mod and file order.

@@ -323,7 +323,7 @@ impl Book {
                 Recipe::Special(special) => {
                     for shown in special.book_displays() {
                         entries.push(Entry {
-                            id: format!("minecraft:{name}"),
+                            id: crate::crafting::recipe_id(name),
                             display_id: -1,
                             category: crafting_category(&category),
                             group: group(&grp),
@@ -337,7 +337,7 @@ impl Book {
                 }
             };
             entries.push(Entry {
-                id: format!("minecraft:{name}"),
+                id: crate::crafting::recipe_id(name),
                 display_id: -1,
                 category: crafting_category(&category),
                 group: group(&grp),
@@ -358,7 +358,7 @@ impl Book {
                 _ => continue,
             };
             entries.push(Entry {
-                id: format!("minecraft:{}", c.id),
+                id: crate::crafting::recipe_id(&c.id),
                 display_id: -1,
                 category,
                 group: group(&c.group),
@@ -658,27 +658,52 @@ fn crafting_station(kind: &str) -> &'static str {
     }
 }
 impl RecipeIndex {
-    /// Reads `data/minecraft/recipe/*.json` under `root`.
+    /// Reads `data/minecraft/recipe/*.json` under `root`, then a content
+    /// mod's `data/<ns>/recipe/**.json`.
     pub fn load(root: &std::path::Path) -> Self {
         let mut recipes = std::collections::BTreeMap::new();
+        let mut files: Vec<(String, std::path::PathBuf)> = Vec::new();
         let dir = root.join("data/minecraft/recipe");
         for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
             let path = entry.path();
-            if path.extension().is_none_or(|e| e != "json") {
-                continue;
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                && path.extension().is_some_and(|e| e == "json")
+            {
+                files.push((format!("minecraft:{stem}"), path.clone()));
             }
-            let (Some(stem), Some(v)) = (
-                path.file_stem().and_then(|s| s.to_str()),
-                std::fs::read(&path)
-                    .ok()
-                    .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()),
-            ) else {
+        }
+        for namespace in crate::mod_content::namespaces(root) {
+            let dir = root.join(format!("data/{namespace}/recipe"));
+            let mut stack = vec![dir.clone()];
+            while let Some(d) = stack.pop() {
+                for entry in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        stack.push(path);
+                    } else if let Some(rel) = path
+                        .strip_prefix(&dir)
+                        .ok()
+                        .and_then(|r| r.to_str())
+                        .and_then(|r| r.strip_suffix(".json"))
+                    {
+                        let rel = rel.replace('\\', "/");
+                        files.push((format!("{namespace}:{rel}"), path.clone()));
+                    }
+                }
+            }
+        }
+        for (id, path) in files {
+            let Some(v) = std::fs::read(&path)
+                .ok()
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            else {
                 continue;
             };
             let kind = v["type"].as_str().unwrap_or_default();
             let special = kind.starts_with("minecraft:crafting_special_")
                 || kind == "minecraft:crafting_decorated_pot";
-            let displays = if special {
+            // A mod's own machines' recipes show none, as `Recipe.display` by default.
+            let displays = if special || !kind.starts_with("minecraft:") {
                 0
             } else if kind == "minecraft:crafting_transmute" {
                 // TransmuteRecipe.display: one per material count.
@@ -694,7 +719,7 @@ impl RecipeIndex {
                 1
             };
             recipes.insert(
-                format!("minecraft:{stem}"),
+                id,
                 Known {
                     special,
                     displays,
@@ -705,11 +730,20 @@ impl RecipeIndex {
                 },
             );
         }
-        // RecipeManager keeps its recipes sorted by id and numbers the displays in that order.
+        // RecipeManager keeps its recipes sorted by id (`Identifier.compareTo`:
+        // the path, then the namespace) and numbers the displays in that order.
+        let mut order: Vec<&String> = recipes.keys().collect();
+        order.sort_by_key(|id| {
+            let (ns, path) = id.split_once(':').unwrap_or_default();
+            (path, ns)
+        });
+        let order: Vec<String> = order.into_iter().cloned().collect();
         let mut next = 0;
-        for r in recipes.values_mut() {
-            r.first_display = next;
-            next += r.displays as i32;
+        for id in order {
+            if let Some(r) = recipes.get_mut(&id) {
+                r.first_display = next;
+                next += r.displays as i32;
+            }
         }
         Self { recipes }
     }
@@ -928,6 +962,57 @@ mod tests {
             toast("minecraft:coast_trim"),
             (Some("minecraft:smithing_table"), None)
         );
+    }
+    /// A content mod's recipes join the index by `<ns>:<path>`, in folders
+    /// too; its machines' own types have no display, and displays are
+    /// numbered by path, then namespace.
+    #[test]
+    fn the_index_knows_a_content_mods_recipes() {
+        let root = std::env::temp_dir().join(format!("horizon-mod-index-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let shaped = r#"{"type":"minecraft:crafting_shaped","result":{"id":"minecraft:stick"}}"#;
+        for (file, json) in [
+            ("data/minecraft/recipe/stick.json", shaped),
+            ("data/minecraft/recipe/torch.json", shaped),
+            ("data/ruby/recipe/stick.json", shaped),
+            ("data/ruby/recipe/blocks/gear.json", shaped),
+            (
+                "data/ruby/recipe/pressing/plate.json",
+                r#"{"type":"ruby:pressing","results":[{"id":"minecraft:stick"}]}"#,
+            ),
+            // A namespace no content mod owns is not read.
+            ("data/other/recipe/stick.json", shaped),
+            ("horizon-mod-content.json", r#"["ruby"]"#),
+        ] {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, json).unwrap();
+        }
+        let index = RecipeIndex::load(&root);
+        std::fs::remove_dir_all(&root).unwrap();
+        let ids: Vec<&str> = index.ids().map(String::as_str).collect();
+        assert_eq!(
+            ids,
+            [
+                "minecraft:stick",
+                "minecraft:torch",
+                "ruby:blocks/gear",
+                "ruby:pressing/plate",
+                "ruby:stick"
+            ]
+        );
+        assert_eq!(index.displays("ruby:pressing/plate"), 0);
+        let first = |id: &str| index.first_display(id);
+        assert_eq!(
+            [
+                first("ruby:blocks/gear"),
+                first("minecraft:stick"),
+                first("ruby:stick"),
+                first("minecraft:torch")
+            ],
+            [Some(0), Some(1), Some(2), Some(3)]
+        );
+        assert_eq!(first("ruby:pressing/plate"), None);
     }
     #[test]
     fn small_recipes_are_centred_in_the_grid() {

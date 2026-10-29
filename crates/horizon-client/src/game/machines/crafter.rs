@@ -181,7 +181,7 @@ impl Game<'_> {
             (0..3).all(|i| (e[i] - c[i]).abs() <= 8.5 + 1.0)
         });
         if near {
-            let id = format!("minecraft:{recipe}");
+            let id = horizon_client::crafting::recipe_id(recipe);
             let me = self.player_entity();
             self.trigger("minecraft:crafter_recipe_crafted", move |c, w| {
                 let ctx = adv::Entities {
