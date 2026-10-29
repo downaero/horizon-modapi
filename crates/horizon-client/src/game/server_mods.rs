@@ -3257,7 +3257,7 @@ mod run {
         /// mods.
         fn mod_item_used_on(
             &mut self,
-            mut host: Option<&mut LanHost>,
+            host: Option<&mut LanHost>,
             id: &str,
             item: &str,
             sneaking: bool,
@@ -3276,7 +3276,7 @@ mod run {
                 .mods
                 .item_used_on_entity(&me, item, sneaking, target);
             self.return_world();
-            self.route_mod_output(host.as_deref_mut());
+            self.route_mod_output(host);
             self.apply_mod_block_writes();
             used
         }
