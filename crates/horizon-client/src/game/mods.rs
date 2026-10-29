@@ -657,6 +657,7 @@ impl Game<'_> {
             player,
             clock,
             game_time: self.world.game_time.max(0) as u64,
+            day_time: self.world.day_time.max(0) as u64,
             inventories: Default::default(),
             rotations: Default::default(),
             typed_entities: std::sync::Arc::new(self.mods.typed.clone()),

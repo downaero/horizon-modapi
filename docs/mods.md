@@ -653,6 +653,11 @@ it holds a fluid, and its `push-reaction` (`normal`, `destroy`, `block`, `ignore
 drill timing its breaking, a contraption leaving what it cannot move. `world.game-time()` is the
 world's game time as of the tick, what `visuals.set-in-phase` turns parts by, so a mod phases a
 part to an angle it keeps. The gears example's drill takes a second for each point of hardness.
+`world.day-time(dimension)` (API level 50) is the day time as `Level.getDayTime` reads it, the
+ticks the clock has run (`% 24000` is the time of day), the Overworld's in every dimension as
+vanilla's levels share it; `world.natural(dimension)` is `dimensionType().natural()`, true for the
+Overworld only. The SDK's `Level` has `get_game_time`, `get_day_time` and `dimension_type().natural()`:
+a clockwork bearing pointing at the time of day, spinning where the dimension is not natural.
 `world.block-tags(state)` (API level 45) is every block tag its block is in, without `#` and in id
 order, the mods' additions included; the SDK's `BlockState::is_tag("minecraft:logs")` asks it as
 NeoForge's `state.is(BlockTags.LOGS)` does. The drill cuts leaves as shears do.

@@ -776,6 +776,17 @@ interface %world {
     /// included, in id order; empty for one that names no state. As
     /// `BlockState.is(tag)` asks: a saw cutting logs and leaves.
     block-tags: func(state: string) -> list<string>;
+    /// A dimension's day time as of this tick, as `Level.getDayTime` reads
+    /// it: the ticks its clock has run, which `/time set` and `/time add`
+    /// move; `% 24000` is the time of day (0 sunrise, 6000 noon, 18000
+    /// midnight). Every dimension reads the Overworld's clock, as vanilla's
+    /// levels share their day time: a clockwork bearing's hands, a machine
+    /// that works by day.
+    day-time: func(dimension: string) -> u64;
+    /// Whether a dimension is natural, as `dimensionType().natural()`: the
+    /// Overworld is, the Nether and the End are not (a clock spins there,
+    /// a bed explodes).
+    natural: func(dimension: string) -> bool;
 }
 
 /// What the server calls in a server mod (manifest `api = "0.3"`,

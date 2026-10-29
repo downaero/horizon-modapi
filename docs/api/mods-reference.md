@@ -918,6 +918,8 @@ What a block state is made of, as vanilla's block properties say.
 | `block-info` | `func(state: string) -> option<state-info>` | The properties of a block state (`minecraft:stone`, a mod's own), none for one that names no state: a drill timing its breaking by its hardness, a contraption leaving what it cannot move. |
 | `game-time` | `func() -> u64` | The world's game time, the ticks since it was made, as of this tick: what `visuals.set-in-phase` turns parts by. |
 | `block-tags` | `func(state: string) -> list<string>` | The block tags a block state's block is in, without `#` (`minecraft:logs`, `minecraft:mineable/axe`), every mod's additions included, in id order; empty for one that names no state. As `BlockState.is(tag)` asks: a saw cutting logs and leaves. |
+| `day-time` | `func(dimension: string) -> u64` | A dimension's day time as of this tick, as `Level.getDayTime` reads it: the ticks its clock has run, which `/time set` and `/time add` move; `% 24000` is the time of day (0 sunrise, 6000 noon, 18000 midnight). Every dimension reads the Overworld's clock, as vanilla's levels share their day time: a clockwork bearing's hands, a machine that works by day. |
+| `natural` | `func(dimension: string) -> bool` | Whether a dimension is natural, as `dimensionType().natural()`: the Overworld is, the Nether and the End are not (a clock spins there, a bed explodes). |
 
 ## `server-events`
 

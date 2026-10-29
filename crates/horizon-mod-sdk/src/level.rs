@@ -269,6 +269,19 @@ impl fmt::Display for BlockState {
     }
 }
 
+/// What a dimension is, as NeoForge's `DimensionType`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DimensionType {
+    natural: bool,
+}
+
+impl DimensionType {
+    /// The Overworld is natural; the Nether and the End are not.
+    pub fn natural(&self) -> bool {
+        self.natural
+    }
+}
+
 /// One dimension (`minecraft:overworld`, ...) of the server's world.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Level {
@@ -283,6 +296,22 @@ impl Level {
     }
     pub fn dimension(&self) -> &str {
         &self.dimension
+    }
+    /// The world's game time as of this tick (capability `world`).
+    pub fn get_game_time(&self) -> u64 {
+        world::game_time()
+    }
+    /// The day time as of this tick, `% 24000` the time of day (capability
+    /// `world`).
+    pub fn get_day_time(&self) -> u64 {
+        world::day_time(&self.dimension)
+    }
+    /// The dimension's type, as far as the game tells it (capability
+    /// `world`).
+    pub fn dimension_type(&self) -> DimensionType {
+        DimensionType {
+            natural: world::natural(&self.dimension),
+        }
     }
     /// Whether the server has the chunk at `pos` loaded (capability `world`).
     pub fn is_loaded(&self, pos: BlockPos) -> bool {

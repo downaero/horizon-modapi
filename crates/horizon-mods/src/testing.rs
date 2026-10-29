@@ -514,6 +514,7 @@ impl TestGame {
             player: self.player.clone(),
             clock: self.clock,
             game_time: self.tick,
+            day_time: self.clock.map_or(self.tick, |c| c.day_time),
             players: self.players.clone(),
             // Players look south, level.
             rotations: self

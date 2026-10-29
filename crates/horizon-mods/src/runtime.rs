@@ -614,6 +614,8 @@ pub struct Snapshot {
     /// The world's game time, also where no player reads a clock (a
     /// server's own snapshot; `world.game-time`).
     pub game_time: u64,
+    /// The world's day time, as `game_time` (`world.day-time`).
+    pub day_time: u64,
     /// The screen in GUI pixels (capability `render`'s `gui-size`).
     pub gui_size: (f32, f32),
     /// The main hand's stack (capability `input`'s `held`).
@@ -3285,6 +3287,12 @@ impl mod_world::Host for State {
     }
     fn game_time(&mut self) -> u64 {
         self.snapshot.game_time
+    }
+    fn day_time(&mut self, _dimension: String) -> u64 {
+        self.snapshot.day_time
+    }
+    fn natural(&mut self, dimension: String) -> bool {
+        dimension == "minecraft:overworld"
     }
     fn block_tags(&mut self, state: String) -> Vec<String> {
         let Ok(view) = self.world.lock() else {
