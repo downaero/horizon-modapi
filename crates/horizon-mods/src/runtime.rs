@@ -367,6 +367,19 @@ pub struct Cooked {
 /// Largest bytes a mod keeps on one stack.
 const STACK_DATA_BYTES: usize = 16 << 10;
 
+/// `world.block-info`'s answer, as the game reads it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BlockInfo {
+    pub hardness: f32,
+    pub requires_tool: bool,
+    pub explosion_resistance: f32,
+    /// Break, step, place and hit sound events.
+    pub sounds: [String; 4],
+    pub liquid: bool,
+    /// `normal`, `destroy`, `block`, `ignore` or `push_only`.
+    pub push_reaction: &'static str,
+}
+
 /// An item stack as capability `stacks` sees it: every mod's own bytes on
 /// it, by mod id (each mod is shown only its own).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -591,6 +604,9 @@ const STORAGE_WRITE_BUDGET: u64 = 1 << 20;
 pub struct Snapshot {
     pub player: Option<Player>,
     pub clock: Option<Clock>,
+    /// The world's game time, also where no player reads a clock (a
+    /// server's own snapshot; `world.game-time`).
+    pub game_time: u64,
     /// The screen in GUI pixels (capability `render`'s `gui-size`).
     pub gui_size: (f32, f32),
     /// The main hand's stack (capability `input`'s `held`).
@@ -745,6 +761,12 @@ pub enum EffectOp {
     LevelEvent {
         id: i32,
         data: i32,
+    },
+    /// `effects.destroy-progress`: a crack stage (0 to 9, -1 none) at the
+    /// effect's block, one per mod and breaker.
+    DestroyProgress {
+        breaker: u32,
+        stage: i8,
     },
     /// `effects.particles`: as `/particle` writes them, at a point.
     Particles {
@@ -980,6 +1002,10 @@ pub trait WorldView: std::any::Any + Send {
     fn has_dimension(&self, dimension: &str) -> bool;
     /// `Err` (why) for a state string that names no block state.
     fn check_state(&self, state: &str) -> Result<(), String>;
+    /// What a block state is made of (`world.block-info`).
+    fn block_info(&self, _state: &str) -> Option<BlockInfo> {
+        None
+    }
     /// The 27 slots of a mod container at a position, as of the tick's
     /// start (capability `containers`); `None` where there is none.
     fn container(
@@ -3050,6 +3076,25 @@ impl chat::Host for State {
     }
 }
 impl mod_world::Host for State {
+    fn block_info(&mut self, state: String) -> Option<mod_world::StateInfo> {
+        let view = self.world.lock().ok()?;
+        let info = view.as_ref()?.block_info(&state)?;
+        let [break_sound, step_sound, place_sound, hit_sound] = info.sounds;
+        Some(mod_world::StateInfo {
+            hardness: info.hardness,
+            requires_tool: info.requires_tool,
+            explosion_resistance: info.explosion_resistance,
+            break_sound,
+            step_sound,
+            place_sound,
+            hit_sound,
+            liquid: info.liquid,
+            push_reaction: info.push_reaction.to_owned(),
+        })
+    }
+    fn game_time(&mut self) -> u64 {
+        self.snapshot.game_time
+    }
     fn get_block(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<String> {
         let view = self.world.lock().ok()?;
         view.as_ref()?.block(&dimension, x, y, z)
@@ -3613,6 +3658,24 @@ impl effects::Host for State {
             data: data.clamp(0, 15),
         };
         self.effect(dimension, [x, y, z], effect)
+    }
+    fn destroy_progress(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        breaker: u32,
+        stage: i8,
+    ) -> Result<(), String> {
+        if !(-1..=9).contains(&stage) {
+            return Err(format!("stage {stage}: 0 to 9, or -1"));
+        }
+        self.effect(
+            dimension,
+            [x, y, z],
+            EffectOp::DestroyProgress { breaker, stage },
+        )
     }
     fn particles(
         &mut self,

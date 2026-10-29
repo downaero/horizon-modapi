@@ -9,7 +9,7 @@
 //! saying what happens and what the mod must have shown by then.
 use crate::{
     BlockPos, BlockTarget, Clock, Corner, GameMode, Mods, Output, Panel, Player, ServerPlayer,
-    Snapshot, Status,
+    Snapshot, StackInfo, Status,
 };
 use serde::Deserialize;
 use std::{
@@ -41,6 +41,13 @@ pub struct TestGame {
     /// The parts the mod draws at its blocks of the Overworld (`visuals`),
     /// gone with the block's data as in the game.
     pub visuals: std::collections::BTreeMap<(i32, i32, i32), Vec<crate::visual::VisualPart>>,
+    /// The slots of the containers in the Overworld, by position: a step's
+    /// `slots`, then what the mod changes with `containers.set-slot` and
+    /// `transfer` (slot rules are not kept to here).
+    pub containers: Containers,
+    /// Each player's 41 slots, by id (`players.inventory`): a step's
+    /// `inventory`, then the mod's `set-player-stack`.
+    pub inventories: std::collections::HashMap<String, Vec<Option<StackInfo>>>,
     /// The package's own recipe files (`data/<ns>/recipe/`): id, type, JSON.
     /// `recipe-manager` sees these and no vanilla recipe.
     recipes: Vec<(String, String, String)>,
@@ -53,7 +60,17 @@ struct ScriptWorld {
     power: std::collections::BTreeMap<(i32, i32, i32), u8>,
     dropped: Vec<crate::DroppedStack>,
     recipes: Vec<(String, String, String)>,
+    containers: Containers,
 }
+
+/// Containers' slots by position, shared by a test game and the world it
+/// lends a step, so what `transfer` changes stays.
+pub type Containers = std::sync::Arc<
+    std::sync::Mutex<std::collections::BTreeMap<(i32, i32, i32), Vec<Option<crate::SlotStack>>>>,
+>;
+
+/// The most items of one stack in a test container.
+const STACK: u32 = 64;
 
 /// The recipe files a package carries: id, type, JSON.
 fn package_recipes(hmod: &Path) -> Vec<(String, String, String)> {
@@ -92,6 +109,82 @@ fn package_recipes(hmod: &Path) -> Vec<(String, String, String)> {
 }
 
 impl crate::WorldView for ScriptWorld {
+    fn container(
+        &self,
+        dimension: &str,
+        x: i32,
+        y: i32,
+        z: i32,
+    ) -> Option<Vec<Option<crate::SlotStack>>> {
+        let all = self.containers.lock().ok()?;
+        (dimension == "minecraft:overworld").then(|| all.get(&(x, y, z)).cloned())?
+    }
+    fn item_slots(
+        &self,
+        dimension: &str,
+        pos: [i32; 3],
+        _face: Option<u8>,
+    ) -> Option<Vec<Option<crate::SlotStack>>> {
+        self.container(dimension, pos[0], pos[1], pos[2])
+    }
+    fn insert_item(
+        &mut self,
+        dimension: &str,
+        pos: [i32; 3],
+        _face: Option<u8>,
+        item: &str,
+        count: u32,
+        simulate: bool,
+    ) -> u32 {
+        let Ok(mut all) = self.containers.lock() else {
+            return count;
+        };
+        let Some(slots) = all
+            .get_mut(&(pos[0], pos[1], pos[2]))
+            .filter(|_| dimension == "minecraft:overworld")
+        else {
+            return count;
+        };
+        let mut left = count;
+        // Like stacks first, then empty slots, as a hopper fills them.
+        for merge in [true, false] {
+            for slot in slots.iter_mut() {
+                let put = match slot {
+                    Some((i, n)) if merge && i == item => left.min(STACK.saturating_sub(*n)),
+                    None if !merge => left.min(STACK),
+                    _ => 0,
+                };
+                if put > 0 && !simulate {
+                    match slot {
+                        Some((_, n)) => *n += put,
+                        None => *slot = Some((item.to_owned(), put)),
+                    }
+                }
+                left -= put;
+            }
+        }
+        left
+    }
+    fn extract_item(
+        &mut self,
+        dimension: &str,
+        pos: [i32; 3],
+        _face: Option<u8>,
+        count: u32,
+        simulate: bool,
+    ) -> Option<crate::SlotStack> {
+        let mut all = self.containers.lock().ok()?;
+        let slots = all
+            .get_mut(&(pos[0], pos[1], pos[2]))
+            .filter(|_| dimension == "minecraft:overworld")?;
+        let slot = slots.iter_mut().find(|s| s.is_some())?;
+        let (item, n) = slot.clone()?;
+        let take = count.min(n);
+        if !simulate {
+            *slot = (n > take).then(|| (item.clone(), n - take));
+        }
+        Some((item, take))
+    }
     fn recipes_of_type(&self, kind: &str) -> Vec<(String, String)> {
         if kind.starts_with("minecraft:") {
             return Vec::new();
@@ -208,6 +301,8 @@ impl TestGame {
             power: Default::default(),
             items: Vec::new(),
             visuals: Default::default(),
+            containers: Default::default(),
+            inventories: Default::default(),
             recipes: package_recipes(hmod),
         };
         copy_mod(hmod, &copy)?;
@@ -235,12 +330,21 @@ impl TestGame {
         self.mods.set_snapshot(Snapshot {
             player: self.player.clone(),
             clock: self.clock,
+            game_time: self.tick,
             players: self.players.clone(),
             // Players look south, level.
             rotations: self
                 .players
                 .iter()
                 .map(|p| (p.id.clone(), (0.0, 0.0)))
+                .collect(),
+            inventories: self
+                .players
+                .iter()
+                .map(|p| {
+                    let slots = self.inventories.get(&p.id).cloned();
+                    (p.id.clone(), (slots.unwrap_or_else(|| vec![None; 41]), 0))
+                })
                 .collect(),
             // The GUI of a 1280 x 720 window at scale 3, as the trial run's.
             gui_size: (427.0, 240.0),
@@ -581,8 +685,37 @@ pub struct Step {
     power: Option<Vec<PowerSet>>,
     /// The item entities lying about from now on (capability `items`).
     items: Option<Vec<ItemSet>>,
+    /// Stacks put in containers' slots of the Overworld (a container with
+    /// none before has 27 empty slots); count 0 empties the slot.
+    #[serde(default)]
+    slots: Vec<SlotSet>,
+    /// Stacks put in the acting player's slots (0 to 40, as
+    /// `players.inventory` counts them); count 0 empties one.
+    #[serde(default)]
+    inventory: Vec<InventorySet>,
     #[serde(default)]
     expect: Expect,
+}
+
+/// A stack in a container's slot.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlotSet {
+    x: i32,
+    y: i32,
+    z: i32,
+    slot: u32,
+    item: String,
+    count: u32,
+}
+
+/// A stack in a player's slot.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InventorySet {
+    slot: u32,
+    item: String,
+    count: u32,
 }
 
 /// What a step checks; a part left out is not checked.
@@ -616,6 +749,12 @@ pub struct Expect {
     /// Capability `containers`: every `set-name` as `"name at x y z"` (`-` for
     /// none), in order.
     names: Option<Vec<String>>,
+    /// Every filled slot of every container after the step, by position then
+    /// slot, as `"x y z slot item xN"`.
+    slots: Option<Vec<String>>,
+    /// Every filled slot of the acting player's after the step, as
+    /// `"slot item xN"`.
+    inventory: Option<Vec<String>>,
     /// Capability `block-entities`: the parts drawn at the mod's blocks after
     /// the step, by position, each as `"x y z state speed"` (degrees a tick),
     /// then `" offset [x, y, z] velocity [x, y, z]"` when it is off its block's
@@ -745,11 +884,21 @@ impl Step {
                 })
                 .collect();
         }
+        if let Ok(mut all) = game.containers.lock() {
+            for s in &self.slots {
+                let slots = all.entry((s.x, s.y, s.z)).or_insert_with(|| vec![None; 27]);
+                if slots.len() <= s.slot as usize {
+                    slots.resize(s.slot as usize + 1, None);
+                }
+                slots[s.slot as usize] = (s.count > 0).then(|| (s.item.clone(), s.count));
+            }
+        }
         game.mods.lend_world(Box::new(ScriptWorld {
             blocks: game.world.clone(),
             power: game.power.clone(),
             dropped: game.items.clone(),
             recipes: game.recipes.clone(),
+            containers: game.containers.clone(),
         }));
         if let Some(name) = &self.join {
             game.join(name);
@@ -770,7 +919,9 @@ impl Step {
             || self.command.is_some()
             || self.broken.is_some()
             || self.place.is_some()
-            || self.used.is_some();
+            || self.used.is_some()
+            || !self.inventory.is_empty()
+            || self.expect.inventory.is_some();
         let actor = if server && acts {
             Some(actor(game)?)
         } else {
@@ -787,6 +938,19 @@ impl Step {
                 game_time: 0,
                 day_time: 0,
             }));
+        }
+        if let Some(i) = actor {
+            let id = game.players[i].id.clone();
+            let slots = game.inventories.entry(id).or_insert_with(|| vec![None; 41]);
+            for s in &self.inventory {
+                if let Some(slot) = slots.get_mut(s.slot as usize) {
+                    *slot = (s.count > 0).then(|| StackInfo {
+                        item: s.item.clone(),
+                        count: s.count,
+                        ..StackInfo::default()
+                    });
+                }
+            }
         }
         game.tick(self.ticks);
         game.frames(self.frames);
@@ -856,6 +1020,39 @@ impl Step {
                 } if overworld(dimension) => {
                     for b in blocks {
                         game.world.insert((b.x, b.y, b.z), b.state.clone());
+                    }
+                }
+                Output::Container {
+                    op:
+                        crate::ContainerOp::SetSlot {
+                            dimension,
+                            pos,
+                            slot,
+                            stack,
+                        },
+                    ..
+                } if overworld(dimension) => {
+                    if let Ok(mut all) = game.containers.lock() {
+                        let slots = all
+                            .entry((pos[0], pos[1], pos[2]))
+                            .or_insert_with(|| vec![None; 27]);
+                        if let Some(s) = slots.get_mut(*slot as usize) {
+                            *s = stack.clone();
+                        }
+                    }
+                }
+                Output::SetPlayerStack {
+                    player,
+                    slot,
+                    stack,
+                    ..
+                } => {
+                    let slots = game
+                        .inventories
+                        .entry(player.clone())
+                        .or_insert_with(|| vec![None; 41]);
+                    if let Some(s) = slots.get_mut(*slot as usize) {
+                        *s = stack.clone();
                     }
                 }
                 // A block the mod broke is air; its drops are the game's.
@@ -1018,6 +1215,12 @@ impl Step {
                         crate::EffectOp::LevelEvent { id, data } => {
                             format!("event {id} {data} at {} {} {}", pos[0], pos[1], pos[2])
                         }
+                        crate::EffectOp::DestroyProgress { breaker, stage } => {
+                            format!(
+                                "crack {breaker} {stage} at {} {} {}",
+                                pos[0], pos[1], pos[2]
+                            )
+                        }
                         crate::EffectOp::Particles {
                             particle,
                             at,
@@ -1051,6 +1254,37 @@ impl Step {
                 })
                 .collect();
             same("names", want, &got)?;
+        }
+        if let Some(want) = &e.slots {
+            let got: Vec<String> = game.containers.lock().map_or_else(
+                |_| Vec::new(),
+                |all| {
+                    all.iter()
+                        .flat_map(|((x, y, z), slots)| {
+                            slots.iter().enumerate().filter_map(move |(i, s)| {
+                                let (item, n) = s.as_ref()?;
+                                Some(format!("{x} {y} {z} {i} {item} x{n}"))
+                            })
+                        })
+                        .collect()
+                },
+            );
+            same("slots", want, &got)?;
+        }
+        if let Some(want) = &e.inventory {
+            let who = who.as_ref().map(|p| p.id.clone()).unwrap_or_default();
+            let got: Vec<String> = game
+                .inventories
+                .get(&who)
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .filter_map(|(i, s)| {
+                    let s = s.as_ref()?;
+                    Some(format!("{i} {} x{}", s.item, s.count))
+                })
+                .collect();
+            same("inventory", want, &got)?;
         }
         if let Some(want) = &e.visuals {
             let got: Vec<String> = game

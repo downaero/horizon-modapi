@@ -290,17 +290,31 @@ impl BlockEntity for Drill {
     fn save_additional(&self, out: &mut Vec<u8>) {
         out.push(self.ticks);
     }
-    /// Once a second it mines the block under it as an iron pickaxe would,
-    /// the drops into the inventory above it (`world.break-block`).
+    /// It mines the block under it as an iron pickaxe would, a second for
+    /// each point of its hardness (`world.block-info`), its cracks showing
+    /// as it goes (`effects.destroy-progress`), the drops into the
+    /// inventory above it (`world.break-block`). Air and what nothing
+    /// breaks (bedrock) it leaves.
     fn tick(&mut self, level: &Level, pos: BlockPos, _state: &BlockState) {
-        self.ticks += 1;
-        if self.ticks < 20 {
+        let under = pos.below();
+        let d = level.dimension();
+        let below = world::get_block(d, under.x, under.y, under.z).unwrap_or_default();
+        let info = world::block_info(&below).filter(|i| i.hardness >= 0.0);
+        let Some(info) = info.filter(|_| !level.get_block_state(under).is_air()) else {
+            self.ticks = 0;
+            return;
+        };
+        let needed = ((info.hardness * 20.0) as u32).clamp(1, 250) as u8;
+        self.ticks = self.ticks.saturating_add(1);
+        let stage = (u32::from(self.ticks) * 10 / u32::from(needed)).min(9) as i8;
+        let _ = effects::destroy_progress(d, under.x, under.y, under.z, 0, stage);
+        if self.ticks < needed {
             return;
         }
         self.ticks = 0;
-        let under = pos.below();
+        let _ = effects::destroy_progress(d, under.x, under.y, under.z, 0, -1);
         let _ = world::break_block(
-            level.dimension(),
+            d,
             under.x,
             under.y,
             under.z,

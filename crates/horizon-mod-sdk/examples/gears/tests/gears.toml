@@ -40,3 +40,15 @@ expect.drops = ["minecraft:iron_nugget x1 at 5.5 65 5.5"]
 [[step]]
 use = { x = 5, y = 64, z = 5, face = "up", item = "minecraft:stick" }
 expect.told = ["Alex: This is gears:counter"]
+
+# With a container under it the nuggets go in (`transfer`) instead of
+# dropping; the player's slots are as a step set them.
+[[step]]
+slots = [{ x = 5, y = 63, z = 5, slot = 0, item = "minecraft:stone", count = 0 }]
+inventory = [{ slot = 0, item = "minecraft:stick", count = 3 }]
+items = [{ id = 20, item = "minecraft:iron_ingot", x = 5.5, y = 64.5, z = 5.5 }]
+ticks = 20
+expect.taken = [20]
+expect.drops = []
+expect.slots = ["5 63 5 0 minecraft:iron_nugget x9"]
+expect.inventory = ["0 minecraft:stick x3"]

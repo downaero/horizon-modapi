@@ -144,6 +144,16 @@ pub(super) const STRUCTURE_CHANNEL: &str = "horizon:structure";
 #[cfg_attr(not(feature = "mods"), allow(dead_code))]
 pub(super) const STRUCTURE_MARK: char = '\u{4}';
 
+/// The id a mod's breaker (`effects.destroy-progress`) cracks blocks under:
+/// negative, so never an entity's, and apart for each mod.
+#[cfg_attr(not(feature = "mods"), allow(dead_code))]
+pub(super) fn mod_breaker_id(mod_id: &str, breaker: u32) -> i32 {
+    let hash = mod_id.bytes().fold(0x811c_9dc5u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    -1 - (((hash & 0x7fff) << 16) | (breaker & 0xffff)) as i32
+}
+
 /// Marks a synced entry's dimension in a `.blocks` file.
 #[cfg_attr(not(feature = "mods"), allow(dead_code))]
 pub(super) const SYNCED_MARK: char = '\u{2}';
@@ -254,6 +264,15 @@ mod block_data_tests {
         assert_eq!(back[1].2, Vec::<u8>::new());
         bytes.extend([9, 9, 9]);
         assert_eq!(decode_block_data(&bytes).len(), 2);
+    }
+
+    #[test]
+    fn mod_breakers_are_never_entities_nor_each_other() {
+        let (a, b) = (mod_breaker_id("gears", 0), mod_breaker_id("gears", 1));
+        assert!(a < 0 && b < 0 && a != b);
+        assert_ne!(mod_breaker_id("create", 0), a);
+        assert_eq!(mod_breaker_id("gears", 0), a);
+        assert!(mod_breaker_id("gears", u32::MAX) < 0);
     }
 
     #[test]
@@ -772,6 +791,27 @@ mod run {
             crate::game::render_control::parse_state(self.registry, state)
                 .map(drop)
                 .map_err(|e| format!("{state}: {e}"))
+        }
+        fn block_info(&self, state: &str) -> Option<horizon_mods::BlockInfo> {
+            use horizon_world::level::data::{PushReaction, state_flags};
+            let id = crate::game::render_control::parse_state(self.registry, state).ok()?;
+            let facts = self.res.facts().get(id);
+            let behaviour = self.res.behaviours().facts(id);
+            let s = &facts.sounds;
+            Some(horizon_mods::BlockInfo {
+                hardness: facts.hardness,
+                requires_tool: facts.requires_tool,
+                explosion_resistance: facts.explosion_resistance,
+                sounds: [&s.break_sound, &s.step, &s.place, &s.hit].map(|e| e.to_string()),
+                liquid: behaviour.flags & state_flags::LIQUID != 0,
+                push_reaction: match behaviour.push {
+                    PushReaction::PushPull => "normal",
+                    PushReaction::Push => "push_only",
+                    PushReaction::Popped => "destroy",
+                    PushReaction::Immoveable => "block",
+                    PushReaction::IgnoreEntity => "ignore",
+                },
+            })
         }
     }
 
@@ -1850,6 +1890,32 @@ mod run {
                 if dimension != dim {
                     continue;
                 }
+                // Cracks as a mob's or a player's mining shows them, to every
+                // player near: the mod's breakers apart from entities' ids.
+                if let horizon_mods::EffectOp::DestroyProgress { breaker, stage } = effect {
+                    let id = breaker as i32;
+                    self.destroy_block_progress(id, p, i32::from(stage));
+                    if let Some(host) = self.lan.as_ref() {
+                        let progress = if (0..10).contains(&stage) {
+                            stage as u8
+                        } else {
+                            255
+                        };
+                        host.hub.broadcast_near(
+                            [f64::from(p[0]), f64::from(p[1]), f64::from(p[2])],
+                            64.0,
+                            &C::BlockDestruction(
+                                horizon_protocol::packets::play::BlockDestruction {
+                                    id,
+                                    pos: p,
+                                    progress,
+                                },
+                            ),
+                            None,
+                        );
+                    }
+                    continue;
+                }
                 // Particles go as `/particle` sends them, as the server.
                 if let horizon_mods::EffectOp::Particles {
                     particle,
@@ -1881,7 +1947,8 @@ mod run {
                     horizon_mods::EffectOp::LevelEvent { id, data } => {
                         horizon_world::level::LevelEvent::LevelEvent { id, pos, data }
                     }
-                    horizon_mods::EffectOp::Particles { .. } => continue,
+                    horizon_mods::EffectOp::Particles { .. }
+                    | horizon_mods::EffectOp::DestroyProgress { .. } => continue,
                 });
             }
             if let Err(e) = self.process_level_events() {
@@ -3524,11 +3591,19 @@ mod run {
                     }
                 }
                 Output::Effect {
+                    mod_id,
                     dimension,
                     pos,
                     effect,
-                    ..
                 } => {
+                    // A mod's breakers, apart from entities' and other mods'.
+                    let effect = match effect {
+                        horizon_mods::EffectOp::DestroyProgress { breaker, stage } => {
+                            let breaker = super::mod_breaker_id(&mod_id, breaker) as u32;
+                            horizon_mods::EffectOp::DestroyProgress { breaker, stage }
+                        }
+                        effect => effect,
+                    };
                     let queue = &mut self.mods.effects;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((dimension, pos, effect));

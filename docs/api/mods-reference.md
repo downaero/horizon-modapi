@@ -884,6 +884,22 @@ The solid part of a region: every non-air block in loaded chunks, and the states
 | `palette` | `list<string>` |  |
 | `blocks` | `list<scanned-block>` |  |
 
+### record `state-info`
+
+What a block state is made of, as vanilla's block properties say.
+
+| Field | Type | |
+| --- | --- | --- |
+| `hardness` | `f32` | `destroyTime`: seconds of a bare hand's mining, roughly; -1 for a block nothing breaks (bedrock). |
+| `requires-tool` | `bool` | Only the right tool gets its drops (stone and a pickaxe). |
+| `explosion-resistance` | `f32` |  |
+| `break-sound` | `string` | Its sound type's events: breaking, stepping, placing, hitting. |
+| `step-sound` | `string` |  |
+| `place-sound` | `string` |  |
+| `hit-sound` | `string` |  |
+| `liquid` | `bool` | It holds a fluid (water, lava, a waterlogged state). |
+| `push-reaction` | `string` | How a piston or a moving structure treats it: `normal`, `destroy`, `block`, `ignore` or `push_only`, as vanilla's `PushReaction`. |
+
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `get-block` | `func(dimension: string, x: s32, y: s32, z: s32) -> option<string>` | The block state at a position in a dimension (`minecraft:overworld`, ...), as `minecraft:oak_log[axis=y]`, as of this call: none where the server has no chunk loaded there. |
@@ -892,6 +908,8 @@ The solid part of a region: every non-air block in loaded chunks, and the states
 | `use-item` | `func(dimension: string, x: s32, y: s32, z: s32, face: u8, item: string) -> result<_, string>` | Uses an item on a block as a player would, after the call (a deployer): the block's own answer to it first (a lever pulled, a door opened, a note block tuned), and when it has none and the item is a block's, that block placed against `face` (0 down, 1 up, 2 north, 3 south, 4 west, 5 east) where there is air. Items' own uses (bone meal, flint and steel, buckets) are not run yet. At most 256 a call. |
 | `break-block` | `func(dimension: string, x: s32, y: s32, z: s32, tool: option<string>, enchantments: list<tuple<string, u32>>, into: option<tuple<s32, s32, s32>>) -> result<_, string>` | Breaks a block as a player holding `tool` (an item id; none for a bare hand) enchanted with `enchantments` (`minecraft:fortune`, 3 / `minecraft:silk_touch`, 1) would, after the call: its break particles and sound, a container's contents spilled, air in its place, and its loot table's drops when the tool is right for it (a pickaxe for stone). The drops go into the inventory at `into` (as `transfer` puts items in), what does not fit and all of them without one dropping where the block stood. A drill or a saw. At most 256 a call; unbreakable blocks (bedrock) are left. |
 | `scan` | `func(dimension: string, min-x: s32, min-y: s32, min-z: s32, max-x: s32, max-y: s32, max-z: s32) -> result<region, string>` | Reads every block from (min-x, min-y, min-z) to (max-x, max-y, max-z), both ends included, as of this call; air and blocks in chunks not loaded are left out. At most 32768 positions in the box. |
+| `block-info` | `func(state: string) -> option<state-info>` | The properties of a block state (`minecraft:stone`, a mod's own), none for one that names no state: a drill timing its breaking by its hardness, a contraption leaving what it cannot move. |
+| `game-time` | `func() -> u64` | The world's game time, the ticks since it was made, as of this tick: what `visuals.set-in-phase` turns parts by. |
 
 ## `server-events`
 
@@ -1217,6 +1235,7 @@ Capability `effects`, server mods only (manifest `api = "0.3"`, experimental): s
 | `play-sound` | `func(dimension: string, x: s32, y: s32, z: s32, event: string, volume: f32, pitch: f32) -> result<_, string>` | Plays a sound event (`minecraft:block.anvil.use`, or one a mod's pack adds) at a block's position, after the call; volume and pitch are clamped to 0 to 4 and 0.5 to 2. At most 64 effects a call. |
 | `level-event` | `func(dimension: string, x: s32, y: s32, z: s32, id: s32, data: s32) -> result<_, string>` | Vanilla's `levelEvent` at a block: 2000 smoke (data 0 to 8, the direction), 2004 spawner flames, 2005 bone meal particles (data 0 to 15, how many) and 2009 water evaporating. Others are refused. |
 | `particles` | `func(dimension: string, x: f64, y: f64, z: f64, particle: string, delta: tuple<f32, f32, f32>, speed: f32, count: u32) -> result<_, string>` | Particles as `/particle` sends them (`ServerLevel.sendParticles`), after the call, to the players within 32 blocks: `particle` as the command writes it, with no spaces (`minecraft:flame`, `minecraft:item{item:"minecraft:iron_ingot"}`, `minecraft:block{block_state:"minecraft:stone"}`); `count` of them (0: one moving by `speed` times `delta`) spread by `delta`. At most 1000 a call, counting toward the same 64 effects. |
+| `destroy-progress` | `func(dimension: string, x: s32, y: s32, z: s32, breaker: u32, stage: s8) -> result<_, string>` | The cracks of a block being broken, as a player's mining shows them (`Level.destroyBlockProgress`), to the players within 64 blocks: `stage` 0 to 9, or -1 to take them away. `breaker` is the mod's own number for what breaks it (a drill's), one crack each. |
 
 ## `neighbor-events`
 

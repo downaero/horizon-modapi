@@ -304,6 +304,8 @@ A step's parts happen in this order:
 | `break = { x = 1, y = 63, z = 0, state = "minecraft:stone" }`, `place = { ... }` | server mods: the player breaks or places that block |
 | `use = { x = 1, y = 64, z = 0, face = "up" }` | server mods: the player right-clicks the block there with an empty hand, on that face (`down`, `up`, `north`, `south`, `west`, `east`; left out: none); with `item = "minecraft:stick"` (and `sneaking = true`) they click with that item in their main hand, which reaches `item-used` (face left out: up) |
 | `leave = "Alex"` | server mods: that player leaves |
+| `slots = [{ x = 5, y = 63, z = 5, slot = 0, item = "minecraft:stone", count = 2 }]` | server mods: stacks in containers' slots of the Overworld (a container with none before has 27 empty slots; count 0 empties one), which `containers.slots`, `transfer` and the mod's `set-slot` read and change |
+| `inventory = [{ slot = 0, item = "minecraft:stick", count = 3 }]` | server mods: stacks in the acting player's slots (0 to 40, as `players.inventory` counts them), which the mod's `set-player-stack` changes |
 
 A server mod starts with nobody on: `join = "Alex"` (after `reload` and `title-screen`) brings a
 player in at the defaults, in survival, with the id
@@ -610,6 +612,14 @@ that code. Changes for a dimension whose level isn't ticking wait for it
 change in a chunk that isn't loaded when it is made is skipped, as `/setblock`
 refuses one.
 
+`world.block-info(state)` (API level 44) is what a block state is made of, as vanilla's block
+properties say: its `hardness` (`destroyTime`, -1 for what nothing breaks), whether it needs the
+right tool, its explosion resistance, its sound type's break, step, place and hit events, whether
+it holds a fluid, and its `push-reaction` (`normal`, `destroy`, `block`, `ignore` or `push_only`): a
+drill timing its breaking, a contraption leaving what it cannot move. `world.game-time()` is the
+world's game time as of the tick, what `visuals.set-in-phase` turns parts by, so a mod phases a
+part to an angle it keeps. The gears example's drill takes a second for each point of hardness.
+
 **Capability `block-entities` (API level 8, experimental).** The base for
 ports of mods with machines, such as Create: bytes a mod keeps at the
 positions of its own blocks, and a tick and a use hook for them.
@@ -724,6 +734,11 @@ sends particles as `/particle` does, as the server, to the players within 32 blo
 `minecraft:block{block_state:"minecraft:stone"}`); `count` of them spread by `delta`
 (0: one moving by `speed` times `delta`). Item particles reach players' games over the
 network as vanilla's do (`ItemParticleOption`).
+
+`effects.destroy-progress(dimension, x, y, z, breaker, stage)` (API level 44) shows the cracks of a
+block being broken, stage 0 to 9 (-1 takes them away), as a player's mining does
+(`Level.destroyBlockProgress`), to the players within 64 blocks; `breaker` is the mod's own number
+for what breaks it, one crack each (a drill's, a saw's).
 
 ### Capability `items`
 

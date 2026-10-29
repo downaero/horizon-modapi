@@ -744,6 +744,33 @@ interface %world {
     /// both ends included, as of this call; air and blocks in chunks not
     /// loaded are left out. At most 32768 positions in the box.
     scan: func(dimension: string, min-x: s32, min-y: s32, min-z: s32, max-x: s32, max-y: s32, max-z: s32) -> result<region, string>;
+
+    /// What a block state is made of, as vanilla's block properties say.
+    record state-info {
+        /// `destroyTime`: seconds of a bare hand's mining, roughly; -1 for
+        /// a block nothing breaks (bedrock).
+        hardness: f32,
+        /// Only the right tool gets its drops (stone and a pickaxe).
+        requires-tool: bool,
+        explosion-resistance: f32,
+        /// Its sound type's events: breaking, stepping, placing, hitting.
+        break-sound: string,
+        step-sound: string,
+        place-sound: string,
+        hit-sound: string,
+        /// It holds a fluid (water, lava, a waterlogged state).
+        liquid: bool,
+        /// How a piston or a moving structure treats it: `normal`, `destroy`,
+        /// `block`, `ignore` or `push_only`, as vanilla's `PushReaction`.
+        push-reaction: string,
+    }
+    /// The properties of a block state (`minecraft:stone`, a mod's own),
+    /// none for one that names no state: a drill timing its breaking by its
+    /// hardness, a contraption leaving what it cannot move.
+    block-info: func(state: string) -> option<state-info>;
+    /// The world's game time, the ticks since it was made, as of this tick:
+    /// what `visuals.set-in-phase` turns parts by.
+    game-time: func() -> u64;
 }
 
 /// What the server calls in a server mod (manifest `api = "0.3"`,
@@ -1195,6 +1222,11 @@ interface effects {
     /// (0: one moving by `speed` times `delta`) spread by `delta`. At most
     /// 1000 a call, counting toward the same 64 effects.
     particles: func(dimension: string, x: f64, y: f64, z: f64, particle: string, delta: tuple<f32, f32, f32>, speed: f32, count: u32) -> result<_, string>;
+    /// The cracks of a block being broken, as a player's mining shows them
+    /// (`Level.destroyBlockProgress`), to the players within 64 blocks:
+    /// `stage` 0 to 9, or -1 to take them away. `breaker` is the mod's own
+    /// number for what breaks it (a drill's), one crack each.
+    destroy-progress: func(dimension: string, x: s32, y: s32, z: s32, breaker: u32, stage: s8) -> result<_, string>;
 }
 
 /// What the server calls in a server mod when a block next to one of its
