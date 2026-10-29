@@ -265,7 +265,10 @@ game's part (the player and the clock the mod reads, ticks, frames, chat lines,
 commands; for a server mod, players joining, chatting, typing commands,
 breaking and placing blocks and leaving) and checks what the mod showed. A script fails at its first wrong
 step, with what it expected and what it got; the command fails if any script
-does. `--debug` builds without optimizing, `--hmod <file>` tests a `.hmod`
+does. `recipe-manager.test-ingredient` knows the package's own item tags
+(`data/<ns>/tags/item/`) over vanilla's, read from the prepared resources when
+they are found (`HORIZON_RESOURCES`, or `.local/horizon-client/26.3` in the
+working folder or one above it). `--debug` builds without optimizing, `--hmod <file>` tests a `.hmod`
 already built, and a name runs only the scripts whose path holds it. Each
 script gets a scratch copy of the mod, so its `storage` starts empty and is
 removed afterwards.
@@ -463,7 +466,9 @@ textured through its `.mtl`'s `map_Kd`, a `#slot` of the model's textures (its
 parents' too) or a texture id, with `"flip_v": true` turning its texture
 coordinates top-down; `"loader": "neoforge:composite"` draws its `children`
 (each a model inline, with elements or a loader of its own, or a model's id)
-as one model. Both turn with their blockstate variant as any model does, and
+as one model. A model with no geometry of its own takes its parent's loader
+with its own textures, as NeoForge does (Create's red valve handle over its
+valve handle's OBJ). Both turn with their blockstate variant as any model does, and
 so do visual parts drawing their states. Their other keys (`render_type`,
 OBJ normals, `emissive_ambient`) are not read; items draw such models only
 through a model file of their own.

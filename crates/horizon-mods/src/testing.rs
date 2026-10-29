@@ -51,6 +51,9 @@ pub struct TestGame {
     /// The package's own recipe files (`data/<ns>/recipe/`): id, type, JSON.
     /// `recipe-manager` sees these and no vanilla recipe.
     recipes: Vec<(String, String, String)>,
+    /// Item tags by id, each its values as the files list them (`#` for a
+    /// tag in a tag): the package's own over vanilla's.
+    tags: std::sync::Arc<Tags>,
 }
 
 /// The world a script's mod reads: [`TestGame::world`], the signals and item
@@ -60,6 +63,9 @@ struct ScriptWorld {
     power: std::collections::BTreeMap<(i32, i32, i32), u8>,
     dropped: Vec<crate::DroppedStack>,
     recipes: Vec<(String, String, String)>,
+    /// Item tags by id, each its values as the files list them (`#` for a
+    /// tag in a tag): the package's own over vanilla's.
+    tags: std::sync::Arc<Tags>,
     containers: Containers,
 }
 
@@ -73,6 +79,102 @@ pub type Containers = std::sync::Arc<
 const STACK: u32 = 64;
 
 /// The recipe files a package carries: id, type, JSON.
+/// Item tags by id, with the values their files list.
+type Tags = std::collections::BTreeMap<String, Vec<String>>;
+
+/// Adds a tag file's values to `tags` (or replaces them, `"replace": true`).
+fn add_tag(tags: &mut Tags, id: String, json: &str) {
+    let Ok(file) = serde_json::from_str::<serde_json::Value>(json) else {
+        return;
+    };
+    let values = file["values"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str().or_else(|| v["id"].as_str()).map(str::to_owned));
+    let list = tags.entry(id).or_default();
+    if file["replace"].as_bool() == Some(true) {
+        list.clear();
+    }
+    list.extend(values);
+}
+
+/// The item tags a test game knows: vanilla's, from the prepared resources
+/// when they are found (`HORIZON_RESOURCES`, or `.local/horizon-client/26.3`
+/// in the working folder or one above it), then the package's own
+/// `data/<ns>/tags/item/` (vanilla's and the convention tags it adds to too).
+fn item_tags(hmod: &Path) -> Tags {
+    let mut tags = Tags::new();
+    let found = std::env::var_os("HORIZON_RESOURCES")
+        .map(PathBuf::from)
+        .or_else(|| {
+            let here = std::env::current_dir().ok()?;
+            here.ancestors()
+                .map(|d| d.join(".local/horizon-client/26.3"))
+                .find(|d| d.join("data").is_dir())
+        });
+    if let Some(root) = found
+        && let Ok(namespaces) = std::fs::read_dir(root.join("data"))
+    {
+        for ns in namespaces.flatten() {
+            let namespace = ns.file_name().to_string_lossy().into_owned();
+            let base = ns.path().join("tags/item");
+            let mut stack = vec![base.clone()];
+            while let Some(dir) = stack.pop() {
+                for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                    let path = e.path();
+                    if path.is_dir() {
+                        stack.push(path);
+                    } else if let (Some(rel), Ok(json)) = (
+                        path.strip_prefix(&base).ok().and_then(|r| r.to_str()),
+                        std::fs::read_to_string(&path),
+                    ) {
+                        let rel = rel.trim_end_matches(".json").replace('\\', "/");
+                        add_tag(&mut tags, format!("{namespace}:{rel}"), &json);
+                    }
+                }
+            }
+        }
+    }
+    let Ok(file) = std::fs::File::open(hmod) else {
+        return tags;
+    };
+    let Ok(mut zip) = zip::ZipArchive::new(file) else {
+        return tags;
+    };
+    for i in 0..zip.len() {
+        let Ok(mut entry) = zip.by_index(i) else {
+            continue;
+        };
+        let name = entry.name().to_owned();
+        let Some((ns, path)) = name
+            .strip_prefix("data/")
+            .and_then(|n| n.split_once("/tags/item/"))
+        else {
+            continue;
+        };
+        let Some(path) = path.strip_suffix(".json") else {
+            continue;
+        };
+        let mut json = String::new();
+        if std::io::Read::read_to_string(&mut entry, &mut json).is_ok() {
+            add_tag(&mut tags, format!("{ns}:{path}"), &json);
+        }
+    }
+    tags
+}
+
+/// Whether `item` is in tag `id`, through the tags it names, 16 deep.
+fn in_tag(tags: &Tags, id: &str, item: &str, depth: u32) -> bool {
+    depth < 16
+        && tags.get(id).is_some_and(|values| {
+            values.iter().any(|v| match v.strip_prefix('#') {
+                Some(inner) => in_tag(tags, inner, item, depth + 1),
+                None => v == item,
+            })
+        })
+}
+
 fn package_recipes(hmod: &Path) -> Vec<(String, String, String)> {
     let Ok(file) = std::fs::File::open(hmod) else {
         return Vec::new();
@@ -196,13 +298,20 @@ impl crate::WorldView for ScriptWorld {
             .collect()
     }
     fn test_ingredient(&self, ingredient: &str, item: &str) -> bool {
-        // Items by id; no tag has items here.
+        // An item's id, `#` and a tag, `{"item"}` or `{"tag"}`, or a list of them.
         let value = serde_json::from_str(ingredient)
             .unwrap_or_else(|_| serde_json::Value::String(ingredient.to_owned()));
-        let is = |v: &serde_json::Value| v.as_str() == Some(item);
+        let is = |v: &serde_json::Value| match (v.as_str(), v["tag"].as_str()) {
+            (Some(s), _) => match s.strip_prefix('#') {
+                Some(tag) => in_tag(&self.tags, tag, item, 0),
+                None => s == item,
+            },
+            (None, Some(tag)) => in_tag(&self.tags, tag, item, 0),
+            (None, None) => v["item"].as_str() == Some(item),
+        };
         match &value {
             serde_json::Value::Array(list) => list.iter().any(is),
-            v => is(v) || is(&v["item"]),
+            v => is(v),
         }
     }
     fn power(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<u8> {
@@ -304,6 +413,7 @@ impl TestGame {
             containers: Default::default(),
             inventories: Default::default(),
             recipes: package_recipes(hmod),
+            tags: std::sync::Arc::new(item_tags(hmod)),
         };
         copy_mod(hmod, &copy)?;
         game.start()?;
@@ -898,6 +1008,7 @@ impl Step {
             power: game.power.clone(),
             dropped: game.items.clone(),
             recipes: game.recipes.clone(),
+            tags: game.tags.clone(),
             containers: game.containers.clone(),
         }));
         // Blocks a step set, as /setblock sets them: a mod's ticking blocks
@@ -1333,4 +1444,54 @@ fn same<T: PartialEq + std::fmt::Debug>(what: &str, want: &T, got: &T) -> Result
     Err(format!(
         "{what}\n    expected: {want:?}\n    got:      {got:?}"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ingredients_match_items_and_tags_through_tags() {
+        let mut tags = Tags::new();
+        add_tag(
+            &mut tags,
+            "c:stripped_logs".into(),
+            r##"{"values": ["#minecraft:stripped_oak", {"id": "mymod:log", "required": false}]}"##,
+        );
+        add_tag(
+            &mut tags,
+            "minecraft:stripped_oak".into(),
+            r#"{"values": ["minecraft:stripped_oak_log"]}"#,
+        );
+        add_tag(&mut tags, "mymod:gone".into(), r#"{"values": ["a:b"]}"#);
+        add_tag(
+            &mut tags,
+            "mymod:gone".into(),
+            r#"{"replace": true, "values": ["c:d"]}"#,
+        );
+        assert!(in_tag(
+            &tags,
+            "c:stripped_logs",
+            "minecraft:stripped_oak_log",
+            0
+        ));
+        assert!(in_tag(&tags, "c:stripped_logs", "mymod:log", 0));
+        assert!(!in_tag(&tags, "c:stripped_logs", "minecraft:oak_log", 0));
+        assert_eq!(tags["mymod:gone"], ["c:d"]);
+        let world = ScriptWorld {
+            blocks: Default::default(),
+            power: Default::default(),
+            dropped: Vec::new(),
+            recipes: Vec::new(),
+            tags: std::sync::Arc::new(tags),
+            containers: Default::default(),
+        };
+        use crate::WorldView;
+        let log = "minecraft:stripped_oak_log";
+        assert!(world.test_ingredient("#c:stripped_logs", log));
+        assert!(world.test_ingredient(r#"{"tag": "c:stripped_logs"}"#, log));
+        assert!(world.test_ingredient(r##"["minecraft:stick", "#c:stripped_logs"]"##, log));
+        assert!(world.test_ingredient(r#"{"item": "minecraft:stick"}"#, "minecraft:stick"));
+        assert!(!world.test_ingredient("#c:stripped_logs", "minecraft:stick"));
+    }
 }

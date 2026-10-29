@@ -463,6 +463,15 @@ fn neoforge_obj_and_composite_models_bake() {
             ("horizon-mod.toml", &manifest("loaders", "")),
             ("data/loaders/horizon/block/wheel.json", &wheel_block),
             ("data/loaders/horizon/block/box.json", &box_block),
+            ("data/loaders/horizon/block/red_wheel.json", &wheel_block),
+            (
+                "assets/loaders/blockstates/red_wheel.json",
+                r#"{"variants": {"": {"model": "loaders:block/red_wheel"}}}"#,
+            ),
+            (
+                "assets/loaders/models/block/red_wheel.json",
+                r#"{"parent": "loaders:block/wheel", "textures": {"0": "minecraft:block/oak_planks"}}"#,
+            ),
             (
                 "assets/loaders/blockstates/wheel.json",
                 r#"{"variants": {"": {"model": "loaders:block/wheel"}}}"#,
@@ -510,6 +519,15 @@ fn neoforge_obj_and_composite_models_bake() {
     assert_eq!(faces("loaders:wheel"), 2);
     // The slab's two faces and the wheel's two.
     assert_eq!(faces("loaders:box"), 4);
+    // A model with no geometry of its own takes its parent's OBJ, with its
+    // own textures.
+    assert_eq!(faces("loaders:red_wheel"), 2);
+    let red = assets.registry.default_state("loaders:red_wheel").unwrap();
+    let red = render.model_catalog.collect_seeded(red, 0).unwrap();
+    assert_eq!(
+        red[0].1.faces[0].quad.material.sprite,
+        "minecraft:block/oak_planks"
+    );
     let state = assets.registry.default_state("loaders:wheel").unwrap();
     let models = render.model_catalog.collect_seeded(state, 0).unwrap();
     let quad = &models[0].1.faces[0].quad;

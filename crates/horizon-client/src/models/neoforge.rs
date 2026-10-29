@@ -13,23 +13,31 @@ use horizon_assets::{
 use serde_json::Value;
 use std::{fs, path::Path};
 
-/// The JSON of model `name` when it names a NeoForge loader.
+/// The JSON naming the NeoForge loader model `name` draws with: its own,
+/// or, as NeoForge takes a parent's geometry when a model has none, its
+/// nearest parent's (a red valve handle, its textures over a valve
+/// handle's OBJ). None for a model with elements or a vanilla parent first.
 pub(crate) fn loader(root: &Path, name: &str) -> Option<Value> {
-    let (namespace, path) = name.split_once(':')?;
-    // Vanilla's models never name one: no read for them.
-    if namespace == "minecraft" {
-        return None;
+    let mut name = name.to_owned();
+    for _ in 0..8 {
+        let (namespace, path) = name.split_once(':').unwrap_or(("minecraft", &name));
+        // Vanilla's models never name one: no read for them.
+        if namespace == "minecraft" {
+            return None;
+        }
+        let file = root.join(format!("assets/{namespace}/models/{path}.json"));
+        let text = fs::read_to_string(file).ok()?;
+        let json: Value =
+            serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text)).ok()?;
+        if let Some(loader) = json.get("loader").and_then(Value::as_str) {
+            return loader.starts_with("neoforge:").then_some(json);
+        }
+        if json.get("elements").is_some() {
+            return None;
+        }
+        name = json.get("parent")?.as_str()?.to_owned();
     }
-    let text =
-        fs::read_to_string(root.join(format!("assets/{namespace}/models/{path}.json"))).ok()?;
-    if !text.contains("\"loader\"") {
-        return None;
-    }
-    let json: Value = serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text)).ok()?;
-    json.get("loader")
-        .and_then(Value::as_str)
-        .is_some_and(|l| l.starts_with("neoforge:"))
-        .then_some(json)
+    None
 }
 
 /// The quads of a model with a NeoForge loader: `json` is its file,
