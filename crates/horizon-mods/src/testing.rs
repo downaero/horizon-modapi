@@ -900,6 +900,12 @@ impl Step {
             recipes: game.recipes.clone(),
             containers: game.containers.clone(),
         }));
+        // Blocks a step set, as /setblock sets them: a mod's ticking blocks
+        // among them get their data as in the game.
+        let set: Vec<[i32; 3]> = self.blocks.iter().map(|b| [b.x, b.y, b.z]).collect();
+        if !set.is_empty() {
+            game.mods.adopt_blocks("minecraft:overworld", &set);
+        }
         if let Some(name) = &self.join {
             game.join(name);
         }

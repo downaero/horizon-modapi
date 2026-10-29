@@ -289,7 +289,11 @@ fn tick<T: BlockEntity>(level: &Level, pos: BlockPos, state: &BlockState) {
         return;
     };
     let mut entity = T::new(pos, state);
-    entity.load_additional(&before);
+    // Empty data: a block the game gave data to as it appeared (placed by a
+    // command or another mod), starting from `new`.
+    if !before.is_empty() {
+        entity.load_additional(&before);
+    }
     entity.tick(level, pos, state);
     let mut after = Vec::new();
     entity.save_additional(&mut after);

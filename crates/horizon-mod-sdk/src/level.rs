@@ -358,7 +358,10 @@ impl Level {
     pub fn get_block_entity<T: BlockEntity>(&self, pos: BlockPos) -> Option<T> {
         let data = block_entities::get(&self.dimension, pos.x, pos.y, pos.z)?;
         let mut entity = T::new(pos, &self.get_block_state(pos));
-        entity.load_additional(&data);
+        // Empty data: a block given data as it appeared, still as `new` made it.
+        if !data.is_empty() {
+            entity.load_additional(&data);
+        }
         Some(entity)
     }
     /// Keeps `entity` at `pos` (capability `block-entities`), synced to

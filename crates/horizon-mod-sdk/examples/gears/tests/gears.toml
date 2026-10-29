@@ -52,3 +52,11 @@ expect.taken = [20]
 expect.drops = []
 expect.slots = ["5 63 5 0 minecraft:iron_nugget x9"]
 expect.inventory = ["0 minecraft:stick x3"]
+
+# A counter set as /setblock sets it, not placed by a player, still runs: the
+# game gives a mod's ticking block its data however it appears.
+[[step]]
+blocks = [{ x = 9, y = 64, z = 9, state = "gears:counter" }]
+items = [{ id = 30, item = "minecraft:iron_ingot", x = 9.5, y = 64.5, z = 9.5 }]
+ticks = 20
+expect.taken = [30]

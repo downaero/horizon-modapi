@@ -854,11 +854,14 @@ no change to them. `horizon_mod_sdk::level` has `BlockPos` (`above`, `relative(d
 `export_server_mod!` then calls them for those blocks before the mod's own hooks, which hear every
 other block and the clicks a block passes (`InteractionResult::Pass`).
 
-A block entity is made when a player places its block and kept as the bytes `block-entities` holds
-there, so it is ticked, saved and told of neighbour changes as those are; after its tick it is saved
-again when its bytes changed. A block the mod sets itself gets its entity from `set_block_entity` in
-a later call, once the block stands. The gears example's `gears:drill` (a `BlockEntity` counting
-its ticks) and `gears:deployer` (a `Block`) are written this way.
+A block entity is kept as the bytes `block-entities` holds at its block, so it is ticked, saved and
+told of neighbour changes as those are; after its tick it is saved again when its bytes changed. It
+is made however its block appears, as NeoForge makes one with any placement: a player's placing
+makes it at once (with `set_placed_by`), and a block of one of the mod's ticking blocks that
+appears any other way (`/setblock`, a mod's `set-blocks`, a structure put back) gets empty data
+from the game at the next tick (`Mods::adopt_blocks`), which the SDK starts from `new`. The gears
+example's `gears:drill` (a `BlockEntity` counting its ticks) and `gears:deployer` (a `Block`) are
+written this way.
 
 ### Players: inventories and the console
 

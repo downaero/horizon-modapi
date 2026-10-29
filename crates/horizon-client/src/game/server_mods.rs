@@ -1057,6 +1057,8 @@ mod run {
             changed.truncate(MAX_NEIGHBOR_CHANGES);
             if !changed.is_empty() {
                 let changed: Vec<[i32; 3]> = changed.into_iter().map(|p| [p.0, p.1, p.2]).collect();
+                // A mod's ticking block however placed gets its data first.
+                self.mods.mods.adopt_blocks(self.dim.id(), &changed);
                 self.mods.mods.neighbors_changed(self.dim.id(), &changed);
             }
             // In order: a button's action sees the texts sent before it.

@@ -1991,6 +1991,47 @@ impl Mods {
     /// Blocks changed since the last tick in `dimension`: each mod that
     /// keeps data at a neighbour of one hears `neighbor-changed`, at most
     /// [`NEIGHBOR_CALLS_PER_TICK`] calls to a mod.
+    /// Gives every block of a mod's ticking blocks that `changed` put in
+    /// the world empty block data, however it got there (`/setblock`, a
+    /// mod's `set-blocks`, a structure put back), as NeoForge makes a block
+    /// entity with any placement: the game then ticks it, and the SDK's
+    /// `BlockEntity` starts it from `new`. Data the mod keeps stays.
+    pub fn adopt_blocks(&mut self, dimension: &str, changed: &[[i32; 3]]) {
+        let world = self.world.clone();
+        let Ok(view) = world.lock() else { return };
+        let Some(view) = view.as_ref() else { return };
+        for entry in &mut self.entries {
+            let Some(run) = entry.run.as_mut() else {
+                continue;
+            };
+            if run.ticking.is_empty() {
+                continue;
+            }
+            for p in changed {
+                let key = (dimension.to_owned(), *p);
+                let data = &run.store.data().block_data;
+                if data.contains_key(&key) || data.len() >= BLOCK_DATA_POSITIONS {
+                    continue;
+                }
+                let Some(state) = view.block(dimension, p[0], p[1], p[2]) else {
+                    continue;
+                };
+                let id = state.split('[').next().unwrap_or(&state);
+                if !run.ticking.iter().any(|t| t == id) {
+                    continue;
+                }
+                let mod_id = run.store.data().id.clone();
+                run.store.data_mut().block_data.insert(key, Vec::new());
+                self.out.push(Output::BlockData {
+                    mod_id,
+                    dimension: dimension.to_owned(),
+                    pos: *p,
+                    data: Some(Vec::new()),
+                    synced: false,
+                });
+            }
+        }
+    }
     pub fn neighbors_changed(&mut self, dimension: &str, changed: &[[i32; 3]]) {
         const AROUND: [[i32; 3]; 6] = [
             [1, 0, 0],
