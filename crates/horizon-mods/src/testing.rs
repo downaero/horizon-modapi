@@ -662,21 +662,25 @@ impl TestGame {
 
     /// `player` right-clicks `state` at `pos` with an empty hand; whether
     /// a mod took the click.
-    /// `face` is the face clicked (0 down, 1 up, 2 north ... 5 east).
+    /// `face` is the face clicked (0 down, 1 up, 2 north ... 5 east), `hit`
+    /// where the click hit, in blocks in the world.
     pub fn use_block(
         &mut self,
         player: &ServerPlayer,
         pos: BlockPos,
         face: Option<u8>,
+        hit: [f64; 3],
         state: &str,
     ) -> bool {
         self.snapshot();
         self.mods
-            .block_used(player, "minecraft:overworld", pos, face, state)
+            .block_used(player, "minecraft:overworld", pos, face, Some(hit), state)
     }
 
-    /// `player` right-clicks `state` at `pos` on `face` with `item` in their
-    /// main hand (`item-events`); whether a mod took the click.
+    /// `player` right-clicks `state` at `pos` on `face`, hitting `hit`, with
+    /// `item` in their main hand (`item-events`); whether a mod took the
+    /// click.
+    #[allow(clippy::too_many_arguments)]
     pub fn use_item_on(
         &mut self,
         player: &ServerPlayer,
@@ -684,6 +688,7 @@ impl TestGame {
         sneaking: bool,
         pos: BlockPos,
         face: u8,
+        hit: [f64; 3],
         state: &str,
     ) -> bool {
         self.snapshot();
@@ -695,7 +700,8 @@ impl TestGame {
             face,
             state: state.to_owned(),
         };
-        self.mods.item_used(player, item, sneaking, Some(&target))
+        self.mods
+            .item_used(player, item, sneaking, Some(&target), Some(hit))
     }
 
     /// `player` right-clicks the mob `id` (one of [`TestGame::living`]) with
@@ -746,6 +752,7 @@ impl TestGame {
     /// What `out` changes, as the game applies it: blocks set and broken,
     /// slots, player stacks, visuals, forwards, mobs, item entities taken.
     fn apply(&mut self, out: &[Output]) {
+        let mut set = Vec::new();
         let overworld = |d: &str| d == "minecraft:overworld";
         for o in out {
             match o {
@@ -753,6 +760,7 @@ impl TestGame {
                     dimension, blocks, ..
                 } if overworld(dimension) => {
                     for b in blocks {
+                        set.push([b.x, b.y, b.z]);
                         let at = (b.x, b.y, b.z);
                         let block = |s: &str| s.split('[').next().unwrap_or_default().to_owned();
                         let was = self.world.get(&at).map(|s| block(s));
@@ -931,6 +939,16 @@ impl TestGame {
             })
             .collect();
         self.items.retain(|i| !taken.contains(&i.id));
+        // The mod's ticking blocks among those its `set-blocks` put get their
+        // data, as the game gives them: they tick from the next tick on.
+        if !set.is_empty() {
+            let lent = self.mods.take_world().is_some();
+            self.lend();
+            self.mods.adopt_blocks("minecraft:overworld", &set);
+            if !lent {
+                self.mods.take_world();
+            }
+        }
     }
 }
 
@@ -1024,6 +1042,10 @@ pub struct UseAt {
     y: i32,
     z: i32,
     face: Option<String>,
+    /// Where the click hits, in blocks in the world
+    /// (`block-entities.clicked-at`); none: the middle of the face (of the
+    /// block, with no face).
+    at: Option<[f64; 3]>,
     /// The item in their main hand (`item-events`); none: an empty hand.
     item: Option<String>,
     /// They sneak as they click (with an item).
@@ -1475,14 +1497,31 @@ impl Step {
                 ),
                 None => None,
             };
+            // Where it hits: the middle of the face, unless the script says.
+            let middle = |face: Option<u8>| {
+                let n = match face {
+                    Some(0) => [0, -1, 0],
+                    Some(1) => [0, 1, 0],
+                    Some(2) => [0, 0, -1],
+                    Some(3) => [0, 0, 1],
+                    Some(4) => [-1, 0, 0],
+                    Some(5) => [1, 0, 0],
+                    _ => [0; 3],
+                };
+                let at = [u.x, u.y, u.z];
+                [0, 1, 2].map(|k| f64::from(at[k]) + 0.5 + 0.5 * f64::from(n[k]))
+            };
             match &u.item {
                 // A click with an item reaches `item-used` with the face
                 // clicked (up when the script names none).
                 Some(item) => {
-                    game.use_item_on(p, item, u.sneaking, pos, face.unwrap_or(1), &state);
+                    let face = face.unwrap_or(1);
+                    let hit = u.at.unwrap_or_else(|| middle(Some(face)));
+                    game.use_item_on(p, item, u.sneaking, pos, face, hit, &state);
                 }
                 None => {
-                    game.use_block(p, pos, face, &state);
+                    let hit = u.at.unwrap_or_else(|| middle(face));
+                    game.use_block(p, pos, face, hit, &state);
                 }
             }
         }

@@ -1,0 +1,18 @@
+# gears:deployer works from the middle of its top: where a click hits
+# (`block-entities.clicked-at`) tells it from the rest of the face.
+
+[[step]]
+join = "Alex"
+blocks = [{ x = 0, y = 64, z = 0, state = "gears:deployer" }]
+use = { x = 0, y = 64, z = 0, face = "north" }
+expect.told = ["Alex: The deployer works from its top, not north"]
+
+# Near the top's edge: not its middle.
+[[step]]
+use = { x = 0, y = 64, z = 0, face = "up", at = [0.1, 65.0, 0.5] }
+expect.told = ["Alex: The deployer works from the middle of its top"]
+
+# The top's middle (where a script's click hits when it names none).
+[[step]]
+use = { x = 0, y = 64, z = 0, face = "up" }
+expect.told = []

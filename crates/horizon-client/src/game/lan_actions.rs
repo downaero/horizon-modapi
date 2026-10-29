@@ -1183,12 +1183,16 @@ impl Game<'_> {
                 if self.under_spawn_protection(host, gi, p.pos) {
                     self.spawn_protection_message(host, conn, p.pos);
                 } else if hand == Hand::Main
-                    && self.mod_item_use_by_guest(host, conn, Some((p.pos, p.face as u8)))
+                    && self.mod_item_use_by_guest(
+                        host,
+                        conn,
+                        Some((p.pos, p.face as u8, hit.point)),
+                    )
                 {
                     // A server mod took the click with the item (`item-used`).
                     self.lan_swing_back(host, conn, Some(true));
                 } else if hand == Hand::Main
-                    && self.mod_block_use_by_guest(host, conn, p.pos, p.face as u8)
+                    && self.mod_block_use_by_guest(host, conn, p.pos, p.face as u8, hit.point)
                 {
                     // A server mod took the click (capability `block-entities`).
                     self.lan_swing_back(host, conn, Some(true));

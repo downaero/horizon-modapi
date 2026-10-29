@@ -1406,6 +1406,9 @@ struct State {
     /// The face of the click `block-used` is called for
     /// (`block-entities.clicked-face`).
     clicked_face: Option<u8>,
+    /// Where that click, or `item-used`'s on a block, hit
+    /// (`block-entities.clicked-at`).
+    clicked_at: Option<[f64; 3]>,
     /// Where [`Mods::tick_blocks`] resumes in `block_data`.
     block_cursor: usize,
     /// The entity types the mod registered, by id.
@@ -1704,6 +1707,7 @@ impl Mods {
             entity_types: Default::default(),
             next_typed: 1,
             clicked_face: None,
+            clicked_at: None,
             block_namespaces: std::iter::once(m.id.clone())
                 .chain(m.namespaces.iter().cloned())
                 .collect(),
@@ -2362,7 +2366,9 @@ impl Mods {
         item: &str,
         sneaking: bool,
         target: Option<&BlockTarget>,
+        hit: Option<[f64; 3]>,
     ) -> bool {
+        let hit = hit.filter(|_| target.is_some());
         let ns = |id: &str| {
             id.split('[')
                 .next()
@@ -2394,15 +2400,21 @@ impl Mods {
         let mut handled = false;
         for i in owners {
             handled |= self
-                .call(i, FUEL_EVENT, |run| match &run.item {
-                    Some(h) => h.horizon_mods_item_events().call_item_used(
-                        &mut run.store,
-                        &player.id,
-                        item,
-                        sneaking,
-                        target,
-                    ),
-                    None => Ok(false),
+                .call(i, FUEL_EVENT, |run| {
+                    // Where it hit is known for this call only.
+                    run.store.data_mut().clicked_at = hit;
+                    let used = match &run.item {
+                        Some(h) => h.horizon_mods_item_events().call_item_used(
+                            &mut run.store,
+                            &player.id,
+                            item,
+                            sneaking,
+                            target,
+                        ),
+                        None => Ok(false),
+                    };
+                    run.store.data_mut().clicked_at = None;
+                    used
                 })
                 .unwrap_or(false);
             if handled {
@@ -2473,6 +2485,7 @@ impl Mods {
         dimension: &str,
         pos: BlockPos,
         face: Option<u8>,
+        hit: Option<[f64; 3]>,
         state: &str,
     ) -> bool {
         let id = state.split('[').next().unwrap_or(state);
@@ -2486,8 +2499,9 @@ impl Mods {
         for i in owners {
             handled |= self
                 .call(i, FUEL_EVENT, |run| {
-                    // The face is known for this call only.
+                    // The face and where it hit are known for this call only.
                     run.store.data_mut().clicked_face = face.filter(|f| *f < 6);
+                    run.store.data_mut().clicked_at = hit;
                     let used = match &run.blocks {
                         Some(b) => b.horizon_mods_block_events().call_block_used(
                             &mut run.store,
@@ -2499,6 +2513,7 @@ impl Mods {
                         None => Ok(false),
                     };
                     run.store.data_mut().clicked_face = None;
+                    run.store.data_mut().clicked_at = None;
                     used
                 })
                 .unwrap_or(false);
@@ -3859,6 +3874,9 @@ impl State {
 impl block_entities::Host for State {
     fn clicked_face(&mut self) -> Option<u8> {
         self.clicked_face
+    }
+    fn clicked_at(&mut self) -> Option<(f64, f64, f64)> {
+        self.clicked_at.map(|[x, y, z]| (x, y, z))
     }
     fn get(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<Vec<u8>> {
         self.block_data.get(&(dimension, [x, y, z])).cloned()

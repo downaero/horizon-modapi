@@ -409,7 +409,7 @@ impl BlockEntity for Drill {
     }
 }
 
-/// Clicked on its top, uses cobblestone on the block above as a player would (`world.use-item`):
+/// Clicked on the middle of its top, uses cobblestone on the block above as a player would (`world.use-item`):
 /// a lever there flips, else cobblestone goes on top. It tells itself
 /// through `peers`, heard next tick.
 struct Deployer;
@@ -430,6 +430,14 @@ impl Block for Deployer {
                 player,
                 &format!("The deployer works from its top, not {face}"),
             );
+            return InteractionResult::Consume;
+        }
+        // Only the middle of its top, as Create's filter slots are boxes on a
+        // face (`get_location`, `block-entities.clicked-at`).
+        let [x, _, z] = hit.get_location();
+        let middle = |v: f64| (0.25..=0.75).contains(&v);
+        if !middle(x - f64::from(pos.x)) || !middle(z - f64::from(pos.z)) {
+            players::tell(player, "The deployer works from the middle of its top");
             return InteractionResult::Consume;
         }
         let above = pos.above();

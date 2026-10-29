@@ -39,6 +39,22 @@ impl InteractionResult {
 pub struct BlockHitResult {
     pub pos: BlockPos,
     pub direction: Option<Direction>,
+    /// Where the click hit, in blocks in the world, as NeoForge's
+    /// `getLocation` (`block-entities.clicked-at`): minus `pos`, 0 to 1 on
+    /// each axis.
+    pub location: [f64; 3],
+}
+
+impl BlockHitResult {
+    pub fn get_block_pos(&self) -> BlockPos {
+        self.pos
+    }
+    pub fn get_direction(&self) -> Option<Direction> {
+        self.direction
+    }
+    pub fn get_location(&self) -> [f64; 3] {
+        self.location
+    }
 }
 
 /// A block of the mod's own (`mymod:gear`, declared in
@@ -333,6 +349,8 @@ struct Registry {
     /// `block-entities.clicked-face`, kept by `register`: a mod that
     /// registers no block never imports `block-entities` for it.
     clicked_face: Option<fn() -> Option<u8>>,
+    /// `block-entities.clicked-at`, as `clicked_face`.
+    clicked_at: Option<fn() -> Option<(f64, f64, f64)>>,
 }
 
 std::thread_local! {
@@ -349,6 +367,7 @@ pub fn register(block: &str, behaviour: impl Block) -> Result<(), String> {
         }
         r.blocks.push((block.to_owned(), Rc::new(behaviour)));
         r.clicked_face = Some(block_entities::clicked_face);
+        r.clicked_at = Some(block_entities::clicked_at);
         Ok(())
     })
 }
@@ -479,6 +498,20 @@ pub fn __tick(dimension: &str, pos: Pos, state: &str) -> bool {
     true
 }
 
+/// Where the click being handled hit: the game's, else the middle of the
+/// face clicked (of the block, with none).
+fn clicked_at(pos: BlockPos, direction: Option<Direction>) -> [f64; 3] {
+    let at = REGISTRY.with(|r| r.borrow().clicked_at).and_then(|at| at());
+    if let Some((x, y, z)) = at {
+        return [x, y, z];
+    }
+    let n = direction.map_or([0; 3], Direction::get_normal);
+    [0, 1, 2].map(|k| {
+        let p = [pos.x, pos.y, pos.z][k];
+        f64::from(p) + 0.5 + 0.5 * f64::from(n[k])
+    })
+}
+
 #[doc(hidden)]
 pub fn __used(player: &str, dimension: &str, pos: Pos, state: &str) -> bool {
     let state = BlockState::parse(state);
@@ -486,12 +519,14 @@ pub fn __used(player: &str, dimension: &str, pos: Pos, state: &str) -> bool {
         return false;
     };
     let pos = BlockPos::from(pos);
+    let direction = REGISTRY
+        .with(|r| r.borrow().clicked_face)
+        .and_then(|face| face())
+        .and_then(Direction::from_3d_data_value);
     let hit = BlockHitResult {
         pos,
-        direction: REGISTRY
-            .with(|r| r.borrow().clicked_face)
-            .and_then(|face| face())
-            .and_then(Direction::from_3d_data_value),
+        direction,
+        location: clicked_at(pos, direction),
     };
     block
         .use_without_item(&state, &Level::new(dimension), pos, player, &hit)
@@ -508,9 +543,11 @@ pub fn __item_used(player: &str, item: &str, target: Option<&BlockTarget>) -> bo
         return false;
     };
     let pos = BlockPos::new(t.x, t.y, t.z);
+    let direction = Direction::from_3d_data_value(t.face);
     let hit = BlockHitResult {
         pos,
-        direction: Direction::from_3d_data_value(t.face),
+        direction,
+        location: clicked_at(pos, direction),
     };
     block
         .use_item_on(item, &state, &Level::new(&t.dimension), pos, player, &hit)

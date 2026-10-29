@@ -1015,6 +1015,7 @@ Capability `block-entities`, server mods only (manifest `api = "0.3"`, experimen
 | `set` | `func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>` | Stores bytes at a position (at most 64 KiB; 65,536 positions per mod), replacing any there. The game forgets them when the block is broken or replaced by something that is not one of the mod's. |
 | `remove` | `func(dimension: string, x: s32, y: s32, z: s32)` | Forgets the bytes at a position. |
 | `clicked-face` | `func() -> option<u8>` | During `block-events.block-used`: the face the player clicked (0 down, 1 up, 2 north, 3 south, 4 west, 5 east), as `item-events` gives it; none at any other time. |
+| `clicked-at` | `func() -> option<tuple<f64, f64, f64>>` | During `block-events.block-used`, and `item-events.item-used` on a block: where the click hit, in blocks in the world (vanilla's `BlockHitResult.getLocation`; minus the block's position, 0 to 1 on each axis): a filter slot or a value box on a face, told from the rest of it. None at any other time. |
 | `set-synced` | `func(dimension: string, x: s32, y: s32, z: s32, data: list<u8>) -> result<_, string>` | `set`, and the bytes also go to every player whose game has the chunk, now, whenever they change and when the chunk reaches a player later: what the mod's client half reads with `block-data` (NeoForge's update tag). A later `set` at the position keeps them on the server only; `remove` takes them from the players' games too. Saved with the world as `set`'s are. |
 
 ## `structures`

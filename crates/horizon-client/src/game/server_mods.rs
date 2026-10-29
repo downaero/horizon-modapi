@@ -36,7 +36,7 @@ impl Game<'_> {
     pub(super) fn tick_server_mods(&mut self) {}
     pub(super) fn mod_block_event(&mut self, _pos: [i32; 3], _state: BlockStateId, _placed: bool) {}
     pub(super) fn mod_player_chat(&mut self, _who: Who, _text: &str) {}
-    pub(super) fn mod_block_use(&mut self, _pos: [i32; 3], _face: u8) -> bool {
+    pub(super) fn mod_block_use(&mut self, _pos: [i32; 3], _face: u8, _hit: [f64; 3]) -> bool {
         false
     }
     pub(super) fn mod_block_use_by_guest(
@@ -45,6 +45,7 @@ impl Game<'_> {
         _conn: u32,
         _pos: [i32; 3],
         _face: u8,
+        _hit: [f64; 3],
     ) -> bool {
         false
     }
@@ -52,7 +53,7 @@ impl Game<'_> {
         &mut self,
         _host: &mut LanHost,
         _conn: u32,
-        _target: Option<([i32; 3], u8)>,
+        _target: Option<([i32; 3], u8, [f64; 3])>,
     ) -> bool {
         false
     }
@@ -3303,8 +3304,13 @@ mod run {
         /// The acting player used the block at `pos` with an empty-handed
         /// click: whether a server mod took it. Only blocks of a mod's own
         /// namespace are offered, so vanilla blocks cost nothing here.
-        /// `face`: the face clicked, 0 down to 5 east.
-        pub(in crate::game) fn mod_block_use(&mut self, pos: [i32; 3], face: u8) -> bool {
+        /// `face`: the face clicked, 0 down to 5 east; `hit`: where it hit.
+        pub(in crate::game) fn mod_block_use(
+            &mut self,
+            pos: [i32; 3],
+            face: u8,
+            hit: [f64; 3],
+        ) -> bool {
             if !self.hears_players() {
                 return false;
             }
@@ -3319,7 +3325,7 @@ mod run {
                     }
                 }
             };
-            self.mod_block_used_by(None, players, &id, pos, face)
+            self.mod_block_used_by(None, players, &id, pos, face, hit)
         }
 
         /// A guest's empty-handed click on the block at `pos`, offered to the
@@ -3332,6 +3338,7 @@ mod run {
             conn: u32,
             pos: [i32; 3],
             face: u8,
+            hit: [f64; 3],
         ) -> bool {
             if !self.hears_players() {
                 return false;
@@ -3344,17 +3351,18 @@ mod run {
             }
             let id = uuid_string(g.uuid);
             let players = self.server_players(Some(host));
-            self.mod_block_used_by(Some(host), players, &id, pos, face)
+            self.mod_block_used_by(Some(host), players, &id, pos, face, hit)
         }
 
         /// A guest's right click with the item in their main hand, on a block
-        /// (`target`: position and face) or in the air, offered to the
-        /// server mods before the guest's turn runs: true when one took it.
+        /// (`target`: position, face and where it hit) or in the air, offered
+        /// to the server mods before the guest's turn runs: true when one
+        /// took it.
         pub(in crate::game) fn mod_item_use_by_guest(
             &mut self,
             host: &mut LanHost,
             conn: u32,
-            target: Option<([i32; 3], u8)>,
+            target: Option<([i32; 3], u8, [f64; 3])>,
         ) -> bool {
             if !self.hears_players() {
                 return false;
@@ -3384,7 +3392,8 @@ mod run {
                 return false;
             };
             let dimension = self.dim.id();
-            let target = target.map(|(p, face)| horizon_mods::BlockTarget {
+            let hit = target.map(|(_, _, hit)| hit);
+            let target = target.map(|(p, face, _)| horizon_mods::BlockTarget {
                 dimension: dimension.to_owned(),
                 x: p[0],
                 y: p[1],
@@ -3399,7 +3408,7 @@ mod run {
             let used = self
                 .mods
                 .mods
-                .item_used(&me, &item.item, sneaking, target.as_ref());
+                .item_used(&me, &item.item, sneaking, target.as_ref(), hit);
             self.return_world();
             self.route_mod_output(Some(host));
             self.apply_mod_block_writes();
@@ -3499,6 +3508,7 @@ mod run {
             id: &str,
             pos: [i32; 3],
             face: u8,
+            hit: [f64; 3],
         ) -> bool {
             let state = self.world.block(pos[0], pos[1], pos[2]);
             let state = self.state_string(state);
@@ -3518,10 +3528,10 @@ mod run {
                 y: pos[1],
                 z: pos[2],
             };
-            let used = self
-                .mods
-                .mods
-                .block_used(&me, dimension, pos, Some(face), &state);
+            let used =
+                self.mods
+                    .mods
+                    .block_used(&me, dimension, pos, Some(face), Some(hit), &state);
             self.return_world();
             self.route_mod_output(host);
             self.apply_mod_block_writes();

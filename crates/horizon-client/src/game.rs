@@ -4290,7 +4290,7 @@ impl Game<'_> {
                     [-1, 0, 0] => 4,
                     _ => 5,
                 };
-                if self.mod_block_use(hit.pos, clicked) {
+                if self.mod_block_use(hit.pos, clicked, hit.point) {
                     self.swing_arm();
                     return Ok(true);
                 }

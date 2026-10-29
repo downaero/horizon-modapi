@@ -305,7 +305,7 @@ A step's parts happen in this order:
 | `chat = "<Steve> hi"` | a chat line the player receives |
 | `command = "where north"` | the player types `/where north`; a command the mod doesn't own fails the step |
 | `break = { x = 1, y = 63, z = 0, state = "minecraft:stone" }`, `place = { ... }` | server mods: the player breaks or places that block |
-| `use = { x = 1, y = 64, z = 0, face = "up" }` | server mods: the player right-clicks the block there with an empty hand, on that face (`down`, `up`, `north`, `south`, `west`, `east`; left out: none); with `item = "minecraft:stick"` (and `sneaking = true`) they click with that item in their main hand, which reaches `item-used` (face left out: up) |
+| `use = { x = 1, y = 64, z = 0, face = "up" }` | server mods: the player right-clicks the block there with an empty hand, on that face (`down`, `up`, `north`, `south`, `west`, `east`; left out: none), hitting `at = [x, y, z]` in the world (left out: the face's middle); with `item = "minecraft:stick"` (and `sneaking = true`) they click with that item in their main hand, which reaches `item-used` (face left out: up) |
 | `living = [{ id = 3, kind = "minecraft:chicken", x = 2.5, y = 64.0, z = 2.5, health = 4.0 }]` | server mods: the mobs of the Overworld from now on (`entities.living-nearby`; health left out: 20), which the mod's `hurt` and `discard` change |
 | `use-entity = { id = 3, item = "gears:crate" }` | server mods: the player right-clicks that mob with the item in their main hand (left out: none; `sneaking = true`), which reaches `item-used-on-entity` |
 | `leave = "Alex"` | server mods: that player leaves |
@@ -694,6 +694,11 @@ and the game then does nothing else with it. Vanilla blocks never reach it.
 During the call `block-entities.clicked-face()` (API level 42) is the face the
 player clicked, 0 down to 5 east, as `item-events` gives it (a depot that takes
 and gives items only from its top); the SDK puts it in `BlockHitResult::direction`.
+`block-entities.clicked-at()` (API level 52) is where the click hit, in blocks in the world, as
+vanilla's `BlockHitResult.getLocation`, during `block-used` and during `item-used` on a block:
+minus the block's position, 0 to 1 on each axis, so a filter slot or a value box on a face is told
+from the rest of it. The SDK puts it in `BlockHitResult::location` (`get_location()`). The gears
+example's `gears:deployer` works only from the middle of its top.
 
 ### Capability `containers`
 
