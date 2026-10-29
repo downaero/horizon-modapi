@@ -11,9 +11,9 @@ use horizon_mod_sdk::{
     level::{BlockState, Direction, Level},
     player_ops,
     server::{
-        BlockPos, BlockTarget, Player, Pos, Registration, ServerMod, attachments, block_entities,
-        containers, effects, entity_types, items, menus, net, peers, players, recipe_manager,
-        redstone, stacks, transfer, visuals, world,
+        BlockPos, BlockTarget, Living, Player, Pos, Registration, ServerMod, attachments,
+        block_entities, containers, effects, entities, entity_types, items, menus, net, peers,
+        players, recipe_manager, redstone, stacks, transfer, visuals, world,
     },
     structure::Structure,
 };
@@ -322,14 +322,35 @@ impl BlockEntity for Drill {
     /// each point of its hardness (`world.block-info`), its cracks showing
     /// as it goes (`effects.destroy-progress`), the drops into the
     /// inventory above it (`world.break-block`). Leaves (`#minecraft:leaves`,
-    /// `world.block-tags`) it cuts as shears do, so they drop themselves. Air
-    /// and what nothing breaks (bedrock) it leaves.
+    /// `world.block-tags`) it cuts as shears do, so they drop themselves.
+    /// What nothing breaks (bedrock) it leaves; air it leaves too, hurting
+    /// what stands there every half second (`entities::hurt`).
     fn tick(&mut self, level: &Level, pos: BlockPos, _state: &BlockState) {
         let under = pos.below();
         let d = level.dimension();
         let below = world::get_block(d, under.x, under.y, under.z).unwrap_or_default();
+        if level.get_block_state(under).is_air() {
+            self.ticks = (self.ticks + 1) % 10;
+            if self.ticks == 0 {
+                let (x, y, z) = (under.x, under.y, under.z);
+                let near = entities::living_nearby(
+                    d,
+                    f64::from(x) + 0.5,
+                    f64::from(y),
+                    f64::from(z) + 0.5,
+                    1.0,
+                );
+                let inside = |l: &Living| {
+                    l.x.floor() as i32 == x && l.y.floor() as i32 == y && l.z.floor() as i32 == z
+                };
+                for l in near.iter().filter(|l| inside(l)) {
+                    entities::hurt(l.id, 2.0, "minecraft:generic");
+                }
+            }
+            return;
+        }
         let info = world::block_info(&below).filter(|i| i.hardness >= 0.0);
-        let Some(info) = info.filter(|_| !level.get_block_state(under).is_air()) else {
+        let Some(info) = info else {
             self.ticks = 0;
             return;
         };
@@ -573,6 +594,24 @@ impl ServerMod for Gears {
         ));
     }
 
+    /// A gear crate used on a chicken catches it: the chicken is gone, no
+    /// drops (`entities::discard`), as Create's burner catches a blaze.
+    fn item_used_on_entity(
+        &mut self,
+        player: &str,
+        item: &str,
+        _sneaking: bool,
+        target: &Living,
+    ) -> bool {
+        if item != CRATE || target.kind != "minecraft:chicken" {
+            return false;
+        }
+        if entities::discard(target.id) {
+            players::tell(player, "Caught a chicken");
+        }
+        true
+    }
+
     /// A stick used on one of the mod's blocks shows its state and takes
     /// the click (`item_used`).
     fn item_used(
@@ -746,6 +785,12 @@ impl ServerMod for Gears {
                     && (p.y - (y - 0.2)).abs() < 0.6;
                 if on {
                     players::push(&p.id, 0.06, 0.0, 0.0);
+                }
+            }
+            // Mobs standing on it too (`entities::push`).
+            for m in entities::living_nearby(dimension, x, y - 0.2, z, 0.8) {
+                if m.player.is_none() && (m.x - x).abs() < 0.6 && (m.z - z).abs() < 0.6 {
+                    entities::push(m.id, 0.06, 0.0, 0.0);
                 }
             }
             return;

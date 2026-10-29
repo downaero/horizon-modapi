@@ -56,6 +56,17 @@ impl Game<'_> {
     ) -> bool {
         false
     }
+    pub(super) fn mod_item_use_on_mob(&mut self, _index: usize) -> bool {
+        false
+    }
+    pub(super) fn mod_item_use_on_entity_by_guest(
+        &mut self,
+        _host: &mut LanHost,
+        _conn: u32,
+        _id: i32,
+    ) -> bool {
+        false
+    }
     pub(super) fn local_menu_message(&mut self, _message: horizon_mods::menu_layout::MenuMessage) {}
     pub(super) fn guest_mod_net(
         &mut self,
@@ -457,6 +468,9 @@ mod run {
         /// The item entities lying in the simulated dimension at the call's
         /// start (capability `items`).
         dropped: Vec<horizon_mods::DroppedStack>,
+        /// The mobs and players in the simulated dimension at the call's
+        /// start (`entities.living-nearby`).
+        living: Vec<horizon_mods::Living>,
         /// The redstone signal at the positions of the mod blocks that keep
         /// data or items in the simulated dimension, as of the call's start
         /// (capability `redstone`).
@@ -772,6 +786,12 @@ mod run {
                 return Vec::new();
             }
             self.dropped.clone()
+        }
+        fn living(&self, dimension: &str) -> Vec<horizon_mods::Living> {
+            if dimension != self.container_dim {
+                return Vec::new();
+            }
+            self.living.clone()
         }
         fn power(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<u8> {
             if dimension != self.container_dim {
@@ -1109,6 +1129,7 @@ mod run {
             self.apply_typed_ops();
             self.apply_mod_containers();
             self.apply_mod_takes();
+            self.apply_mod_living();
             self.apply_mod_pushes();
             self.apply_mod_breaks();
             self.apply_mod_item_uses();
@@ -1655,6 +1676,7 @@ mod run {
                     pos: [e.position.x, e.position.y, e.position.z],
                 })
                 .collect();
+            let living = self.mod_living();
             let entities = std::mem::take(&mut self.world.block_entities);
             let mut dims = vec![(self.dim.id(), std::mem::take(&mut self.world.chunks))];
             for (dim, chunks) in self.levels.parked_chunks() {
@@ -1669,12 +1691,122 @@ mod run {
                 containers,
                 container_dim: self.dim.id(),
                 dropped,
+                living,
                 power,
                 entities,
                 hopper_rules: self.world.hopper_rules.clone(),
                 res: self.res.clone(),
                 touched: Vec::new(),
             }));
+        }
+
+        /// The id mods know the window's own player by: its entity id while
+        /// the world is open to LAN, else one no entity has.
+        fn mod_local_player_id(&self) -> u32 {
+            self.lan.as_ref().map_or(u32::MAX, |h| h.host_entity as u32)
+        }
+
+        /// A mob as `entities.living-nearby` shows it.
+        fn mod_living_mob(m: &horizon_client::mobs::Mob) -> horizon_mods::Living {
+            horizon_mods::Living {
+                id: m.id,
+                kind: m.kind.id.clone(),
+                pos: [m.position.x, m.position.y, m.position.z],
+                health: m.health,
+                player: None,
+            }
+        }
+
+        /// The living mobs and the players of the simulated dimension, for
+        /// `entities.living-nearby`: at most [`MAX_LENT_ITEMS`].
+        fn mod_living(&self) -> Vec<horizon_mods::Living> {
+            let mut out: Vec<horizon_mods::Living> = self
+                .mobs
+                .iter()
+                .filter(|m| m.alive() && !m.removed)
+                .take(MAX_LENT_ITEMS)
+                .map(Self::mod_living_mob)
+                .collect();
+            if self.options.execution_role.is_client()
+                && self.remote.is_none()
+                && let Some(p) = self.player.as_ref()
+            {
+                out.push(horizon_mods::Living {
+                    id: self.mod_local_player_id(),
+                    kind: "minecraft:player".into(),
+                    pos: [p.position.x, p.position.y, p.position.z],
+                    health: p.health.health(),
+                    player: Some(self.player_uuid_string()),
+                });
+            }
+            let guests = self.lan.iter().flat_map(|h| &h.hub.guests);
+            for g in guests.filter(|g| g.placed && !g.dead && g.dimension == self.dim.id()) {
+                out.push(horizon_mods::Living {
+                    id: g.entity_id as u32,
+                    kind: "minecraft:player".into(),
+                    pos: g.position,
+                    health: g.health,
+                    player: Some(uuid_string(g.uuid)),
+                });
+            }
+            out
+        }
+
+        /// Applies what server mods did to living entities (`entities.hurt`
+        /// and `discard`): mobs of the simulated dimension, the window's own
+        /// player, guests.
+        pub(in crate::game) fn apply_mod_living(&mut self) {
+            for op in std::mem::take(&mut self.mods.living) {
+                match op {
+                    horizon_mods::LivingOp::Hurt {
+                        id,
+                        amount,
+                        damage_type,
+                    } => {
+                        let damage = horizon_client::mobs::Damage {
+                            kind: Self::damage_kind(&damage_type),
+                            attacker: None,
+                            from: None,
+                        };
+                        if let Some(m) = self.mobs.iter_mut().find(|m| m.id == id) {
+                            m.damage(amount, damage);
+                        } else if self.options.execution_role.is_client()
+                            && self.remote.is_none()
+                            && id == self.mod_local_player_id()
+                        {
+                            if !self.spectator() {
+                                self.hurt_player_from(amount, None, &damage_type, None);
+                            }
+                        } else if let Some(mut host) = self.lan.take() {
+                            let conn = host
+                                .hub
+                                .guests
+                                .iter()
+                                .find(|g| g.entity_id as u32 == id && g.placed && !g.dead)
+                                .map(|g| g.conn);
+                            if let Some(conn) = conn {
+                                self.guest_hit_by(&mut host, conn, |g| {
+                                    g.hurt_player_by(&damage_type, amount)
+                                });
+                            }
+                            self.lan = Some(host);
+                        }
+                    }
+                    horizon_mods::LivingOp::Discard { id } => {
+                        let found = self
+                            .mobs
+                            .iter()
+                            .any(|m| m.id == id && m.alive() && !m.removed);
+                        if found {
+                            // Leashable.dropLeash, then discard.
+                            self.break_leash(id, true, false);
+                            if let Some(m) = self.mobs.iter_mut().find(|m| m.id == id) {
+                                m.removed = true;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         /// The redstone signal at the positions mods keep block data at in
@@ -2642,6 +2774,27 @@ mod run {
                             e.velocity = e.velocity.add_vector(delta);
                         }
                     }
+                    horizon_mods::PushTarget::Living(id) => {
+                        if let Some(m) = self.mobs.iter_mut().find(|m| m.id == id) {
+                            m.velocity = m.velocity.add_vector(delta);
+                            m.needs_sync = true;
+                            continue;
+                        }
+                        // A player, by their entity id.
+                        let local = (self.options.execution_role.is_client()
+                            && self.remote.is_none()
+                            && id == self.mod_local_player_id())
+                        .then(|| self.player_uuid_string());
+                        let guest =
+                            self.lan.iter().flat_map(|h| &h.hub.guests).find_map(|g| {
+                                (g.entity_id as u32 == id).then(|| uuid_string(g.uuid))
+                            });
+                        if let Some(uuid) = local.or(guest) {
+                            self.mods
+                                .pushes
+                                .push((horizon_mods::PushTarget::Player(uuid), v));
+                        }
+                    }
                     horizon_mods::PushTarget::Player(uuid) => {
                         if self.options.execution_role.is_client()
                             && self.remote.is_none()
@@ -3027,6 +3180,87 @@ mod run {
             if used && target.is_some() {
                 self.mods.used_on_block.push((conn, now));
             }
+            used
+        }
+
+        /// The window's own player's right click on mob `index`, offered to
+        /// the server mods before anything vanilla does with it
+        /// (`living-events`): true when one took it. A guest's comes by
+        /// [`Self::mod_item_use_on_entity_by_guest`].
+        pub(in crate::game) fn mod_item_use_on_mob(&mut self, index: usize) -> bool {
+            if !self.hears_players() || self.lan_acting.is_some() {
+                return false;
+            }
+            let Some(m) = self.mobs.get(index) else {
+                return false;
+            };
+            let target = Self::mod_living_mob(m);
+            let item = self.held().map(|s| s.item.to_string()).unwrap_or_default();
+            let sneaking = self
+                .player
+                .as_ref()
+                .is_some_and(|p| p.pose == horizon_client::pose::Pose::Crouching);
+            let id = self.player_uuid_string();
+            self.mod_item_used_on(None, &id, &item, sneaking, &target)
+        }
+
+        /// A guest's right click with their main hand on the mob with entity
+        /// id `id`, offered to the server mods before the guest's turn runs:
+        /// true when one took it.
+        pub(in crate::game) fn mod_item_use_on_entity_by_guest(
+            &mut self,
+            host: &mut LanHost,
+            conn: u32,
+            id: i32,
+        ) -> bool {
+            if !self.hears_players() {
+                return false;
+            }
+            let Some(target) = self
+                .mobs
+                .iter()
+                .find(|m| m.id as i32 == id && m.alive() && !m.removed)
+                .map(Self::mod_living_mob)
+            else {
+                return false;
+            };
+            let Some(g) = host.hub.guests.iter().find(|g| g.conn == conn) else {
+                return false;
+            };
+            let item = g
+                .inventory
+                .get(g.selected)
+                .and_then(|s| s.as_ref())
+                .map_or_else(String::new, |s| s.item.to_string());
+            let (id, sneaking) = (uuid_string(g.uuid), g.sneaking);
+            self.mod_item_used_on(Some(host), &id, &item, sneaking, &target)
+        }
+
+        /// Offers player `id`'s click with `item` on `target` to the server
+        /// mods.
+        fn mod_item_used_on(
+            &mut self,
+            mut host: Option<&mut LanHost>,
+            id: &str,
+            item: &str,
+            sneaking: bool,
+            target: &horizon_mods::Living,
+        ) -> bool {
+            let players = self.server_players(host.as_deref());
+            let Some(me) = players.iter().find(|p| p.id == id).cloned() else {
+                return false;
+            };
+            let mut snapshot = self.mod_snapshot_with(players);
+            self.fill_mod_inventories(&mut snapshot, host.as_deref());
+            self.mods.mods.set_snapshot(snapshot);
+            self.lend_world();
+            let used = self
+                .mods
+                .mods
+                .item_used_on_entity(&me, item, sneaking, target);
+            self.return_world();
+            self.route_mod_output(host.as_deref_mut());
+            self.apply_mod_block_writes();
             used
         }
 
@@ -3792,6 +4026,12 @@ mod run {
                     let queue = &mut self.mods.pushes;
                     if queue.len() < MAX_QUEUED_ENTITY_OPS {
                         queue.push((target, velocity));
+                    }
+                }
+                Output::Living { op, .. } => {
+                    let queue = &mut self.mods.living;
+                    if queue.len() < MAX_QUEUED_ENTITY_OPS {
+                        queue.push(op);
                     }
                 }
                 Output::Take { id, .. } => {

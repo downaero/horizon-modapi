@@ -38,6 +38,9 @@ pub struct TestGame {
     pub power: std::collections::BTreeMap<(i32, i32, i32), u8>,
     /// The item entities lying in the Overworld; `take` removes them.
     pub items: Vec<crate::DroppedStack>,
+    /// The mobs in the Overworld (`entities.living-nearby`): a step's
+    /// `living`, then what the mod's `hurt` and `discard` leave of them.
+    pub living: Vec<crate::Living>,
     /// The parts the mod draws at its blocks of the Overworld (`visuals`),
     /// gone with the block's data as in the game.
     pub visuals: std::collections::BTreeMap<(i32, i32, i32), Vec<crate::visual::VisualPart>>,
@@ -67,6 +70,7 @@ struct ScriptWorld {
     blocks: std::collections::BTreeMap<(i32, i32, i32), String>,
     power: std::collections::BTreeMap<(i32, i32, i32), u8>,
     dropped: Vec<crate::DroppedStack>,
+    living: Vec<crate::Living>,
     recipes: Vec<(String, String, String)>,
     /// Item tags by id, each its values as the files list them (`#` for a
     /// tag in a tag): the package's own over vanilla's.
@@ -322,6 +326,12 @@ impl crate::WorldView for ScriptWorld {
     fn items(&self) -> Vec<String> {
         self.item_ids.to_vec()
     }
+    fn living(&self, dimension: &str) -> Vec<crate::Living> {
+        match dimension {
+            "minecraft:overworld" => self.living.clone(),
+            _ => Vec::new(),
+        }
+    }
     fn block_tags(&self, state: &str) -> Vec<String> {
         let block = state.split('[').next().unwrap_or(state);
         // A Script's world names vanilla's states bare too (`stone`).
@@ -457,6 +467,7 @@ impl TestGame {
             world: Default::default(),
             power: Default::default(),
             items: Vec::new(),
+            living: Vec::new(),
             visuals: Default::default(),
             containers: Default::default(),
             inventories: Default::default(),
@@ -645,6 +656,24 @@ impl TestGame {
         self.mods.item_used(player, item, sneaking, Some(&target))
     }
 
+    /// `player` right-clicks the mob `id` (one of [`TestGame::living`]) with
+    /// `item` ("" for none) in their main hand (`living-events`); whether a
+    /// mod took the click.
+    pub fn use_item_on_entity(
+        &mut self,
+        player: &ServerPlayer,
+        item: &str,
+        sneaking: bool,
+        id: u32,
+    ) -> Result<bool, String> {
+        self.snapshot();
+        let target = self.living.iter().find(|l| l.id == id).cloned();
+        let target = target.ok_or_else(|| format!("no mob {id}: add it with `living`"))?;
+        Ok(self
+            .mods
+            .item_used_on_entity(player, item, sneaking, &target))
+    }
+
     /// The scratch copy the mod runs from; its `storage` is beside it.
     pub fn hmod(&self) -> &Path {
         &self.hmod
@@ -767,6 +796,35 @@ pub struct UseAt {
     sneaking: bool,
 }
 
+/// A mob in the Overworld.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LivingSet {
+    id: u32,
+    /// `minecraft:blaze`.
+    kind: String,
+    x: f64,
+    y: f64,
+    z: f64,
+    #[serde(default = "full_health")]
+    health: f32,
+}
+
+fn full_health() -> f32 {
+    20.0
+}
+
+/// A right click on a mob, with the item in the main hand.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UseEntity {
+    id: u32,
+    /// None: an empty hand.
+    item: Option<String>,
+    #[serde(default)]
+    sneaking: bool,
+}
+
 /// An item entity lying in the Overworld (capability `items`).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -845,6 +903,11 @@ pub struct Step {
     power: Option<Vec<PowerSet>>,
     /// The item entities lying about from now on (capability `items`).
     items: Option<Vec<ItemSet>>,
+    /// The mobs about from now on (`entities.living-nearby`).
+    living: Option<Vec<LivingSet>>,
+    /// Server mods: the player right-clicks one of them with an item
+    /// (`living-events.item-used-on-entity`).
+    use_entity: Option<UseEntity>,
     /// Stacks put in containers' slots of the Overworld (a container with
     /// none before has 27 empty slots); count 0 empties the slot.
     #[serde(default)]
@@ -899,6 +962,9 @@ pub struct Expect {
     /// Blocks of the Overworld after the step, the mod's changes made
     /// (capability `world`).
     blocks: Option<Vec<BlockSet>>,
+    /// The mobs left after the step, as `"id kind health"`: what the mod's
+    /// `hurt` took off and `discard` took away.
+    living: Option<Vec<String>>,
     /// Capability `items`: every `drop` as `"item xN at x y z"` and the ids
     /// of the entities `take` removed, in order.
     drops: Option<Vec<String>>,
@@ -1010,6 +1076,9 @@ impl Step {
         if let Some(u) = &self.used {
             parts.push(format!("uses {} {} {}", u.x, u.y, u.z));
         }
+        if let Some(u) = &self.use_entity {
+            parts.push(format!("uses mob {}", u.id));
+        }
         if let Some(name) = &self.leave {
             parts.push(format!("{name} leaves"));
         }
@@ -1044,6 +1113,18 @@ impl Step {
                 })
                 .collect();
         }
+        if let Some(living) = &self.living {
+            game.living = living
+                .iter()
+                .map(|l| crate::Living {
+                    id: l.id,
+                    kind: l.kind.clone(),
+                    pos: [l.x, l.y, l.z],
+                    health: l.health,
+                    player: None,
+                })
+                .collect();
+        }
         if let Ok(mut all) = game.containers.lock() {
             for s in &self.slots {
                 let slots = all.entry((s.x, s.y, s.z)).or_insert_with(|| vec![None; 27]);
@@ -1057,6 +1138,7 @@ impl Step {
             blocks: game.world.clone(),
             power: game.power.clone(),
             dropped: game.items.clone(),
+            living: game.living.clone(),
             recipes: game.recipes.clone(),
             tags: game.tags.clone(),
             block_tags: game.block_tags.clone(),
@@ -1089,6 +1171,7 @@ impl Step {
             || self.broken.is_some()
             || self.place.is_some()
             || self.used.is_some()
+            || self.use_entity.is_some()
             || !self.inventory.is_empty()
             || self.expect.inventory.is_some();
         let actor = if server && acts {
@@ -1174,6 +1257,10 @@ impl Step {
                 }
             }
         }
+        if let (Some(u), Some(p)) = (&self.use_entity, &who) {
+            let item = u.item.as_deref().unwrap_or_default();
+            game.use_item_on_entity(p, item, u.sneaking, u.id)?;
+        }
         if let Some(name) = &self.leave
             && !game.leave(name)
         {
@@ -1248,6 +1335,15 @@ impl Step {
                         game.visuals.insert(at, parts);
                     }
                 }
+                Output::Living { op, .. } => match op {
+                    crate::LivingOp::Hurt { id, amount, .. } => {
+                        if let Some(l) = game.living.iter_mut().find(|l| l.id == *id) {
+                            l.health -= amount;
+                        }
+                        game.living.retain(|l| l.health > 0.0);
+                    }
+                    crate::LivingOp::Discard { id } => game.living.retain(|l| l.id != *id),
+                },
                 Output::VisualScroll {
                     dimension,
                     pos,
@@ -1446,6 +1542,14 @@ impl Step {
                 .collect();
             same("names", want, &got)?;
         }
+        if let Some(want) = &e.living {
+            let got: Vec<String> = game
+                .living
+                .iter()
+                .map(|l| format!("{} {} {}", l.id, l.kind, l.health))
+                .collect();
+            same("living", want, &got)?;
+        }
         if let Some(want) = &e.slots {
             let got: Vec<String> = game.containers.lock().map_or_else(
                 |_| Vec::new(),
@@ -1575,6 +1679,7 @@ mod tests {
             blocks: Default::default(),
             power: Default::default(),
             dropped: Vec::new(),
+            living: Vec::new(),
             recipes: Vec::new(),
             tags: std::sync::Arc::new(tags),
             block_tags: std::sync::Arc::new(block_tags),

@@ -306,6 +306,8 @@ A step's parts happen in this order:
 | `command = "where north"` | the player types `/where north`; a command the mod doesn't own fails the step |
 | `break = { x = 1, y = 63, z = 0, state = "minecraft:stone" }`, `place = { ... }` | server mods: the player breaks or places that block |
 | `use = { x = 1, y = 64, z = 0, face = "up" }` | server mods: the player right-clicks the block there with an empty hand, on that face (`down`, `up`, `north`, `south`, `west`, `east`; left out: none); with `item = "minecraft:stick"` (and `sneaking = true`) they click with that item in their main hand, which reaches `item-used` (face left out: up) |
+| `living = [{ id = 3, kind = "minecraft:chicken", x = 2.5, y = 64.0, z = 2.5, health = 4.0 }]` | server mods: the mobs of the Overworld from now on (`entities.living-nearby`; health left out: 20), which the mod's `hurt` and `discard` change |
+| `use-entity = { id = 3, item = "gears:crate" }` | server mods: the player right-clicks that mob with the item in their main hand (left out: none; `sneaking = true`), which reaches `item-used-on-entity` |
 | `leave = "Alex"` | server mods: that player leaves |
 | `slots = [{ x = 5, y = 63, z = 5, slot = 0, item = "minecraft:stone", count = 2 }]` | server mods: stacks in containers' slots of the Overworld (a container with none before has 27 empty slots; count 0 empties one), which `containers.slots`, `transfer` and the mod's `set-slot` read and change |
 | `inventory = [{ slot = 0, item = "minecraft:stick", count = 3 }]` | server mods: stacks in the acting player's slots (0 to 40, as `players.inventory` counts them), which the mod's `set-player-stack` changes |
@@ -327,6 +329,7 @@ checked:
 | `chat = ["..."]` | every chat line it showed, in order (`[]`: none) |
 | `feedback = "..."`, `error = "..."` | the command's answer, shown plain or in red |
 | `panel = ["..."]`, `corner = "top-left"` | its HUD panel's lines (`[]`: no panel) and corner |
+| `living = ["3 minecraft:chicken 4"]` | server mods: the mobs left after the step, as `id kind health` |
 | `told = ["Alex: Welcome!"]`, `broadcast = ["..."]` | server mods: every `players.tell` (as `name: text`) and `players.broadcast`, in order |
 | `blocks = [{ x = 2, y = 64, z = 0, state = "minecraft:glowstone" }]` | server mods with `world`: those blocks of the Overworld after the step, the mod's `set-blocks` made (the script checks a state's shape; the game checks its name) |
 | `drops = ["minecraft:iron_nugget x9 at 5.5 65 5.5"]`, `taken = [7]` | server mods with `items`: every `items.drop` and the ids `items.take` removed, in order |
@@ -1082,6 +1085,23 @@ in the world as a model. `entities.set-pose(handle, part, x, y, z)` turns
 `head`, `body`, `left-arm`, `right-arm`, `left-leg` or `right-leg` in degrees,
 as an armor stand's pose does: a spinning gear is a block on the head turned a
 few degrees each tick.
+
+**The world's living entities (API level 47).** `entities.living-nearby(dimension, x, y, z,
+radius)` lists the vanilla mobs and the players within `radius` blocks (at most 16) of a point, as
+of the tick's start, nearest first, at most 256: each with the game's id for it (the protocol's),
+its type (`minecraft:blaze`; `minecraft:player`), its bottom centre, its health and, for a player,
+their id. `entities.hurt(id, amount, damage-type)` hurts one as vanilla's `Entity.hurt` does, by a
+damage type (`minecraft:generic`, `minecraft:cactus`, a data pack's): its armour, its time unhurt
+and its death and drops follow. `entities.discard(id)` takes a mob away with no death and no drops,
+as `Entity.discard`, and `entities.push(id, x, y, z)` adds a velocity as `players.push` does. These
+apply at the tick's end, at most 256 a call, in the dimension the world simulates. The window's own
+player has its LAN entity id, or 4294967295 while the world is not open to LAN. A mod that exports
+`living-events` hears `item-used-on-entity(player, item, sneaking, target)` when a player
+right-clicks a mob with `item` in the main hand ("" for none), before anything vanilla does with
+it: offered to every server mod, those whose namespace the item is in first, until one takes it
+(true), as NeoForge's `EntityInteract` cancelled. In the SDK it is `ServerMod::item_used_on_entity`.
+The gears example's drill hurts what stands in the air under it, its belt carries mobs as players,
+and a gear crate used on a chicken catches it.
 
 #### Entity types of the mod's own
 

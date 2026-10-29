@@ -7,3 +7,16 @@ place = { x = 0, y = 64, z = 0, state = "gears:belt" }
 expect.visuals = [
     "0 64 0 gears:belt_strip 0 offset [0.0, 1.0, 0.0] velocity [0.0, 0.0, 0.0] scroll gears:block/belt_scroll -0.02 0.5",
 ]
+
+# A gear crate used on a chicken catches it; the cow stays (living-events).
+[[step]]
+living = [
+    { id = 3, kind = "minecraft:chicken", x = 2.5, y = 64.0, z = 2.5, health = 4.0 },
+    { id = 4, kind = "minecraft:cow", x = 6.5, y = 64.0, z = 2.5 },
+]
+use-entity = { id = 4, item = "gears:crate" }
+expect.living = ["3 minecraft:chicken 4", "4 minecraft:cow 20"]
+
+[[step]]
+use-entity = { id = 3, item = "gears:crate" }
+expect.living = ["4 minecraft:cow 20"]

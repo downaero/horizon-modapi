@@ -1269,6 +1269,11 @@ impl Game<'_> {
                     .look_at_entity(host, gi, p.id, Some(p.location))
                     .is_some()
                 {
+                    // A server mod's use of the held item on it (`living-events`).
+                    if p.hand == 0 && self.mod_item_use_on_entity_by_guest(host, conn, p.id) {
+                        self.lan_swing_back(host, conn, Some(true));
+                        return;
+                    }
                     // handleInteract: the entity and that hand only; a click the
                     // entity passes comes back as UseItem.
                     let hand = if p.hand == 1 { Hand::Off } else { Hand::Main };

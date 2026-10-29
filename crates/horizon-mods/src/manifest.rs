@@ -270,7 +270,13 @@ impl Capability {
         }
         if matches!(
             interface,
-            "log" | "files" | "attachments" | "peers" | "recipe-manager" | "entity-data"
+            "log"
+                | "files"
+                | "attachments"
+                | "peers"
+                | "recipe-manager"
+                | "entity-data"
+                | "living-data"
         ) {
             return Ok(None);
         }

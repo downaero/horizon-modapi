@@ -188,6 +188,9 @@ pub(super) struct ModsState {
     /// Pushes server mods asked for, for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) pushes: Vec<(horizon_mods::PushTarget, [f64; 3])>,
+    /// Hurts and discards server mods asked for, for the tick's end.
+    #[cfg(feature = "mods")]
+    pub(super) living: Vec<horizon_mods::LivingOp>,
     /// Sounds and level events server mods queued, for the tick's end.
     #[cfg(feature = "mods")]
     pub(super) effects: Vec<(String, [i32; 3], horizon_mods::EffectOp)>,
@@ -900,6 +903,7 @@ impl Game<'_> {
                 | Output::BlockData { .. }
                 | Output::Visual { .. }
                 | Output::VisualScroll { .. }
+                | Output::Living { .. }
                 | Output::Structure { .. }
                 | Output::Entity { .. }
                 | Output::Drop { .. }

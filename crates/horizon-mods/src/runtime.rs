@@ -199,6 +199,13 @@ mod item_event_bindings {
     });
 }
 use item_event_bindings::ItemHost;
+mod living_event_bindings {
+    wasmtime::component::bindgen!({
+        path: "../horizon-mod-sdk/wit",
+        world: "living-host",
+    });
+}
+use living_event_bindings::LivingHost;
 mod peer_bindings {
     wasmtime::component::bindgen!({
         path: "../horizon-mod-sdk/wit",
@@ -739,6 +746,36 @@ pub enum PushTarget {
     Player(String),
     /// The item entity with this id.
     Item(u32),
+    /// The living entity with this id (`entities.push`).
+    Living(u32),
+}
+
+/// A living entity as capability `entities` sees it: a vanilla mob or a
+/// player.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Living {
+    /// The game's id for it, the protocol's.
+    pub id: u32,
+    /// `minecraft:blaze`; `minecraft:player` for a player.
+    pub kind: String,
+    /// Its bottom centre.
+    pub pos: [f64; 3],
+    pub health: f32,
+    /// A player's UUID; none for a mob.
+    pub player: Option<String>,
+}
+
+/// What `entities.hurt` and `discard` ask for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LivingOp {
+    Hurt {
+        id: u32,
+        amount: f32,
+        damage_type: String,
+    },
+    Discard {
+        id: u32,
+    },
 }
 
 /// An item entity as capability `items` sees it.
@@ -921,6 +958,8 @@ pub enum Output {
         pos: [i32; 3],
         effect: EffectOp,
     },
+    /// `entities.hurt` and `discard`, after the call.
+    Living { mod_id: String, op: LivingOp },
     /// `players.push` and `items.push`: add a velocity.
     Push {
         mod_id: String,
@@ -1036,6 +1075,11 @@ pub trait WorldView: std::any::Any + Send {
     /// The item entities in the simulated dimension, as of the tick's start
     /// (capability `items`).
     fn dropped(&self, _dimension: &str) -> Vec<DroppedStack> {
+        Vec::new()
+    }
+    /// The living entities in the simulated dimension, as of the tick's
+    /// start (`entities.living-nearby`).
+    fn living(&self, _dimension: &str) -> Vec<Living> {
         Vec::new()
     }
     /// The reachable slots of the inventory at a position, through `face`
@@ -1184,6 +1228,8 @@ struct Running {
     neighbor: Option<NeighborHost>,
     /// A server mod's `item-events` export.
     item: Option<ItemHost>,
+    /// A server mod's `living-events` export, none for one built before it.
+    living: Option<LivingHost>,
     /// A server mod's `peer-events` export.
     peer: Option<PeersHost>,
     /// A server mod's `menu-events` export.
@@ -1647,6 +1693,11 @@ impl Mods {
         } else {
             None
         };
+        let living = if server {
+            LivingHost::new(&mut store, &instance).ok()
+        } else {
+            None
+        };
         let peer = if server {
             PeersHost::new(&mut store, &instance).ok()
         } else {
@@ -1736,6 +1787,7 @@ impl Mods {
             server_net,
             neighbor,
             item,
+            living,
             peer,
             menu,
             typed,
@@ -2318,6 +2370,60 @@ impl Mods {
             }
         }
         handled
+    }
+    /// `player` used `item` ("" for none) on a living entity: true when a
+    /// server mod took the click, those whose namespace the item is in asked
+    /// first.
+    pub fn item_used_on_entity(
+        &mut self,
+        player: &ServerPlayer,
+        item: &str,
+        sneaking: bool,
+        target: &Living,
+    ) -> bool {
+        let item_ns = item.split_once(':').map(|(n, _)| n.to_owned());
+        let owns = |i: usize| {
+            self.entries[i].run.as_ref().is_some_and(|r| {
+                let ns = &r.store.data().block_namespaces;
+                ns.iter().any(|n| item_ns.as_deref() == Some(n.as_str()))
+            })
+        };
+        let mut owners: Vec<usize> = (0..self.entries.len())
+            .filter(|&i| {
+                self.entries[i]
+                    .run
+                    .as_ref()
+                    .is_some_and(|r| r.living.is_some())
+            })
+            .collect();
+        owners.sort_by_key(|&i| !owns(i));
+        let living = living_event_bindings::horizon::mods::living_data::Living {
+            id: target.id,
+            kind: target.kind.clone(),
+            x: target.pos[0],
+            y: target.pos[1],
+            z: target.pos[2],
+            health: target.health,
+            player: target.player.clone(),
+        };
+        for i in owners {
+            let handled = self
+                .call(i, FUEL_EVENT, |run| match &run.living {
+                    Some(h) => h.horizon_mods_living_events().call_item_used_on_entity(
+                        &mut run.store,
+                        &player.id,
+                        item,
+                        sneaking,
+                        &living,
+                    ),
+                    None => Ok(false),
+                })
+                .unwrap_or(false);
+            if handled {
+                return true;
+            }
+        }
+        false
     }
     /// `player` used the block at `pos` with an empty hand: true when the
     /// mod that owns it handled that.
@@ -3466,6 +3572,26 @@ impl structures::Host for State {
         true
     }
 }
+impl State {
+    /// Queues an `entities.hurt` or `discard`: at most 256 a call, with the
+    /// pushes and takes.
+    fn living_op(&mut self, op: LivingOp) -> bool {
+        let queued = self
+            .out
+            .iter()
+            .filter(|o| matches!(o, Output::Living { .. }))
+            .count();
+        if queued >= NEARBY_ITEMS {
+            return false;
+        }
+        self.out.push(Output::Living {
+            mod_id: self.id.clone(),
+            op,
+        });
+        true
+    }
+}
+impl entity_bindings::horizon::mods::living_data::Host for State {}
 impl visuals::Host for State {
     fn set(
         &mut self,
@@ -5177,6 +5303,64 @@ impl entities::Host for State {
     fn set_solid(&mut self, handle: u32, solid: bool) -> bool {
         self.entity_handles.contains(&handle)
             && self.entity_op(EntityOp::SetSolid { handle, solid })
+    }
+    fn living_nearby(
+        &mut self,
+        dimension: String,
+        x: f64,
+        y: f64,
+        z: f64,
+        radius: f32,
+    ) -> Vec<entities::Living> {
+        let Ok(guard) = self.world.lock() else {
+            return Vec::new();
+        };
+        let Some(view) = guard.as_ref() else {
+            return Vec::new();
+        };
+        let r = f64::from(if radius.is_finite() {
+            radius.clamp(0.0, 16.0)
+        } else {
+            0.0
+        });
+        let dist =
+            |l: &Living| (l.pos[0] - x).powi(2) + (l.pos[1] - y).powi(2) + (l.pos[2] - z).powi(2);
+        let mut found: Vec<_> = view
+            .living(&dimension)
+            .into_iter()
+            .filter(|l| dist(l) <= r * r)
+            .collect();
+        found.sort_by(|a, b| dist(a).total_cmp(&dist(b)));
+        found.truncate(NEARBY_ITEMS);
+        found
+            .into_iter()
+            .map(|l| entities::Living {
+                id: l.id,
+                kind: l.kind,
+                x: l.pos[0],
+                y: l.pos[1],
+                z: l.pos[2],
+                health: l.health,
+                player: l.player,
+            })
+            .collect()
+    }
+    fn hurt(&mut self, id: u32, amount: f32, damage_type: String) -> bool {
+        let fits = amount.is_finite()
+            && (0.0..=1_000_000.0).contains(&amount)
+            && !damage_type.is_empty()
+            && damage_type.len() <= 256;
+        fits && self.living_op(LivingOp::Hurt {
+            id,
+            amount,
+            damage_type,
+        })
+    }
+    fn discard(&mut self, id: u32) -> bool {
+        self.living_op(LivingOp::Discard { id })
+    }
+    fn push(&mut self, id: u32, x: f64, y: f64, z: f64) -> bool {
+        State::push(self, PushTarget::Living(id), [x, y, z])
     }
     fn rotate(&mut self, handle: u32, yaw: f32, pitch: f32) -> bool {
         let wrap = |v: f32| if v.is_finite() { v % 360.0 } else { 0.0 };

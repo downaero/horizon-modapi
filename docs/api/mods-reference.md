@@ -49,8 +49,8 @@ A server mod (manifest `side = "server"`, `api = "0.3"`, experimental): runs whe
 
 A server mod with blocks (capability `block-entities`): the SDK builds every server mod against this world. Mods built for `horizon-server-mod` alone (no `block-events` export) still load and hear nothing of blocks.
 
-- Imports (what the game offers): `block-entities`, `visuals`, `structures`, `net`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `console`, `stacks`, `recipe-manager`, `entity-data`, `entity-types`, `log`, `storage`, `players`, `world`
-- Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `item-events`, `peer-events`, `menu-events`, `entity-events`, `server-events`
+- Imports (what the game offers): `block-entities`, `visuals`, `structures`, `net`, `living-data`, `entities`, `containers`, `redstone`, `items`, `effects`, `files`, `attachments`, `transfer`, `peers`, `menus`, `console`, `stacks`, `recipe-manager`, `entity-data`, `entity-types`, `log`, `storage`, `players`, `world`
+- Exports (what the mod provides): `block-events`, `server-net-events`, `neighbor-events`, `item-events`, `peer-events`, `menu-events`, `entity-events`, `living-events`, `server-events`
 
 ## World `entity-types-host`
 
@@ -100,6 +100,13 @@ The game's side of `item-events`.
 
 - Imports (what the game offers): 
 - Exports (what the mod provides): `item-events`
+
+## World `living-host`
+
+The game's side of `living-events`.
+
+- Imports (what the game offers): `living-data`
+- Exports (what the mod provides): `living-events`
 
 ## World `transfer-host`
 
@@ -189,7 +196,7 @@ The game's side of capability `containers` (imports only).
 
 The game's side of capability `entities` (imports only).
 
-- Imports (what the game offers): `entities`
+- Imports (what the game offers): `living-data`, `entities`
 - Exports (what the mod provides): 
 
 ## World `server-net-host`
@@ -1148,24 +1155,6 @@ The same for a server mod (a separate interface: the SDK builds client and serve
 | --- | --- | --- |
 | `message` | `func(player: string, data: list<u8>)` | A message from the mod's client half on `player` (their id). |
 
-## `entities`
-
-Access: capability `entities`.
-
-Capability `entities`, server mods only (manifest `api = "0.3"`, experimental): small marker entities a mod places and moves, drawn as an item (a mod's own item included) held where the entity stands. A first step: no hitbox, no AI, no saving; a mod keeps what it needs in `block-entities` or `storage` and places them again after a restart. They exist in the dimension the world is simulating (the overworld at first).
-
-| Function | Signature | What it does |
-| --- | --- | --- |
-| `spawn` | `func(dimension: string, x: f64, y: f64, z: f64, yaw: f32, item: string) -> result<u32, string>` | Places one at a position, facing `yaw` degrees, drawn as `item` (`mymod:gear`). Returns the mod's own handle for it (at most 1024 live at once). |
-| `move-to` | `func(handle: u32, x: f64, y: f64, z: f64, yaw: f32) -> bool` | Moves one of the mod's entities; false for a handle it does not hold. |
-| `set-item` | `func(handle: u32, item: string) -> bool` | Changes the item an entity is drawn as. |
-| `remove` | `func(handle: u32) -> bool` | Removes one of the mod's entities. |
-| `set-slot` | `func(handle: u32, slot: string, item: option<string>) -> bool` | Puts an item in an equipment slot of the entity (`mainhand`, `offhand`, `head`, `chest`, `legs`, `feet`); none empties it. A block's item on the head is drawn as the block, so a mod's own block (`mymod:gear`) can stand in the world as a model that `set-pose` then turns. |
-| `set-pose` | `func(handle: u32, part: string, x: f32, y: f32, z: f32) -> bool` | Turns a body part of the entity, in degrees about x, y and z as an armor stand's `Pose` does: `head`, `body`, `left-arm`, `right-arm`, `left-leg` or `right-leg`. Values are wrapped to -360 to 360. |
-| `spawn-block` | `func(dimension: string, x: f64, y: f64, z: f64, state: string) -> result<u32, string>` | Places a block state (`mymod:gear[axis=x]`, a vanilla one too) as an entity: drawn full size like a falling block, with no gravity, never landing; the mod moves it with `move-to` (x and z are its centre, y its bottom) and takes it away with `remove`. Players do not collide with it. Counts toward the same 1024 entities. A moving structure is its blocks taken out of the world (`world.set-blocks`) and put back. |
-| `rotate` | `func(handle: u32, yaw: f32, pitch: f32) -> bool` | Turns an entity, in degrees: a block entity (`spawn-block`) about its centre, first `pitch` about x then `yaw` about y, so a block with `axis=x` spins about any axis (yaw 90 puts its x along z); a marker (`spawn`) by its yaw only. Sent to every client as the entity's rotation, a byte: angles go to the nearest 360/256 degrees, so a turn of a whole number of those a tick looks even. |
-| `set-solid` | `func(handle: u32, solid: bool) -> bool` | Makes a block entity (`spawn-block`) solid for players, as a boat is: they stand on it and walk into it as on its full cube, and a player standing on it rides along as it moves; one it moves into from the side is not pushed. Sent to clients as the entity being silent. |
-
 ## `containers`
 
 Access: capability `containers`.
@@ -1597,6 +1586,51 @@ A recipe file of a type the game does not run itself.
 | `test-ingredient` | `func(ingredient: string, item: string) -> bool` | Whether an ingredient, as recipe files write one (`minecraft:iron_ingot`, `#minecraft:logs`, or a JSON list of them), takes `item`. |
 | `items` | `func() -> list<string>` | Every item id in the item registry's order, vanilla's then the content mods': what a mod builds recipes from at load, as Create's sawing of every wood's log, planks, stairs and slabs. |
 
+## `living-data`
+
+Access: not granted by any capability.
+
+A living entity of the world, a vanilla mob or a player, as `entities.living-nearby` and `living-events` give it. Types only: every server mod has it.
+
+### record `living`
+
+| Field | Type | |
+| --- | --- | --- |
+| `id` | `u32` | The game's id for it (the protocol's), for `entities.hurt`, `discard` and `push`; it lasts while the entity does. |
+| `kind` | `string` | Its type, `minecraft:blaze`; `minecraft:player` for a player. |
+| `x` | `f64` | Its bottom centre, as of the start of this tick. |
+| `y` | `f64` |  |
+| `z` | `f64` |  |
+| `health` | `f32` |  |
+| `player` | `option<string>` | A player's id, as `players.online` gives it; none for a mob. |
+
+
+## `entities`
+
+Access: capability `entities`.
+
+Capability `entities`, server mods only (manifest `api = "0.3"`, experimental): small marker entities a mod places and moves, drawn as an item (a mod's own item included) held where the entity stands. A first step: no hitbox, no AI, no saving; a mod keeps what it needs in `block-entities` or `storage` and places them again after a restart. They exist in the dimension the world is simulating (the overworld at first).
+
+### type `living`
+
+`type living = living`
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `spawn` | `func(dimension: string, x: f64, y: f64, z: f64, yaw: f32, item: string) -> result<u32, string>` | Places one at a position, facing `yaw` degrees, drawn as `item` (`mymod:gear`). Returns the mod's own handle for it (at most 1024 live at once). |
+| `move-to` | `func(handle: u32, x: f64, y: f64, z: f64, yaw: f32) -> bool` | Moves one of the mod's entities; false for a handle it does not hold. |
+| `set-item` | `func(handle: u32, item: string) -> bool` | Changes the item an entity is drawn as. |
+| `remove` | `func(handle: u32) -> bool` | Removes one of the mod's entities. |
+| `set-slot` | `func(handle: u32, slot: string, item: option<string>) -> bool` | Puts an item in an equipment slot of the entity (`mainhand`, `offhand`, `head`, `chest`, `legs`, `feet`); none empties it. A block's item on the head is drawn as the block, so a mod's own block (`mymod:gear`) can stand in the world as a model that `set-pose` then turns. |
+| `set-pose` | `func(handle: u32, part: string, x: f32, y: f32, z: f32) -> bool` | Turns a body part of the entity, in degrees about x, y and z as an armor stand's `Pose` does: `head`, `body`, `left-arm`, `right-arm`, `left-leg` or `right-leg`. Values are wrapped to -360 to 360. |
+| `spawn-block` | `func(dimension: string, x: f64, y: f64, z: f64, state: string) -> result<u32, string>` | Places a block state (`mymod:gear[axis=x]`, a vanilla one too) as an entity: drawn full size like a falling block, with no gravity, never landing; the mod moves it with `move-to` (x and z are its centre, y its bottom) and takes it away with `remove`. Players do not collide with it. Counts toward the same 1024 entities. A moving structure is its blocks taken out of the world (`world.set-blocks`) and put back. |
+| `rotate` | `func(handle: u32, yaw: f32, pitch: f32) -> bool` | Turns an entity, in degrees: a block entity (`spawn-block`) about its centre, first `pitch` about x then `yaw` about y, so a block with `axis=x` spins about any axis (yaw 90 puts its x along z); a marker (`spawn`) by its yaw only. Sent to every client as the entity's rotation, a byte: angles go to the nearest 360/256 degrees, so a turn of a whole number of those a tick looks even. |
+| `set-solid` | `func(handle: u32, solid: bool) -> bool` | Makes a block entity (`spawn-block`) solid for players, as a boat is: they stand on it and walk into it as on its full cube, and a player standing on it rides along as it moves; one it moves into from the side is not pushed. Sent to clients as the entity being silent. |
+| `living-nearby` | `func(dimension: string, x: f64, y: f64, z: f64, radius: f32) -> list<living>` | The living entities (vanilla mobs and players, not the mods' own) within `radius` blocks (at most 16) of a point, as of the start of this tick, nearest first, at most 256; only in the dimension the world simulates. As NeoForge's `level.getEntitiesOfClass(LivingEntity...)`: a saw or a drill finding what stands in it. |
+| `hurt` | `func(id: u32, amount: f32, damage-type: string) -> bool` | Hurts a living entity as vanilla's `Entity.hurt` does, `amount` health points (0 to 1000000) of damage type `damage-type` (`minecraft:generic`, `minecraft:cactus`, a data pack's): its armour, its time unhurt after a hit, its death and drops as for that type. After the call; false for an id `living-nearby` would not show, or over the 256 changes to entities a call. |
+| `discard` | `func(id: u32) -> bool` | Takes a mob out of the world with no death and no drops, as `Entity.discard` (a blaze caught in a burner); not a player. After the call; counts toward the same 256. |
+| `push` | `func(id: u32, x: f64, y: f64, z: f64) -> bool` | Adds a velocity, in blocks per tick, to a living entity, as `players.push` to a player (a belt, a fan); clamped as it is and counts toward the same 256. |
+
 ## `entity-data`
 
 Access: not granted by any capability.
@@ -1674,3 +1708,17 @@ What the server calls in a server mod for its entity types.
 | `attacked` | `func(id: u32, player: string, damage: f32) -> bool` | A player hit one with `damage` (their attack's). True takes the hit (no damage); false lets the game take it off its health. |
 | `interacted` | `func(id: u32, player: string, item: string)` | A player right-clicked one, `item` in their main hand ("" for none). |
 | `died` | `func(id: u32, kind: string)` | Its health reached 0; it is gone after the call. |
+
+## `living-events`
+
+Access: exported by the mod: the game calls it.
+
+What the server calls in a server mod when a player uses an item on a living entity (capability `entities`). A mod built without this export hears nothing of it.
+
+### type `living`
+
+`type living = living`
+
+| Function | Signature | What it does |
+| --- | --- | --- |
+| `item-used-on-entity` | `func(player: string, item: string, sneaking: bool, target: living) -> bool` | A player right-clicked `target` with `item` in the main hand ("" for none), sneaking or not, before anything vanilla does with it (a lead, a bucket on a cow): offered to every server mod, those whose namespace the item is in first, until one takes it. True takes the click, and nothing else happens: a burner catching a blaze. |

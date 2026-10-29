@@ -3245,6 +3245,11 @@ impl Game<'_> {
                 return Ok(false);
             }
         }
+        // A server mod's use of the held item on it (`living-events`).
+        if self.mod_item_use_on_mob(index) {
+            self.swing_arm();
+            return Ok(true);
+        }
         if self.name_mob(index) {
             return Ok(true);
         }

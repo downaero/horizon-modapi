@@ -1,0 +1,12 @@
+# A drill over air hurts what stands under it, 2 every half second.
+
+[[step]]
+join = "Alex"
+blocks = [{ x = 0, y = 66, z = 0, state = "gears:drill" }]
+place = { x = 0, y = 66, z = 0, state = "gears:drill" }
+living = [
+    { id = 5, kind = "minecraft:zombie", x = 0.5, y = 65.0, z = 0.5 },
+    { id = 6, kind = "minecraft:zombie", x = 3.5, y = 65.0, z = 0.5 },
+]
+ticks = 20
+expect.living = ["5 minecraft:zombie 16", "6 minecraft:zombie 20"]

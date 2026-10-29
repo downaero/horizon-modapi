@@ -220,6 +220,7 @@ pub mod server {
     #[doc(hidden)]
     pub use exports::horizon::mods::entity_events::Guest as __EntityGuest;
     pub use exports::horizon::mods::item_events::{BlockTarget, Guest as __ItemGuest};
+    pub use exports::horizon::mods::living_events::Guest as __LivingGuest;
     pub use exports::horizon::mods::menu_events::Guest as __MenuGuest;
     pub use exports::horizon::mods::neighbor_events::Guest as __NeighborGuest;
     pub use exports::horizon::mods::peer_events::Guest as __PeerGuest;
@@ -247,6 +248,9 @@ pub mod server {
     pub use horizon::mods::files;
     /// Capability `items`: item entities dropped into the world.
     pub use horizon::mods::items;
+    /// A vanilla mob or a player, as `entities::living_nearby` and
+    /// `ServerMod::item_used_on_entity` give it.
+    pub use horizon::mods::living_data::Living;
     /// Capability `menus`: screens of the mod's own.
     pub use horizon::mods::menus;
     /// Capability `net`: messages to and from the mod's client half.
@@ -330,6 +334,18 @@ pub mod server {
             _item: &str,
             _sneaking: bool,
             _target: Option<&BlockTarget>,
+        ) -> bool {
+            false
+        }
+        /// A player used `item` ("" for none) on a mob (`target`): true takes
+        /// the click before anything vanilla does with it (a burner catching
+        /// a blaze), as NeoForge's `EntityInteract` event cancelled.
+        fn item_used_on_entity(
+            &mut self,
+            _player: &str,
+            _item: &str,
+            _sneaking: bool,
+            _target: &Living,
         ) -> bool {
             false
         }
@@ -643,6 +659,18 @@ macro_rules! export_server_mod {
                     }
                     let mut out = false;
                     with(|m| out = m.item_used(&player, &item, sneaking, target.as_ref()));
+                    out
+                }
+            }
+            impl $crate::server::__LivingGuest for Export {
+                fn item_used_on_entity(
+                    player: String,
+                    item: String,
+                    sneaking: bool,
+                    target: $crate::server::Living,
+                ) -> bool {
+                    let mut out = false;
+                    with(|m| out = m.item_used_on_entity(&player, &item, sneaking, &target));
                     out
                 }
             }
