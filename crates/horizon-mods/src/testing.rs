@@ -1238,7 +1238,29 @@ impl Step {
                     if parts.is_empty() {
                         game.visuals.remove(&at);
                     } else {
-                        game.visuals.insert(at, parts.clone());
+                        // Scrolls stay on the parts by index, as in the game.
+                        let mut parts = parts.clone();
+                        if let Some(old) = game.visuals.get(&at) {
+                            for (p, o) in parts.iter_mut().zip(old) {
+                                p.scroll = o.scroll.clone();
+                            }
+                        }
+                        game.visuals.insert(at, parts);
+                    }
+                }
+                Output::VisualScroll {
+                    dimension,
+                    pos,
+                    scrolls,
+                    ..
+                } if overworld(dimension) => {
+                    if let Some(parts) = game.visuals.get_mut(&(pos[0], pos[1], pos[2])) {
+                        for (i, p) in parts.iter_mut().enumerate() {
+                            p.scroll = scrolls
+                                .iter()
+                                .find(|(at, _)| *at as usize == i)
+                                .map(|(_, s)| s.clone());
+                        }
                     }
                 }
                 Output::BlockData {
@@ -1465,6 +1487,9 @@ impl Step {
                         // What moves is shown by where it stands and where it goes.
                         if p.offset != [0.0; 3] || p.velocity != [0.0; 3] {
                             line += &format!(" offset {:?} velocity {:?}", p.offset, p.velocity);
+                        }
+                        if let Some(s) = &p.scroll {
+                            line += &format!(" scroll {} {} {}", s.to, s.speed, s.span);
                         }
                         line
                     })

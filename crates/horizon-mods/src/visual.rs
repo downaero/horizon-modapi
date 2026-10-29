@@ -29,6 +29,50 @@ pub struct VisualPart {
     pub item: bool,
     /// How large it is drawn, about its model's centre: 1 is as it is.
     pub scale: f32,
+    /// A texture running across it (`visuals.set-scrolls`).
+    pub scroll: Option<Scroll>,
+}
+
+/// A texture running across a part as it works, as Create's belts'
+/// (`SpriteShiftEntry`): the faces its model draws with sprite `from` are
+/// drawn with `to`, at the same place in it, moved down by an offset that
+/// grows with the game time.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Scroll {
+    /// A sprite of the part's model, `create:block/belt/belt`.
+    pub from: String,
+    /// The sprite drawn in its place, `create:block/belt/belt_scroll`.
+    pub to: String,
+    /// `to`'s heights a tick it runs down; negative runs up.
+    pub speed: f32,
+    /// The part of `to`'s height it runs over before it starts again (more
+    /// than 0, at most 1): 0.5 for a texture that repeats every half.
+    pub span: f32,
+}
+
+impl Scroll {
+    /// How far down `to` it has run at game time `ticks` (a fraction
+    /// between), in `to`'s heights: from 0 up to `span`.
+    pub fn offset_at(&self, ticks: f64) -> f32 {
+        let span = f64::from(self.span);
+        let cycles = f64::from(self.speed) * ticks / span;
+        ((cycles - cycles.floor()) * span) as f32
+    }
+    /// Checks what a mod gave: two sprite names, a finite speed of at most
+    /// 16 heights a tick, a span within (0, 1].
+    pub fn check(&self) -> Result<(), String> {
+        let name = |s: &str| !s.is_empty() && s.len() <= 256;
+        if !name(&self.from) || !name(&self.to) {
+            return Err("a scroll names two sprites".into());
+        }
+        if !self.speed.is_finite() || self.speed.abs() > 16.0 {
+            return Err("a scroll's speed is at most 16 heights a tick".into());
+        }
+        if !(self.span > 0.0 && self.span <= 1.0) {
+            return Err("a scroll's span is more than 0 and at most 1".into());
+        }
+        Ok(())
+    }
 }
 
 impl VisualPart {
@@ -68,6 +112,9 @@ impl VisualPart {
         if !(self.scale.is_finite() && self.scale > 0.0 && self.scale <= 4.0) {
             return Err("scale is more than 0 and at most 4".into());
         }
+        if let Some(scroll) = &self.scroll {
+            scroll.check()?;
+        }
         Ok(())
     }
 }
@@ -77,8 +124,10 @@ impl VisualPart {
 /// were set, or 0 for parts set in phase) and the tick they were set
 /// (i64), then each part's state (u16 length and bytes), axis (u8), whether it
 /// is an item (u8), pivot, offset, speed, angle, velocity and scale (f32),
-/// little-endian. No parts: none
-/// drawn there any more.
+/// little-endian. Scrolls follow when a part has one: 0xFFFF (u16, no
+/// state's length), then for each the part's index (u8), from and to (u16
+/// length and bytes), speed and span (f32). No parts: none drawn there any
+/// more.
 pub fn encode(
     mod_id: &str,
     pos: [i32; 3],
@@ -108,8 +157,24 @@ pub fn encode(
             out.extend(v.to_le_bytes());
         }
     }
+    if parts.iter().any(|p| p.scroll.is_some()) {
+        out.extend(SCROLLS.to_le_bytes());
+        for (i, p) in parts.iter().enumerate() {
+            let Some(s) = &p.scroll else { continue };
+            out.push(i as u8);
+            for name in [&s.from, &s.to] {
+                out.extend((name.len() as u16).to_le_bytes());
+                out.extend(name.as_bytes());
+            }
+            out.extend(s.speed.to_le_bytes());
+            out.extend(s.span.to_le_bytes());
+        }
+    }
     out
 }
+
+/// Where [`encode`]'s scrolls start: a length no state has.
+const SCROLLS: u16 = 0xFFFF;
 
 /// [`encode`]'s inverse; none for damaged bytes.
 pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPart>)> {
@@ -129,10 +194,14 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPar
     let set_at = i64::from_le_bytes(take(&mut b, 8)?.try_into().ok()?);
     let mut parts = Vec::new();
     while !b.is_empty() {
+        let n = u16::from_le_bytes(take(&mut b, 2)?.try_into().ok()?);
+        if n == SCROLLS {
+            break;
+        }
         if parts.len() == PARTS {
             return None;
         }
-        let n = u16::from_le_bytes(take(&mut b, 2)?.try_into().ok()?) as usize;
+        let n = usize::from(n);
         let state = std::str::from_utf8(take(&mut b, n)?).ok()?.to_owned();
         let axis = take(&mut b, 1)?[0];
         let item = match take(&mut b, 1)?[0] {
@@ -154,9 +223,29 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPar
             velocity: [f[8], f[9], f[10]],
             item,
             scale: f[11],
+            scroll: None,
         };
         part.check().ok()?;
         parts.push(part);
+    }
+    while !b.is_empty() {
+        let i = usize::from(take(&mut b, 1)?[0]);
+        let mut names = [String::new(), String::new()];
+        for name in &mut names {
+            let n = u16::from_le_bytes(take(&mut b, 2)?.try_into().ok()?) as usize;
+            *name = std::str::from_utf8(take(&mut b, n)?).ok()?.to_owned();
+        }
+        let speed = f32::from_le_bytes(take(&mut b, 4)?.try_into().ok()?);
+        let span = f32::from_le_bytes(take(&mut b, 4)?.try_into().ok()?);
+        let [from, to] = names;
+        let scroll = Scroll {
+            from,
+            to,
+            speed,
+            span,
+        };
+        scroll.check().ok()?;
+        parts.get_mut(i)?.scroll = Some(scroll);
     }
     Some((id, pos, start, set_at, parts))
 }
@@ -176,6 +265,7 @@ mod tests {
             velocity: [0.0, -0.25, 0.0],
             item: false,
             scale: 1.0,
+            scroll: None,
         }
     }
 
@@ -199,6 +289,45 @@ mod tests {
             decode(&encode("gears", [0; 3], 0, 0, &[shaft(f32::NAN)])),
             None
         );
+    }
+
+    fn belt() -> Scroll {
+        Scroll {
+            from: "create:block/belt/belt".into(),
+            to: "create:block/belt/belt_scroll".into(),
+            speed: 0.125,
+            span: 0.5,
+        }
+    }
+
+    /// Scrolls follow the parts, and bytes written before scrolls were read
+    /// as they were.
+    #[test]
+    fn scrolls_round_trip_after_the_parts() {
+        let mut parts = [shaft(0.0), shaft(1.0)];
+        let old = encode("gears", [0; 3], 0, 7, &parts);
+        assert_eq!(decode(&old).unwrap().4, parts.to_vec());
+        parts[1].scroll = Some(belt());
+        let bytes = encode("gears", [0; 3], 0, 7, &parts);
+        assert_eq!(decode(&bytes).unwrap().4, parts.to_vec());
+        assert_eq!(decode(&bytes[..bytes.len() - 1]), None);
+        parts[1].scroll.as_mut().unwrap().span = 0.0;
+        assert_eq!(decode(&encode("gears", [0; 3], 0, 7, &parts)), None);
+    }
+
+    #[test]
+    fn a_scroll_runs_over_its_span_and_starts_again() {
+        let s = belt();
+        assert_eq!(s.offset_at(0.0), 0.0);
+        assert_eq!(s.offset_at(2.0), 0.25);
+        assert_eq!(s.offset_at(4.0), 0.0);
+        assert_eq!(s.offset_at(6.0), 0.25);
+        let up = Scroll {
+            speed: -0.125,
+            ..belt()
+        };
+        assert_eq!(up.offset_at(2.0), 0.25);
+        assert_eq!(up.offset_at(1.0), 0.375);
     }
 
     #[test]

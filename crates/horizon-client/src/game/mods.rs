@@ -899,6 +899,7 @@ impl Game<'_> {
                 | Output::SetBlocks { .. }
                 | Output::BlockData { .. }
                 | Output::Visual { .. }
+                | Output::VisualScroll { .. }
                 | Output::Structure { .. }
                 | Output::Entity { .. }
                 | Output::Drop { .. }

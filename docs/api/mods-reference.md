@@ -1060,10 +1060,23 @@ Capability `block-entities`, server mods: model parts drawn at the mod's own blo
 | `item` | `bool` | `state` names an item (`minecraft:iron_ingot`) instead: drawn as an item frame shows it, a block across, its centre half a block from `offset` (an item lying on a depot, a belt, in a basin). |
 | `scale` | `f32` | How large it is drawn, about its model's centre: 1 as it is, at most 4 (0.5: an item as a frame or a depot shows it). |
 
+### record `scroll`
+
+A texture running across a part as it works, as Create's belts and treads (`SpriteShiftEntry`): the faces the part's model draws with sprite `from` are drawn with `to`, at the same place in it (as fractions of each sprite), moved down by `speed` times the game time, wrapped to `span` of `to`'s height. The model's faces plus the span stay within `to`: a texture made to repeat, as Create's `belt_scroll`. Block parts only.
+
+| Field | Type | |
+| --- | --- | --- |
+| `part` | `u32` | The part, by its index in the parts drawn at the position. |
+| `from` | `string` | A sprite of the part's model, `create:block/belt/belt`. |
+| `to` | `string` | The sprite drawn in its place, `create:block/belt/belt_scroll`. |
+| `speed` | `f32` | `to`'s heights a tick it runs down (16 at most); negative runs up, 0 not at all. |
+| `span` | `f32` | The part of `to`'s height it runs over before it starts again (more than 0, at most 1): 0.5 for Create's belts. |
+
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `set` | `func(dimension: string, x: s32, y: s32, z: s32, parts: list<part>) -> result<_, string>` | Draws `parts` (at most 16) at a block of the mod's own, replacing what it drew there, after the call; none draws nothing there any more. |
 | `set-in-phase` | `func(dimension: string, x: s32, y: s32, z: s32, parts: list<part>) -> result<_, string>` | `set`, with each part's `angle` its angle at game time 0 instead of at the tick it was set: parts at one speed turn in step however far apart they were set, as Flywheel turns Create's cogs (angle = time x speed + offset), so their teeth mesh. |
+| `set-scrolls` | `func(dimension: string, x: s32, y: s32, z: s32, scrolls: list<scroll>) -> result<_, string>` | The scrolls on the parts drawn at a block of the mod's own (at most 16), replacing those there, after the call; none stops them. They stay on the parts by index when `set` draws them again, and go when no parts are drawn there. Measured from game time 0, so belts set apart run in step. |
 
 ## `block-data`
 

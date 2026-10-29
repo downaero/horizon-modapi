@@ -892,6 +892,14 @@ pub enum Output {
         /// `set-in-phase`: the parts' angles are theirs at game time 0.
         phased: bool,
     },
+    /// `visuals.set-scrolls`: the scrolls on the parts drawn at one of the
+    /// mod's blocks, by part index (none: none any more).
+    VisualScroll {
+        mod_id: String,
+        dimension: String,
+        pos: [i32; 3],
+        scrolls: Vec<(u32, crate::visual::Scroll)>,
+    },
     /// `net.send`: a message on the mod's channel. `player` is the target
     /// of a server mod's message (none: every player); a client mod's goes to
     /// its server.
@@ -3479,6 +3487,46 @@ impl visuals::Host for State {
     ) -> Result<(), String> {
         self.set_visual(dimension, [x, y, z], parts, true)
     }
+    fn set_scrolls(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        scrolls: Vec<visuals::Scroll>,
+    ) -> Result<(), String> {
+        if scrolls.len() > crate::visual::PARTS {
+            return Err(format!(
+                "{} scrolls: at most {}",
+                scrolls.len(),
+                crate::visual::PARTS
+            ));
+        }
+        self.own_block(&dimension, x, y, z)?;
+        let scrolls = scrolls
+            .into_iter()
+            .map(|s| {
+                if s.part as usize >= crate::visual::PARTS {
+                    return Err(format!("part {}: a position has at most 16", s.part));
+                }
+                let scroll = crate::visual::Scroll {
+                    from: s.from,
+                    to: s.to,
+                    speed: s.speed,
+                    span: s.span,
+                };
+                scroll.check()?;
+                Ok((s.part, scroll))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        self.out.push(Output::VisualScroll {
+            mod_id: self.id.clone(),
+            dimension,
+            pos: [x, y, z],
+            scrolls,
+        });
+        Ok(())
+    }
 }
 impl State {
     /// `visuals.set` and `set-in-phase`.
@@ -3510,6 +3558,7 @@ impl State {
                     velocity: [p.velocity.0, p.velocity.1, p.velocity.2],
                     item: p.item,
                     scale: p.scale,
+                    scroll: None,
                 };
                 part.check()?;
                 if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref())

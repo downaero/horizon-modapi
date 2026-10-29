@@ -830,6 +830,17 @@ frame shows it). In the SDK, `BlockEntity::visual` fills a `Visual` (`rotating(s
 a tick) after each tick, sent in phase and only when it changed. The gears example's counter turns
 an iron trapdoor above it while it runs, an iron ingot lying on the trapdoor.
 
+`visuals.set-scrolls(dimension, x, y, z, scrolls)` (API level 46) runs a texture across parts as
+they work, as Create's `SpriteShiftEntry` runs its belts: each scroll names a part by index, a
+sprite `from` its model draws with and a sprite `to` drawn in its place, at the same place in it as
+fractions of each, moved down by `speed` of `to`'s heights a tick (negative up) from game time 0
+and starting again every `span` of its height (0.5 for Create's belts). The faces plus the span
+stay within `to`: a texture made to repeat, as Create's `belt_scroll`, else the neighbouring
+sprites show. Scrolls stay on the parts by index when the mod sets them again, are saved and sent
+with them, and an empty list stops them; block parts only. In the SDK, `Visual::scrolling(from, to,
+speed, span)` scrolls the part added last. The gears example's belt draws its rubber on top
+(`gears:belt_strip`, a block never placed), its ribs running east.
+
 ### Moving structures and networks
 
 `entities.spawn-block(dimension, x, y, z, state)` (API level 24) places a block state as an

@@ -980,6 +980,33 @@ interface visuals {
     /// apart they were set, as Flywheel turns Create's cogs (angle = time x
     /// speed + offset), so their teeth mesh.
     set-in-phase: func(dimension: string, x: s32, y: s32, z: s32, parts: list<part>) -> result<_, string>;
+    /// A texture running across a part as it works, as Create's belts and
+    /// treads (`SpriteShiftEntry`): the faces the part's model draws with
+    /// sprite `from` are drawn with `to`, at the same place in it (as
+    /// fractions of each sprite), moved down by `speed` times the game time,
+    /// wrapped to `span` of `to`'s height. The model's faces plus the span
+    /// stay within `to`: a texture made to repeat, as Create's
+    /// `belt_scroll`. Block parts only.
+    record scroll {
+        /// The part, by its index in the parts drawn at the position.
+        part: u32,
+        /// A sprite of the part's model, `create:block/belt/belt`.
+        %from: string,
+        /// The sprite drawn in its place, `create:block/belt/belt_scroll`.
+        to: string,
+        /// `to`'s heights a tick it runs down (16 at most); negative runs
+        /// up, 0 not at all.
+        speed: f32,
+        /// The part of `to`'s height it runs over before it starts again
+        /// (more than 0, at most 1): 0.5 for Create's belts.
+        span: f32,
+    }
+    /// The scrolls on the parts drawn at a block of the mod's own (at most
+    /// 16), replacing those there, after the call; none stops them. They stay
+    /// on the parts by index when `set` draws them again, and go when no
+    /// parts are drawn there. Measured from game time 0, so belts set apart
+    /// run in step.
+    set-scrolls: func(dimension: string, x: s32, y: s32, z: s32, scrolls: list<scroll>) -> result<_, string>;
 }
 
 /// Capability `net`, client mods: the bytes the mod's server half keeps

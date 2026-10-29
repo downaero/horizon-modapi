@@ -131,6 +131,7 @@ pub fn rpm(rpm: f32) -> f32 {
 #[derive(Clone, Debug, Default)]
 pub struct Visual {
     parts: Vec<visuals::Part>,
+    scrolls: Vec<visuals::Scroll>,
 }
 
 impl Visual {
@@ -172,8 +173,28 @@ impl Visual {
         part.offset = (offset[0], offset[1], offset[2]);
         part
     }
+    /// The last part's faces drawn with sprite `from` run down sprite `to`
+    /// at `speed` of its heights a tick, starting again every `span` of it,
+    /// as Create's `SpriteShiftEntry` scrolls a belt (`visuals.set-scrolls`).
+    pub fn scrolling(&mut self, from: &str, to: &str, speed: f32, span: f32) -> &mut Self {
+        if let Some(part) = self.parts.len().checked_sub(1) {
+            self.scrolls.retain(|s| s.part as usize != part);
+            self.scrolls.push(visuals::Scroll {
+                part: part as u32,
+                from: from.to_owned(),
+                to: to.to_owned(),
+                speed,
+                span,
+            });
+        }
+        self
+    }
     pub fn parts(&self) -> &[visuals::Part] {
         &self.parts
+    }
+    fn same_scrolls(&self, other: &[visuals::Scroll]) -> bool {
+        let key = |s: &visuals::Scroll| (s.part, s.from.clone(), s.to.clone(), s.speed, s.span);
+        self.scrolls.len() == other.len() && self.scrolls.iter().map(key).eq(other.iter().map(key))
     }
     fn same(&self, other: &[visuals::Part]) -> bool {
         let key = |p: &visuals::Part| {
@@ -195,8 +216,7 @@ impl Visual {
 
 std::thread_local! {
     /// The parts last sent for each position (`BlockEntity::visual`).
-    static DRAWN: RefCell<HashMap<(String, [i32; 3]), Vec<visuals::Part>>> =
-        RefCell::new(HashMap::new());
+    static DRAWN: RefCell<HashMap<(String, [i32; 3]), Visual>> = RefCell::new(HashMap::new());
 }
 
 /// Sends `entity`'s parts at `pos` when they differ from the last sent.
@@ -204,24 +224,27 @@ fn draw<T: BlockEntity>(entity: &T, level: &Level, pos: BlockPos, state: &BlockS
     let mut visual = Visual::default();
     entity.visual(state, &mut visual);
     let key = (level.dimension().to_owned(), [pos.x, pos.y, pos.z]);
-    let unchanged = DRAWN.with(|d| {
-        d.borrow()
-            .get(&key)
-            .map_or(visual.parts.is_empty(), |last| visual.same(last))
-    });
-    if unchanged {
+    let last = DRAWN
+        .with(|d| d.borrow().get(&key).cloned())
+        .unwrap_or_default();
+    let (x, y, z, d) = (pos.x, pos.y, pos.z, level.dimension());
+    if !visual.same(&last.parts) && visuals::set_in_phase(d, x, y, z, &visual.parts).is_err() {
         return;
     }
-    if visuals::set_in_phase(level.dimension(), pos.x, pos.y, pos.z, &visual.parts).is_ok() {
-        DRAWN.with(|d| {
-            let mut d = d.borrow_mut();
-            if visual.parts.is_empty() {
-                d.remove(&key);
-            } else {
-                d.insert(key, visual.parts);
-            }
-        });
+    if !visual.parts.is_empty()
+        && !visual.same_scrolls(&last.scrolls)
+        && visuals::set_scrolls(d, x, y, z, &visual.scrolls).is_err()
+    {
+        return;
     }
+    DRAWN.with(|d| {
+        let mut d = d.borrow_mut();
+        if visual.parts.is_empty() {
+            d.remove(&key);
+        } else {
+            d.insert(key, visual);
+        }
+    });
 }
 
 /// A block entity type with its type forgotten: what the hooks call.

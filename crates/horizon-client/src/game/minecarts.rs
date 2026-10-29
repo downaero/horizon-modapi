@@ -1241,18 +1241,34 @@ impl Game<'_> {
         diffuse: bool,
         out: &mut Vec<Vertex>,
     ) {
+        self.block_model_vertices_scrolled(state, seed, m, light, diffuse, None, out);
+    }
+    /// [`Self::block_model_vertices`], the faces drawn with sprite `scroll.0`
+    /// drawn with `scroll.1` instead, at the same place in it moved down by
+    /// `scroll.2` of its height (a mod's `visuals.set-scrolls`).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn block_model_vertices_scrolled(
+        &self,
+        state: BlockStateId,
+        seed: i64,
+        m: glam::Mat4,
+        light: u32,
+        diffuse: bool,
+        scroll: Option<(&str, horizon_client::hud::Rect, f32)>,
+        out: &mut Vec<Vertex>,
+    ) {
         let Ok(models) = self.pack.render.model_catalog.collect_seeded(state, seed) else {
             return;
         };
         for (_, model) in &models {
             for face in &model.faces {
-                let Some(s) = self
-                    .pack
-                    .layer_names
-                    .get(&face.layer)
-                    .and_then(|n| self.gui.atlas.sprites.get(n))
-                else {
+                let name = self.pack.layer_names.get(&face.layer);
+                let Some(&s) = name.and_then(|n| self.gui.atlas.sprites.get(n)) else {
                     continue;
+                };
+                let (s, shift) = match scroll {
+                    Some((from, to, offset)) if name.is_some_and(|n| n == from) => (to, offset),
+                    _ => (s, 0.0),
                 };
                 use horizon_assets::model::Direction as D;
                 let shade: u32 = match face.quad.facing {
@@ -1286,7 +1302,10 @@ impl Game<'_> {
                     out.push(Vertex {
                         normal,
                         pos: m.transform_point3(glam::Vec3::from_array(p)).to_array(),
-                        uv: [s.u0 + uv[0] * (s.u1 - s.u0), s.v0 + uv[1] * (s.v1 - s.v0)],
+                        uv: [
+                            s.u0 + uv[0] * (s.u1 - s.u0),
+                            s.v0 + (uv[1] + shift) * (s.v1 - s.v0),
+                        ],
                         layer: 0,
                         color,
                         light,

@@ -1255,6 +1255,13 @@ mod run {
             let set_at = self.world.game_time;
             let start = if phased { 0 } else { set_at };
             let key = (mod_id, dimension, pos);
+            // Scrolls stay on the parts by index (`visuals.set-scrolls`).
+            let mut parts = parts;
+            if let Some((_, _, old)) = self.mods.visuals.get(&key) {
+                for (p, o) in parts.iter_mut().zip(old) {
+                    p.scroll = o.scroll.clone();
+                }
+            }
             // Parts set again as they are change nothing, and keep the angle
             // and the motion they started from.
             let changed = if parts.is_empty() {
@@ -1276,9 +1283,54 @@ mod run {
                 return;
             }
             self.mods.block_data_dirty = true;
-            self.send_mod_visual(host, &key, start, set_at, &parts);
+            self.publish_mod_visual(host, &key, start, set_at, &parts);
+        }
+
+        /// Puts a mod's scrolls on the parts it draws at `pos`, by index
+        /// (the others lose theirs), and sends them on when that changes.
+        fn store_mod_visual_scrolls(
+            &mut self,
+            mod_id: String,
+            dimension: String,
+            pos: [i32; 3],
+            scrolls: Vec<(u32, horizon_mods::visual::Scroll)>,
+            host: Option<&mut LanHost>,
+        ) {
+            let key = (mod_id, dimension, pos);
+            let Some((start, set_at, parts)) = self.mods.visuals.get_mut(&key) else {
+                return;
+            };
+            let mut changed = false;
+            for (i, p) in parts.iter_mut().enumerate() {
+                let scroll = scrolls
+                    .iter()
+                    .rev()
+                    .find(|(at, _)| *at as usize == i)
+                    .map(|(_, s)| s.clone());
+                changed |= p.scroll != scroll;
+                p.scroll = scroll;
+            }
+            if !changed {
+                return;
+            }
+            let (start, set_at, parts) = (*start, *set_at, parts.clone());
+            self.mods.block_data_dirty = true;
+            self.publish_mod_visual(host, &key, start, set_at, &parts);
+        }
+
+        /// Sends a position's parts to the players, and draws them in this
+        /// window when it plays its own world.
+        fn publish_mod_visual(
+            &mut self,
+            host: Option<&mut LanHost>,
+            key: &(String, String, [i32; 3]),
+            start: i64,
+            set_at: i64,
+            parts: &[horizon_mods::visual::VisualPart],
+        ) {
+            self.send_mod_visual(host, key, start, set_at, parts);
             if self.options.execution_role.is_client() && self.remote.is_none() {
-                let bytes = horizon_mods::visual::encode(&key.0, pos, start, set_at, &parts);
+                let bytes = horizon_mods::visual::encode(&key.0, key.2, start, set_at, parts);
                 if key.1 == self.dim.id() {
                     self.remote_mod_visual(&bytes);
                 }
@@ -3443,6 +3495,8 @@ mod run {
                 let seed = horizon_core::random::position_seed(
                     horizon_core::position::BlockPos::new(pos[0], pos[1], pos[2]),
                 );
+                // Scrolls run from game time 0, with this frame's fraction.
+                let time = self.world.game_time as f64 + alpha;
                 for (model, part) in &v.parts {
                     let axis = [Vec3::X, Vec3::Y, Vec3::Z][usize::from(part.axis.min(2))];
                     let pivot = Vec3::from(part.pivot);
@@ -3456,7 +3510,20 @@ mod run {
                     match model {
                         VisualModel::Block(state) => {
                             let m = transform * Mat4::from_translation(Vec3::splat(-0.5));
-                            self.block_model_vertices(*state, seed, m, packed, false, out);
+                            let scroll = part.scroll.as_ref().and_then(|s| {
+                                let name = |n: &str| n.trim_start_matches("minecraft:").to_owned();
+                                let to = *self.gui.atlas.sprites.get(&name(&s.to))?;
+                                Some((name(&s.from), to, s.offset_at(time)))
+                            });
+                            self.block_model_vertices_scrolled(
+                                *state,
+                                seed,
+                                m,
+                                packed,
+                                false,
+                                scroll.as_ref().map(|(f, to, o)| (f.as_str(), *to, *o)),
+                                out,
+                            );
                         }
                         // An item's model is centred on its origin.
                         VisualModel::Item(state) => {
@@ -3594,6 +3661,12 @@ mod run {
                     parts,
                     phased,
                 } => self.store_mod_visual(mod_id, dimension, pos, parts, phased, host),
+                Output::VisualScroll {
+                    mod_id,
+                    dimension,
+                    pos,
+                    scrolls,
+                } => self.store_mod_visual_scrolls(mod_id, dimension, pos, scrolls, host),
                 Output::Structure { dimension, payload } => {
                     self.store_mod_structure(dimension, payload, host)
                 }

@@ -1,0 +1,2 @@
+{ "template": "minecraft:black_carpet",
+  "properties": { "hardness": 0.1, "sounds": "minecraft:black_wool" } }

@@ -275,6 +275,34 @@ fn gear(dimension: &str, x: i32, y: i32, z: i32, running: bool) {
     let _ = visuals::set(dimension, x, y, z, &[part, ingot]);
 }
 
+/// A belt's rubber, a block's sixteenth on top of it (`gears:belt_strip`,
+/// never placed), running east as fast as the belt carries: its
+/// `gears:block/belt` faces drawn from `gears:block/belt_scroll`, the same
+/// ribs twice as tall, half a height a block (`visuals.set-scrolls`).
+fn belt_strip(pos: BlockPos) {
+    let strip = visuals::Part {
+        state: "gears:belt_strip".into(),
+        axis: 1,
+        pivot: (0.5, 0.5, 0.5),
+        offset: (0.0, 1.0, 0.0),
+        speed: 0.0,
+        angle: 0.0,
+        velocity: (0.0, 0.0, 0.0),
+        item: false,
+        scale: 1.0,
+    };
+    let (x, y, z) = (pos.x, pos.y, pos.z);
+    let _ = visuals::set(DIMENSION, x, y, z, &[strip]);
+    let scroll = visuals::Scroll {
+        part: 0,
+        from: "gears:block/belt".into(),
+        to: "gears:block/belt_scroll".into(),
+        speed: -0.02,
+        span: 0.5,
+    };
+    let _ = visuals::set_scrolls(DIMENSION, x, y, z, &[scroll]);
+}
+
 /// A drill's block entity: the ticks since it last mined.
 struct Drill {
     ticks: u8,
@@ -414,6 +442,9 @@ impl ServerMod for Gears {
                 max: 1,
             };
             let _ = containers::set_hopper_rule(DIMENSION, pos.x, pos.y, pos.z, 0, Some(rule));
+        }
+        if state.starts_with(BELT) {
+            belt_strip(pos);
         }
         if state.starts_with(COUNTER) {
             // Synced: players' games have its seconds too (`block_data`).
