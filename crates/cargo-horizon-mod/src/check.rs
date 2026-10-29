@@ -315,6 +315,13 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
                 ),
                 None => format!("stopped forwarding {} {} {}", pos[0], pos[1], pos[2]),
             },
+            Output::VisualColor { colors, pos, .. } => format!(
+                "coloured {} part(s) at {} {} {}",
+                colors.len(),
+                pos[0],
+                pos[1],
+                pos[2]
+            ),
             Output::VisualOrientation {
                 orientations, pos, ..
             } => format!(

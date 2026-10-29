@@ -1,0 +1,18 @@
+# gears:gauge gives a redstone signal of 5 for each item lying on it
+# (`redstone.set-signal`).
+
+[[step]]
+join = "Alex"
+blocks = [{ x = 0, y = 64, z = 0, state = "gears:gauge" }]
+items = [
+    { id = 1, item = "minecraft:stone", x = 0.5, y = 65.1, z = 0.5 },
+    { id = 2, item = "minecraft:dirt", x = 0.4, y = 65.1, z = 0.6 },
+]
+ticks = 1
+expect.signals = ["0 64 0 10"]
+
+# Nothing on it: no signal.
+[[step]]
+items = []
+ticks = 1
+expect.signals = []

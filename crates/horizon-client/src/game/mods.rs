@@ -664,6 +664,7 @@ impl Game<'_> {
             day_time: self.world.day_time.max(0) as u64,
             inventories: Default::default(),
             rotations: Default::default(),
+            sneaking: Vec::new(),
             typed_entities: std::sync::Arc::new(self.mods.typed.clone()),
             block_data: self.mod_block_data_view(),
             gui_size: self.gui_size(),
@@ -911,6 +912,7 @@ impl Game<'_> {
                 | Output::Visual { .. }
                 | Output::VisualScroll { .. }
                 | Output::VisualOrientation { .. }
+                | Output::VisualColor { .. }
                 | Output::VisualFluids { .. }
                 | Output::Forward { .. }
                 | Output::Living { .. }

@@ -661,6 +661,11 @@ interface players {
     /// direction a block is placed facing (NeoForge's `BlockPlaceContext`);
     /// none when they are not online.
     rotation: func(player: string) -> option<tuple<f32, f32>>;
+    /// Whether a player sneaks (holds the sneak key), as of the start of
+    /// this tick, as NeoForge's `isShiftKeyDown`: during `block-used`, a
+    /// sneak-click (an empty-handed one: sneaking with something in either
+    /// hand uses no block, as vanilla's). False when they are not online.
+    sneaking: func(player: string) -> bool;
     /// A system message to one player, after the mod's name; false when no
     /// player with that id is online. Up to 8 messages per call.
     tell: func(player: string, text: string) -> bool;
@@ -1039,6 +1044,20 @@ interface visuals {
     /// is not turned. They stay on the parts by index when `set` draws them
     /// again, as scrolls do; a mod animating them sets them each tick.
     set-orientations: func(dimension: string, x: s32, y: s32, z: s32, orientations: list<orientation>) -> result<_, string>;
+    /// A colour a part's model is drawn in, as a Flywheel instance's
+    /// `color`: an analog lever's indicator, a nixie tube's glow.
+    record part-color {
+        /// The part, by its index in the parts drawn at the position.
+        part: u32,
+        /// 0xRRGGBB, multiplying the model's own colours: 0xFFFFFF leaves
+        /// them as they are.
+        rgb: u32,
+    }
+    /// The colours of the parts drawn at a block of the mod's own (at most
+    /// 16), replacing those there, after the call; a part named by none is
+    /// drawn as it is. They stay on the parts by index when `set` draws them
+    /// again, as orientations do.
+    set-colors: func(dimension: string, x: s32, y: s32, z: s32, colors: list<part-color>) -> result<_, string>;
     /// A box of fluid, as Create's tanks, basins, spouts and drains draw
     /// what they hold: the fluid's still texture, animated, one tile a block
     /// across its faces, tinted as the fluid is (water by the biome's water

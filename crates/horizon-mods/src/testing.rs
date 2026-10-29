@@ -40,6 +40,12 @@ pub struct TestGame {
     pub items: Vec<crate::DroppedStack>,
     /// The Overworld's `transfer.forward`s: a block's storage is another's.
     pub forwards: std::collections::BTreeMap<(i32, i32, i32), [i32; 3]>,
+    /// The signal each of the mod's blocks gives (`redstone.set-signal`),
+    /// while the block is the same.
+    pub signals: std::collections::BTreeMap<(i32, i32, i32), u8>,
+    /// The players sneaking, by id (`players.sneaking`): a `use` step's
+    /// player while it clicks with `sneaking`.
+    pub sneaking: Vec<String>,
     /// The signals the mod's blocks give (`redstone.set-output`): weak and
     /// strong by face, while the block is the same.
     pub outputs: std::collections::BTreeMap<(i32, i32, i32), [[u8; 2]; 6]>,
@@ -483,6 +489,8 @@ impl TestGame {
             living: Vec::new(),
             forwards: Default::default(),
             outputs: Default::default(),
+            signals: Default::default(),
+            sneaking: Vec::new(),
             shown: Vec::new(),
             visuals: Default::default(),
             containers: Default::default(),
@@ -521,6 +529,7 @@ impl TestGame {
             day_time: self.clock.map_or(self.tick, |c| c.day_time),
             players: self.players.clone(),
             // Players look south, level.
+            sneaking: self.sneaking.clone(),
             rotations: self
                 .players
                 .iter()
@@ -766,6 +775,7 @@ impl TestGame {
                         let was = self.world.get(&at).map(|s| block(s));
                         if was.as_deref() != Some(block(&b.state).as_str()) {
                             self.outputs.remove(&at);
+                            self.signals.remove(&at);
                         }
                         self.world.insert(at, b.state.clone());
                     }
@@ -807,6 +817,35 @@ impl TestGame {
                 Output::Break { dimension, pos, .. } if overworld(dimension) => {
                     self.world.remove(&(pos[0], pos[1], pos[2]));
                     self.outputs.remove(&(pos[0], pos[1], pos[2]));
+                    self.signals.remove(&(pos[0], pos[1], pos[2]));
+                }
+                Output::Signal {
+                    dimension,
+                    pos,
+                    level,
+                    ..
+                } if overworld(dimension) => {
+                    let at = (pos[0], pos[1], pos[2]);
+                    match level {
+                        0 => self.signals.remove(&at),
+                        l => self.signals.insert(at, *l),
+                    };
+                }
+                Output::VisualColor {
+                    dimension,
+                    pos,
+                    colors,
+                    ..
+                } if overworld(dimension) => {
+                    if let Some(parts) = self.visuals.get_mut(&(pos[0], pos[1], pos[2])) {
+                        for (i, p) in parts.iter_mut().enumerate() {
+                            p.color = colors
+                                .iter()
+                                .rev()
+                                .find(|(at, _)| *at as usize == i)
+                                .map(|(_, c)| *c);
+                        }
+                    }
                 }
                 Output::RedstoneOutput {
                     dimension,
@@ -845,6 +884,7 @@ impl TestGame {
                             for (p, o) in parts.iter_mut().zip(own) {
                                 p.scroll = o.scroll.clone();
                                 p.orientation = o.orientation;
+                                p.color = o.color;
                             }
                             parts.extend(old.iter().filter(|o| o.fluid.is_some()).cloned());
                         }
@@ -1048,7 +1088,7 @@ pub struct UseAt {
     at: Option<[f64; 3]>,
     /// The item in their main hand (`item-events`); none: an empty hand.
     item: Option<String>,
-    /// They sneak as they click (with an item).
+    /// They sneak as they click (`players.sneaking`).
     #[serde(default)]
     sneaking: bool,
 }
@@ -1247,6 +1287,9 @@ pub struct Expect {
     /// step (`set-output`), a face to a line as `"x y z face weak strong"`,
     /// faces giving none left out.
     outputs: Option<Vec<String>>,
+    /// Capability `redstone`: the signals the mod's blocks give after the
+    /// step (`set-signal`), as `"x y z level"`, those giving 0 left out.
+    signals: Option<Vec<String>>,
     /// The mod is turned off during this step, for a reason holding this text.
     /// Without it, a mod that stops fails the test.
     stopped: Option<String>,
@@ -1511,6 +1554,9 @@ impl Step {
                 let at = [u.x, u.y, u.z];
                 [0, 1, 2].map(|k| f64::from(at[k]) + 0.5 + 0.5 * f64::from(n[k]))
             };
+            if u.sneaking {
+                game.sneaking.push(p.id.clone());
+            }
             match &u.item {
                 // A click with an item reaches `item-used` with the face
                 // clicked (up when the script names none).
@@ -1524,6 +1570,7 @@ impl Step {
                     game.use_block(p, pos, face, hit, &state);
                 }
             }
+            game.sneaking.retain(|id| *id != p.id);
         }
         if let (Some(u), Some(p)) = (&self.use_entity, &who) {
             let item = u.item.as_deref().unwrap_or_default();
@@ -1746,6 +1793,14 @@ impl Step {
                 .collect();
             same("inventory", want, &got)?;
         }
+        if let Some(want) = &e.signals {
+            let got: Vec<String> = game
+                .signals
+                .iter()
+                .map(|((x, y, z), level)| format!("{x} {y} {z} {level}"))
+                .collect();
+            same("signals", want, &got)?;
+        }
         if let Some(want) = &e.outputs {
             let faces = ["down", "up", "north", "south", "west", "east"];
             let got: Vec<String> = game
@@ -1782,6 +1837,9 @@ impl Step {
                         if let Some(q) = p.orientation {
                             let q = q.map(|c| (c * 1000.0).round() / 1000.0);
                             line += &format!(" turned {q:?}");
+                        }
+                        if let Some(rgb) = p.color {
+                            line += &format!(" colored {rgb:06x}");
                         }
                         line
                     })

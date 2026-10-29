@@ -850,6 +850,7 @@ Capability `players`, server mods only (manifest `api = "0.3"`, experimental): t
 | --- | --- | --- |
 | `online` | `func() -> list<player>` | The players online, in the order they joined. |
 | `rotation` | `func(player: string) -> option<tuple<f32, f32>>` | Where a player looks, as of the start of this tick: yaw and pitch in degrees as F3 shows them (-90 pitch looks straight up), for the direction a block is placed facing (NeoForge's `BlockPlaceContext`); none when they are not online. |
+| `sneaking` | `func(player: string) -> bool` | Whether a player sneaks (holds the sneak key), as of the start of this tick, as NeoForge's `isShiftKeyDown`: during `block-used`, a sneak-click (an empty-handed one: sneaking with something in either hand uses no block, as vanilla's). False when they are not online. |
 | `tell` | `func(player: string, text: string) -> bool` | A system message to one player, after the mod's name; false when no player with that id is online. Up to 8 messages per call. |
 | `broadcast` | `func(text: string)` | A system message to every player and the server's log, after the mod's name. Counts toward the same 8 per call. |
 | `push` | `func(player: string, x: f64, y: f64, z: f64) -> bool` | Adds a velocity, in blocks per tick, to a player after the call (a conveyor, a fan): false when no player with that id is online. Each component is clamped to -4 to 4. At most 256 pushes a call. |
@@ -1091,6 +1092,15 @@ A part turned any way, as a chain of turns draws a mechanical arm's segments: a 
 | `part` | `u32` | The part, by its index in the parts drawn at the position. |
 | `rotation` | `tuple<f32, f32, f32, f32>` |  |
 
+### record `part-color`
+
+A colour a part's model is drawn in, as a Flywheel instance's `color`: an analog lever's indicator, a nixie tube's glow.
+
+| Field | Type | |
+| --- | --- | --- |
+| `part` | `u32` | The part, by its index in the parts drawn at the position. |
+| `rgb` | `u32` | 0xRRGGBB, multiplying the model's own colours: 0xFFFFFF leaves them as they are. |
+
 ### record `fluid-box`
 
 A box of fluid, as Create's tanks, basins, spouts and drains draw what they hold: the fluid's still texture, animated, one tile a block across its faces, tinted as the fluid is (water by the biome's water colour), lava lit as it glows.
@@ -1107,6 +1117,7 @@ A box of fluid, as Create's tanks, basins, spouts and drains draw what they hold
 | `set-in-phase` | `func(dimension: string, x: s32, y: s32, z: s32, parts: list<part>) -> result<_, string>` | `set`, with each part's `angle` its angle at game time 0 instead of at the tick it was set: parts at one speed turn in step however far apart they were set, as Flywheel turns Create's cogs (angle = time x speed + offset), so their teeth mesh. |
 | `set-scrolls` | `func(dimension: string, x: s32, y: s32, z: s32, scrolls: list<scroll>) -> result<_, string>` | The scrolls on the parts drawn at a block of the mod's own (at most 16), replacing those there, after the call; none stops them. They stay on the parts by index when `set` draws them again, and go when no parts are drawn there. Measured from game time 0, so belts set apart run in step. |
 | `set-orientations` | `func(dimension: string, x: s32, y: s32, z: s32, orientations: list<orientation>) -> result<_, string>` | The orientations of the parts drawn at a block of the mod's own (at most 16), replacing those there, after the call; a part named by none is not turned. They stay on the parts by index when `set` draws them again, as scrolls do; a mod animating them sets them each tick. |
+| `set-colors` | `func(dimension: string, x: s32, y: s32, z: s32, colors: list<part-color>) -> result<_, string>` | The colours of the parts drawn at a block of the mod's own (at most 16), replacing those there, after the call; a part named by none is drawn as it is. They stay on the parts by index when `set` draws them again, as orientations do. |
 | `set-fluids` | `func(dimension: string, x: s32, y: s32, z: s32, boxes: list<fluid-box>) -> result<_, string>` | The fluid boxes drawn at a block of the mod's own (at most 16), replacing those there, after the call; none draws none. Apart from the parts: `set` keeps them, and they keep the parts. |
 
 ## `block-data`

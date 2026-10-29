@@ -22,8 +22,9 @@ items = [
 ticks = 20
 expect.taken = [7]
 expect.drops = ["minecraft:iron_nugget x9 at 5.5 65 5.5"]
-# Running, it powers the block under it, strongly, as a lever would.
-expect.outputs = ["5 64 5 down 15 15"]
+# Running, it gives the block under it a signal (weak: a strong one would
+# come back to it through that block).
+expect.outputs = ["5 64 5 down 15 0"]
 
 # A redstone signal stops it.
 [[step]]
@@ -33,6 +34,11 @@ ticks = 40
 expect.taken = []
 expect.drops = []
 expect.outputs = []
+# Its gear stops, drawn red.
+expect.visuals = [
+    "5 64 5 minecraft:iron_trapdoor[half=bottom] 0 offset [0.0, 1.1, 0.0] velocity [0.0, 0.0, 0.0] colored ff6060",
+    "5 64 5 minecraft:iron_ingot 0 offset [0.0, 0.82, 0.0] velocity [0.0, 0.0, 0.0] turned [0.707, 0.0, 0.0, 0.707]",
+]
 
 # Without it, a minute of running: the anvil chimes and smoke rises.
 [[step]]
@@ -69,3 +75,8 @@ blocks = [{ x = 9, y = 64, z = 9, state = "gears:counter" }]
 items = [{ id = 30, item = "minecraft:iron_ingot", x = 9.5, y = 64.5, z = 9.5 }]
 ticks = 20
 expect.taken = [30]
+
+# A sneak-click with an empty hand starts it again (`players.sneaking`).
+[[step]]
+use = { x = 9, y = 64, z = 9, face = "up", sneaking = true }
+expect.told = ["Alex: The counter starts again from 0"]

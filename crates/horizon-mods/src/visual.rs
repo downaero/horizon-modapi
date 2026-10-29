@@ -34,6 +34,8 @@ pub struct VisualPart {
     /// A unit quaternion (x, y, z, w) turning its model about `pivot`
     /// before its spin about `axis` (`visuals.set-orientations`).
     pub orientation: Option<[f32; 4]>,
+    /// 0xRRGGBB multiplying its model's colours (`visuals.set-colors`).
+    pub color: Option<u32>,
     /// A box of fluid instead (`visuals.set-fluids`): `state` names the
     /// fluid, and the box is from `min` to `max` in blocks from the
     /// position's corner. Kept after the parts, never among them.
@@ -62,6 +64,7 @@ impl VisualPart {
             scale: 1.0,
             scroll: None,
             orientation: None,
+            color: None,
             fluid: Some(FluidBox { min, max }),
         }
     }
@@ -182,7 +185,9 @@ impl VisualPart {
 /// were set, or 0 for parts set in phase) and the tick they were set
 /// (i64), then each part's state (u16 length and bytes), axis (u8), whether it
 /// is an item (u8), pivot, offset, speed, angle, velocity and scale (f32),
-/// little-endian. Fluid boxes follow when there are any: 0xFFFD (u16, no
+/// little-endian. Colours follow when a part has one: 0xFFFC (u16, no
+/// state's length), their count (u8), then for each the part's index (u8)
+/// and its 0xRRGGBB (u32). Fluid boxes follow when there are any: 0xFFFD (u16, no
 /// state's length), their count (u8), then for each the fluid (u16 length
 /// and bytes) and min and max (f32 each). Orientations follow when a part
 /// has one: 0xFFFE, their count (u8), then for each the part's index (u8)
@@ -216,6 +221,19 @@ pub fn encode(
             .chain(last)
         {
             out.extend(v.to_le_bytes());
+        }
+    }
+    let colored: Vec<(usize, u32)> = parts
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| Some((i, p.color?)))
+        .collect();
+    if !colored.is_empty() {
+        out.extend(COLORS.to_le_bytes());
+        out.push(colored.len() as u8);
+        for (i, rgb) in colored {
+            out.push(i as u8);
+            out.extend(rgb.to_le_bytes());
         }
     }
     let fluids: Vec<(&str, FluidBox)> = parts
@@ -270,6 +288,8 @@ const SCROLLS: u16 = 0xFFFF;
 const ORIENTATIONS: u16 = 0xFFFE;
 /// Where [`encode`]'s fluid boxes start, before the orientations.
 const FLUID_BOXES: u16 = 0xFFFD;
+/// Where [`encode`]'s colours start, before the fluid boxes.
+const COLORS: u16 = 0xFFFC;
 
 /// [`encode`]'s inverse; none for damaged bytes.
 pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPart>)> {
@@ -289,11 +309,23 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPar
     let set_at = i64::from_le_bytes(take(&mut b, 8)?.try_into().ok()?);
     let mut parts = Vec::new();
     let mut turned = Vec::new();
+    let mut colored = Vec::new();
     let mut fluids = Vec::new();
     while !b.is_empty() {
         let n = u16::from_le_bytes(take(&mut b, 2)?.try_into().ok()?);
         if n == SCROLLS {
             break;
+        }
+        if n == COLORS {
+            for _ in 0..take(&mut b, 1)?[0] {
+                let i = usize::from(take(&mut b, 1)?[0]);
+                let rgb = u32::from_le_bytes(take(&mut b, 4)?.try_into().ok()?);
+                if rgb > 0xFF_FFFF {
+                    return None;
+                }
+                colored.push((i, rgb));
+            }
+            continue;
         }
         if n == FLUID_BOXES {
             let count = take(&mut b, 1)?[0];
@@ -353,6 +385,7 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPar
             scale: f[11],
             scroll: None,
             orientation: None,
+            color: None,
             fluid: None,
         };
         part.check().ok()?;
@@ -360,6 +393,9 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPar
     }
     for (i, q) in turned {
         parts.get_mut(i)?.orientation = Some(q);
+    }
+    for (i, rgb) in colored {
+        parts.get_mut(i)?.color = Some(rgb);
     }
     while !b.is_empty() {
         let i = usize::from(take(&mut b, 1)?[0]);
@@ -401,6 +437,7 @@ mod tests {
             scale: 1.0,
             scroll: None,
             orientation: None,
+            color: None,
             fluid: None,
         }
     }
@@ -472,6 +509,19 @@ mod tests {
         );
         assert_eq!(unit_quaternion([0.0; 4]), None);
         assert_eq!(unit_quaternion([f32::NAN, 0.0, 0.0, 1.0]), None);
+    }
+
+    /// Colours stay on their parts by index, with orientations and
+    /// scrolls.
+    #[test]
+    fn colors_round_trip_on_their_parts() {
+        let mut parts = vec![shaft(0.0), shaft(1.0), shaft(2.0)];
+        parts[1].color = Some(0xFF_6060);
+        parts[2].orientation = Some([0.0, 0.0, 0.0, 1.0]);
+        parts[2].scroll = Some(belt());
+        parts.push(VisualPart::fluid("minecraft:water", [0.0; 3], [1.0; 3]));
+        let bytes = encode("gears", [0; 3], 0, 7, &parts);
+        assert_eq!(decode(&bytes).unwrap().4, parts);
     }
 
     /// Fluid boxes come after the parts, before their orientations and

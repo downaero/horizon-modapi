@@ -532,9 +532,9 @@ impl ServerMod for Gears {
                 .map_or(0, u32::from_le_bytes);
             let _ = attachments::set(&me, "counters", &(placed + 1).to_le_bytes());
             // A gear above it, turning while the counter runs, and the block
-            // under it powered.
+            // under it given a signal.
             gear(DIMENSION, pos.x, pos.y, pos.z, true);
-            let _ = redstone::set_output(DIMENSION, pos.x, pos.y, pos.z, Some(0), 15, 15);
+            let _ = redstone::set_output(DIMENSION, pos.x, pos.y, pos.z, Some(0), 15, 0);
             self.gears.push(([pos.x, pos.y, pos.z], true));
         }
     }
@@ -862,8 +862,8 @@ impl ServerMod for Gears {
         }
         // A redstone signal stops the counter (capability `redstone`), and
         // its gear: players' games are told only when that changes. While it
-        // runs it powers the block under it (`redstone::set_output`), a lamp
-        // there lit, as a lever does the block it sits on.
+        // runs it gives the block under it a signal (`redstone::set_output`),
+        // a lamp there lit.
         let at = [pos.x, pos.y, pos.z];
         let running = !redstone::power(dimension, pos.x, pos.y, pos.z).is_some_and(|p| p > 0);
         let changed = match self.gears.iter_mut().find(|(p, _)| *p == at) {
@@ -879,8 +879,17 @@ impl ServerMod for Gears {
         };
         if changed {
             gear(dimension, pos.x, pos.y, pos.z, running);
+            // Stopped, its gear is drawn red (`visuals::set_colors`).
+            let red = visuals::PartColor {
+                part: 0,
+                rgb: 0xFF_6060,
+            };
+            let colors = if running { vec![] } else { vec![red] };
+            let _ = visuals::set_colors(dimension, pos.x, pos.y, pos.z, &colors);
+            // Weak only: a strong signal into the block under it would
+            // come back through that block and stop it.
             let level = if running { 15 } else { 0 };
-            let _ = redstone::set_output(dimension, pos.x, pos.y, pos.z, Some(0), level, level);
+            let _ = redstone::set_output(dimension, pos.x, pos.y, pos.z, Some(0), level, 0);
         }
         if !running {
             return;
@@ -1055,6 +1064,12 @@ impl ServerMod for Gears {
         }
         if !state.starts_with(COUNTER) {
             return false;
+        }
+        // A sneak-click starts it again from 0 (`players::sneaking`).
+        if players::sneaking(player) {
+            let _ = block_entities::set_synced(dimension, pos.x, pos.y, pos.z, &0u32.to_le_bytes());
+            players::tell(player, "The counter starts again from 0");
+            return true;
         }
         let seconds = block_entities::get(dimension, pos.x, pos.y, pos.z)
             .and_then(|d| <[u8; 4]>::try_from(d).ok())

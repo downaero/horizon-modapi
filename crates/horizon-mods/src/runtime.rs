@@ -637,6 +637,8 @@ pub struct Snapshot {
     pub inventories: std::collections::HashMap<String, (Vec<Option<StackInfo>>, u32)>,
     /// Each online player's yaw and pitch, by UUID (`players.rotation`).
     pub rotations: std::collections::HashMap<String, (f32, f32)>,
+    /// The online players sneaking, by UUID (`players.sneaking`).
+    pub sneaking: Vec<String>,
     /// Every server mod's typed entities (`entity-types`); each mod sees
     /// its own.
     pub typed_entities: Arc<Vec<TypedEntity>>,
@@ -953,6 +955,14 @@ pub enum Output {
         dimension: String,
         pos: [i32; 3],
         to: Option<[i32; 3]>,
+    },
+    /// `visuals.set-colors`: 0xRRGGBB on the parts drawn at one of the
+    /// mod's blocks, by part index (none: none any more).
+    VisualColor {
+        mod_id: String,
+        dimension: String,
+        pos: [i32; 3],
+        colors: Vec<(u32, u32)>,
     },
     /// `visuals.set-orientations`: unit quaternions on the parts drawn at
     /// one of the mod's blocks, by part index (none: none any more).
@@ -3797,6 +3807,42 @@ impl visuals::Host for State {
         });
         Ok(())
     }
+    fn set_colors(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        colors: Vec<visuals::PartColor>,
+    ) -> Result<(), String> {
+        if colors.len() > crate::visual::PARTS {
+            return Err(format!(
+                "{} colours: at most {}",
+                colors.len(),
+                crate::visual::PARTS
+            ));
+        }
+        self.own_block(&dimension, x, y, z)?;
+        let colors = colors
+            .into_iter()
+            .map(|c| {
+                if c.part as usize >= crate::visual::PARTS {
+                    return Err(format!("part {}: a position has at most 16", c.part));
+                }
+                if c.rgb > 0xFF_FFFF {
+                    return Err(format!("part {}: a colour is 0xRRGGBB", c.part));
+                }
+                Ok((c.part, c.rgb))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        self.out.push(Output::VisualColor {
+            mod_id: self.id.clone(),
+            dimension,
+            pos: [x, y, z],
+            colors,
+        });
+        Ok(())
+    }
 }
 impl State {
     /// `visuals.set` and `set-in-phase`.
@@ -3830,6 +3876,7 @@ impl State {
                     scale: p.scale,
                     scroll: None,
                     orientation: None,
+                    color: None,
                     fluid: None,
                 };
                 part.check()?;
@@ -5702,6 +5749,9 @@ impl State {
 impl players::Host for State {
     fn rotation(&mut self, player: String) -> Option<(f32, f32)> {
         self.snapshot.rotations.get(&player).copied()
+    }
+    fn sneaking(&mut self, player: String) -> bool {
+        self.snapshot.sneaking.contains(&player)
     }
     fn inventory(&mut self, player: String) -> Option<Vec<Option<players::SlotStack>>> {
         let (slots, _) = self.snapshot.inventories.get(&player)?;

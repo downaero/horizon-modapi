@@ -1373,6 +1373,7 @@ mod run {
                 {
                     p.scroll = o.scroll.clone();
                     p.orientation = o.orientation;
+                    p.color = o.color;
                 }
                 parts.extend(old.iter().filter(|o| o.fluid.is_some()).cloned());
             }
@@ -2460,11 +2461,19 @@ mod run {
             let stack = |s: &Option<horizon_client::items::ItemStack>| s.as_ref().map(stack_info);
             let mut out = std::collections::HashMap::new();
             let mut rotations = std::collections::HashMap::new();
+            let mut sneaking = Vec::new();
             if self.options.execution_role.is_client()
                 && self.remote.is_none()
                 && self.player.is_some()
             {
                 rotations.insert(self.player_uuid_string(), (self.yaw, self.pitch));
+                if self
+                    .player
+                    .as_ref()
+                    .is_some_and(|p| p.pose == horizon_client::pose::Pose::Crouching)
+                {
+                    sneaking.push(self.player_uuid_string());
+                }
                 let mut slots: Vec<_> = self.inventory.iter().take(36).map(stack).collect();
                 slots.resize(36, None);
                 // `armor` is head first; mods count feet to head.
@@ -2478,6 +2487,9 @@ mod run {
                 .flat_map(|h| &h.hub.guests);
             for g in guests.filter(|g| g.placed) {
                 rotations.insert(uuid_string(g.uuid), (g.yaw, g.pitch));
+                if g.sneaking {
+                    sneaking.push(uuid_string(g.uuid));
+                }
                 let mut slots: Vec<_> = g.inventory.iter().take(36).map(stack).collect();
                 slots.resize(36, None);
                 slots.extend(g.armor.iter().rev().map(stack));
@@ -2486,6 +2498,7 @@ mod run {
             }
             snapshot.inventories = out;
             snapshot.rotations = rotations;
+            snapshot.sneaking = sneaking;
         }
 
         /// Puts the stacks server mods asked for in players' slots (0 to 35
@@ -3331,7 +3344,8 @@ mod run {
         /// A guest's empty-handed click on the block at `pos`, offered to the
         /// server mods before the guest's turn runs: the host is not in
         /// `self.lan` while a guest's packet is handled, so it is passed in.
-        /// A sneaking guest uses nothing, as the main-hand use of vanilla.
+        /// A guest sneaking with something in either hand uses no block, as
+        /// vanilla's `isSecondaryUseActive`; with both hands empty they do.
         pub(in crate::game) fn mod_block_use_by_guest(
             &mut self,
             host: &mut LanHost,
@@ -3346,7 +3360,8 @@ mod run {
             let Some(g) = host.hub.guests.iter().find(|g| g.conn == conn) else {
                 return false;
             };
-            if g.sneaking {
+            let held = g.inventory.get(g.selected).is_some_and(Option::is_some);
+            if g.sneaking && (held || g.offhand.is_some()) {
                 return false;
             }
             let id = uuid_string(g.uuid);
@@ -4022,6 +4037,7 @@ mod run {
                             * Mat4::from_translation(Vec3::from(part.offset) - pivot)
                             * Mat4::from_translation(Vec3::splat(0.5))
                             * Mat4::from_scale(Vec3::splat(part.scale));
+                    let first = out.len();
                     match model {
                         VisualModel::Block(state) => {
                             let m = transform * Mat4::from_translation(Vec3::splat(-0.5));
@@ -4050,6 +4066,12 @@ mod run {
                             if let Some(b) = &part.fluid {
                                 super::fluid_box_vertices(o, b, *sprite, *tint, light, out);
                             }
+                        }
+                    }
+                    // Its colour multiplies the model's (`visuals.set-colors`).
+                    if let Some(rgb) = part.color {
+                        for v in &mut out[first..] {
+                            v.color = super::tint_vertex(v.color, rgb);
                         }
                     }
                 }
@@ -4201,6 +4223,24 @@ mod run {
                         Some(t) => self.world.forwards.insert(key, (t[0], t[1], t[2])),
                         None => self.world.forwards.remove(&key),
                     };
+                }
+                Output::VisualColor {
+                    mod_id,
+                    dimension,
+                    pos,
+                    colors,
+                } => {
+                    let key = (mod_id, dimension, pos);
+                    self.change_mod_visual(key, host, |i, p| {
+                        let c = colors
+                            .iter()
+                            .rev()
+                            .find(|(at, _)| *at as usize == i)
+                            .map(|(_, c)| *c);
+                        let changed = p.color != c;
+                        p.color = c;
+                        changed
+                    });
                 }
                 Output::VisualOrientation {
                     mod_id,
@@ -4394,4 +4434,11 @@ mod run {
             }
         }
     }
+}
+
+/// A vertex's RGBA8 colour (red in the low byte) times 0xRRGGBB.
+#[cfg(feature = "mods")]
+fn tint_vertex(color: u32, rgb: u32) -> u32 {
+    let channel = |at: u32, by: u32| ((color >> at) & 255) * ((rgb >> by) & 255) / 255;
+    (color & 0xFF00_0000) | channel(16, 0) << 16 | channel(8, 8) << 8 | channel(0, 16)
 }

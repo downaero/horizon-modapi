@@ -305,7 +305,7 @@ A step's parts happen in this order:
 | `chat = "<Steve> hi"` | a chat line the player receives |
 | `command = "where north"` | the player types `/where north`; a command the mod doesn't own fails the step |
 | `break = { x = 1, y = 63, z = 0, state = "minecraft:stone" }`, `place = { ... }` | server mods: the player breaks or places that block |
-| `use = { x = 1, y = 64, z = 0, face = "up" }` | server mods: the player right-clicks the block there with an empty hand, on that face (`down`, `up`, `north`, `south`, `west`, `east`; left out: none), hitting `at = [x, y, z]` in the world (left out: the face's middle); with `item = "minecraft:stick"` (and `sneaking = true`) they click with that item in their main hand, which reaches `item-used` (face left out: up) |
+| `use = { x = 1, y = 64, z = 0, face = "up" }` | server mods: the player right-clicks the block there with an empty hand, on that face (`down`, `up`, `north`, `south`, `west`, `east`; left out: none), hitting `at = [x, y, z]` in the world (left out: the face's middle); with `item = "minecraft:stick"` they click with that item in their main hand, which reaches `item-used` (face left out: up); `sneaking = true` sneaks as they click (`players.sneaking`) |
 | `living = [{ id = 3, kind = "minecraft:chicken", x = 2.5, y = 64.0, z = 2.5, health = 4.0 }]` | server mods: the mobs of the Overworld from now on (`entities.living-nearby`; health left out: 20), which the mod's `hurt` and `discard` change |
 | `use-entity = { id = 3, item = "gears:crate" }` | server mods: the player right-clicks that mob with the item in their main hand (left out: none; `sneaking = true`), which reaches `item-used-on-entity` |
 | `leave = "Alex"` | server mods: that player leaves |
@@ -336,6 +336,7 @@ checked:
 | `effects = ["sound minecraft:block.anvil.use at 5 64 5", "event 2000 1 at 5 65 5"]` | server mods with `effects`: every sound and level event, in order |
 | `names = ["Gear Crate at 5 64 5"]` | server mods with `containers`: every `set-name` (`-` for none) |
 | `visuals = ["0 64 0 mymod:shaft[axis=x] 4.8"]` | server mods with `block-entities`: the parts drawn at the mod's blocks after the step, by position, with their speed in degrees a tick, and ` offset [x, y, z] velocity [x, y, z]` after it for a part off its block's corner or moving (`[]`: none); a block the mod breaks with `world.break-block` is air |
+| `signals = ["0 64 0 10"]` | server mods with `redstone`: the signal each of the mod's blocks gives after the step (`set-signal`), as `x y z level`, those giving 0 left out |
 | `outputs = ["0 64 0 down 15 15"]` | server mods with `redstone`: the signals the mod's blocks give after the step (`set-output`), a face to a line as `x y z face weak strong`, faces giving none left out |
 | `stopped = "panic"` | the mod was turned off, for a reason holding this text; without it, a mod that traps, panics or overruns fails the test |
 
@@ -745,8 +746,10 @@ through that neighbour, as a lever does the block it sits on. Any template will 
 `"signal_source": true` in the block's `properties`; dust connects to it. The blocks around are
 told at the tick's end. The signal stays while the block is there, whatever its state (a latch
 flipping its own `powered`), and goes with the block; it is not saved, so a mod sets it again
-after a load. The gears example's `gears:counter` powers the block under it while it runs, so
-a lamp there lights.
+after a load. The gears example's `gears:counter` gives the block under it a weak signal while
+it runs, so a lamp there lights; a strong one would power the block under it, which would give it
+back to the counter (a conductor passes on the strong signals around it, as in vanilla) and stop
+it.
 
 `redstone.set-comparator-signal(dimension, x, y, z, level)` (API level 42) is what a
 comparator reads from a block of the mod's (`getAnalogOutputSignal`: a depot's or a
@@ -868,6 +871,12 @@ with them, and an empty list stops them; block parts only. In the SDK, `Visual::
 speed, span)` scrolls the part added last. The gears example's belt draws its rubber on top
 (`gears:belt_strip`, a block never placed), its ribs running east.
 
+`visuals.set-colors(dimension, x, y, z, colors)` (API level 53) draws parts in a colour, as a
+Flywheel instance's `color`: each names a part by index and a 0xRRGGBB that multiplies its model's
+own colours (0xFFFFFF leaves them), for an analog lever's indicator or a nixie tube's glow. Colours
+stay on the parts by index as orientations do; in the SDK, `Visual::colored(rgb)` colours the part
+added last. The gears example's counter draws its gear red while a signal stops it.
+
 `visuals.set-orientations(dimension, x, y, z, orientations)` (API level 48) turns parts any way,
 as a chain of turns draws Create's mechanical arm: each names a part by index and a unit quaternion
 (x, y, z, w; another length is made unit) that turns the part's model about its `pivot` first;
@@ -966,6 +975,10 @@ hotbar, 9 to 35 the rest, 36 to 39 the armor from feet to head, 40 the off hand)
 is where they look, yaw and pitch in degrees as F3 shows them, for the way a block is placed facing
 (NeoForge's `BlockPlaceContext`); the SDK's `Direction::from_y_rot` and `Direction::nearest_looking`
 turn it into a direction as NeoForge's `getHorizontalDirection` and `getNearestLookingDirection` do.
+`players.sneaking(player)` (API level 53) is whether they hold sneak, as NeoForge's
+`isShiftKeyDown`: in `block-used`, a sneak-click (a player sneaking with both hands empty uses a
+block, as in vanilla; with something in either hand they use none). The gears example's counter
+starts again from 0 when sneak-clicked.
 
 Capability `console` (experimental) runs any command as the server's console, with an operator's
 rights, at the tick's end, as a command block would: `console.run(line)`, at most 256 a call, no

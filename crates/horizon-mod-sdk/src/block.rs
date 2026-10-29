@@ -149,6 +149,7 @@ pub struct Visual {
     parts: Vec<visuals::Part>,
     scrolls: Vec<visuals::Scroll>,
     orientations: Vec<visuals::Orientation>,
+    colors: Vec<visuals::PartColor>,
     fluids: Vec<visuals::FluidBox>,
 }
 
@@ -246,6 +247,18 @@ impl Visual {
         }
         self
     }
+    /// The last part's model drawn in colour `rgb` (0xRRGGBB, multiplying
+    /// its own), as a Flywheel instance's `color` (`visuals.set-colors`).
+    pub fn colored(&mut self, rgb: u32) -> &mut Self {
+        if let Some(part) = self.parts.len().checked_sub(1) {
+            self.colors.retain(|c| c.part as usize != part);
+            self.colors.push(visuals::PartColor {
+                part: part as u32,
+                rgb,
+            });
+        }
+        self
+    }
     /// A box of `fluid` (`minecraft:water`, a mod's) from `min` to `max`,
     /// in blocks from the block's corner, drawn as Create draws what a tank
     /// or a basin holds (`visuals.set-fluids`).
@@ -263,6 +276,10 @@ impl Visual {
     fn same_fluids(&self, other: &[visuals::FluidBox]) -> bool {
         let key = |b: &visuals::FluidBox| (b.fluid.clone(), b.min, b.max);
         self.fluids.len() == other.len() && self.fluids.iter().map(key).eq(other.iter().map(key))
+    }
+    fn same_colors(&self, other: &[visuals::PartColor]) -> bool {
+        let key = |c: &visuals::PartColor| (c.part, c.rgb);
+        self.colors.len() == other.len() && self.colors.iter().map(key).eq(other.iter().map(key))
     }
     fn same_orientations(&self, other: &[visuals::Orientation]) -> bool {
         let key = |o: &visuals::Orientation| (o.part, o.rotation);
@@ -317,6 +334,12 @@ fn draw<T: BlockEntity>(entity: &T, level: &Level, pos: BlockPos, state: &BlockS
     if !visual.parts.is_empty()
         && !visual.same_orientations(&last.orientations)
         && visuals::set_orientations(d, x, y, z, &visual.orientations).is_err()
+    {
+        return;
+    }
+    if !visual.parts.is_empty()
+        && !visual.same_colors(&last.colors)
+        && visuals::set_colors(d, x, y, z, &visual.colors).is_err()
     {
         return;
     }
