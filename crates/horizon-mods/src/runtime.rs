@@ -937,6 +937,21 @@ pub enum Output {
         pos: [i32; 3],
         scrolls: Vec<(u32, crate::visual::Scroll)>,
     },
+    /// `visuals.set-fluids`: the fluid boxes drawn at one of the mod's
+    /// blocks (none: none any more), apart from its parts.
+    VisualFluids {
+        mod_id: String,
+        dimension: String,
+        pos: [i32; 3],
+        boxes: Vec<crate::visual::VisualPart>,
+    },
+    /// `transfer.forward`: the block's storage is the one at `to`'s (none:
+    /// its own again).
+    Forward {
+        dimension: String,
+        pos: [i32; 3],
+        to: Option<[i32; 3]>,
+    },
     /// `visuals.set-orientations`: unit quaternions on the parts drawn at
     /// one of the mod's blocks, by part index (none: none any more).
     VisualOrientation {
@@ -1059,6 +1074,11 @@ pub trait WorldView: std::any::Any + Send {
     fn check_state(&self, state: &str) -> Result<(), String>;
     /// What a block state is made of (`world.block-info`).
     fn block_info(&self, _state: &str) -> Option<BlockInfo> {
+        None
+    }
+    /// The block whose storage a block hands out (`transfer.forward`),
+    /// none where it hands out its own.
+    fn forward(&self, _dimension: &str, _pos: [i32; 3]) -> Option<[i32; 3]> {
         None
     }
     /// The block tags of a block state's block (`world.block-tags`).
@@ -3661,6 +3681,45 @@ impl visuals::Host for State {
         });
         Ok(())
     }
+    fn set_fluids(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        boxes: Vec<visuals::FluidBox>,
+    ) -> Result<(), String> {
+        if boxes.len() > crate::visual::FLUIDS {
+            return Err(format!(
+                "{} fluid boxes: at most {}",
+                boxes.len(),
+                crate::visual::FLUIDS
+            ));
+        }
+        self.own_block(&dimension, x, y, z)?;
+        let boxes = boxes
+            .into_iter()
+            .map(|b| {
+                if b.fluid.is_empty() || b.fluid.len() > 256 {
+                    return Err("a fluid box names its fluid".to_string());
+                }
+                let part = crate::visual::VisualPart::fluid(
+                    &b.fluid,
+                    [b.min.0, b.min.1, b.min.2],
+                    [b.max.0, b.max.1, b.max.2],
+                );
+                part.check()?;
+                Ok(part)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        self.out.push(Output::VisualFluids {
+            mod_id: self.id.clone(),
+            dimension,
+            pos: [x, y, z],
+            boxes,
+        });
+        Ok(())
+    }
     fn set_orientations(
         &mut self,
         dimension: String,
@@ -3731,6 +3790,7 @@ impl State {
                     scale: p.scale,
                     scroll: None,
                     orientation: None,
+                    fluid: None,
                 };
                 part.check()?;
                 if let Some(view) = self.world.lock().ok().as_ref().and_then(|v| v.as_ref())
@@ -4026,6 +4086,15 @@ fn face_index(face: Option<transfer::Face>) -> Option<u8> {
     })
 }
 impl State {
+    /// The position whose storage `pos` hands out (`transfer.forward`):
+    /// its own when it forwards to none.
+    fn forwarded(&self, dimension: &str, pos: [i32; 3]) -> [i32; 3] {
+        self.world
+            .lock()
+            .ok()
+            .and_then(|v| v.as_ref()?.forward(dimension, pos))
+            .unwrap_or(pos)
+    }
     /// The storage at a position, while the block there is still its
     /// owner's: one whose block went is forgotten (and its save with it).
     fn storage_at(&mut self, dimension: &str, pos: [i32; 3]) -> Option<Storage> {
@@ -4635,6 +4704,7 @@ impl transfer::Host for State {
         z: i32,
         face: Option<transfer::Face>,
     ) -> Option<Vec<Option<transfer::ItemStack>>> {
+        let [x, y, z] = self.forwarded(&dimension, [x, y, z]);
         let view = self.world.lock().ok()?;
         let slots = view
             .as_ref()?
@@ -4656,6 +4726,7 @@ impl transfer::Host for State {
         stack: transfer::ItemStack,
         simulate: bool,
     ) -> u32 {
+        let [x, y, z] = self.forwarded(&dimension, [x, y, z]);
         if stack.count == 0 || stack.item.is_empty() || stack.item.len() > 128 {
             return stack.count;
         }
@@ -4684,6 +4755,7 @@ impl transfer::Host for State {
         count: u32,
         simulate: bool,
     ) -> Option<transfer::ItemStack> {
+        let [x, y, z] = self.forwarded(&dimension, [x, y, z]);
         if count == 0 {
             return None;
         }
@@ -4717,6 +4789,7 @@ impl transfer::Host for State {
         Ok(())
     }
     fn get_tank(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<transfer::Tank> {
+        let [x, y, z] = self.forwarded(&dimension, [x, y, z]);
         let s = self.storage_at(&dimension, [x, y, z])?;
         (s.fluid_capacity > 0).then(|| transfer::Tank {
             content: s
@@ -4734,6 +4807,7 @@ impl transfer::Host for State {
         stack: transfer::FluidStack,
         simulate: bool,
     ) -> u32 {
+        let [x, y, z] = self.forwarded(&dimension, [x, y, z]);
         let Some(mut s) = self.storage_at(&dimension, [x, y, z]) else {
             return 0;
         };
@@ -4765,6 +4839,7 @@ impl transfer::Host for State {
         amount: u32,
         simulate: bool,
     ) -> Option<transfer::FluidStack> {
+        let [x, y, z] = self.forwarded(&dimension, [x, y, z]);
         let mut s = self.storage_at(&dimension, [x, y, z])?;
         let (fluid, held) = s.fluid.clone()?;
         let out = amount.min(held);
@@ -4798,6 +4873,7 @@ impl transfer::Host for State {
         y: i32,
         z: i32,
     ) -> Option<transfer::Battery> {
+        let [x, y, z] = self.forwarded(&dimension, [x, y, z]);
         let s = self.storage_at(&dimension, [x, y, z])?;
         (s.energy_capacity > 0).then_some(transfer::Battery {
             stored: s.energy,
@@ -4813,6 +4889,7 @@ impl transfer::Host for State {
         amount: u64,
         simulate: bool,
     ) -> u64 {
+        let [x, y, z] = self.forwarded(&dimension, [x, y, z]);
         let Some(mut s) = self.storage_at(&dimension, [x, y, z]) else {
             return 0;
         };
@@ -4832,6 +4909,7 @@ impl transfer::Host for State {
         amount: u64,
         simulate: bool,
     ) -> u64 {
+        let [x, y, z] = self.forwarded(&dimension, [x, y, z]);
         let Some(mut s) = self.storage_at(&dimension, [x, y, z]) else {
             return 0;
         };
@@ -4856,6 +4934,28 @@ impl transfer::Host for State {
             }
             self.save_storage(&dimension, [x, y, z], None);
         }
+    }
+    fn forward(
+        &mut self,
+        dimension: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        to: Option<(i32, i32, i32)>,
+    ) -> Result<(), String> {
+        self.own_block(&dimension, x, y, z)?;
+        let to = to.map(|(tx, ty, tz)| [tx, ty, tz]);
+        if let Some(t) = to
+            && (0..3).any(|k| (t[k] - [x, y, z][k]).abs() > 64)
+        {
+            return Err("forwards to a block within 64 blocks on each axis".into());
+        }
+        self.out.push(Output::Forward {
+            dimension,
+            pos: [x, y, z],
+            to,
+        });
+        Ok(())
     }
 }
 impl attachments::Host for State {

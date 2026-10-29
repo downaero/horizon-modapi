@@ -38,6 +38,8 @@ pub struct TestGame {
     pub power: std::collections::BTreeMap<(i32, i32, i32), u8>,
     /// The item entities lying in the Overworld; `take` removes them.
     pub items: Vec<crate::DroppedStack>,
+    /// The Overworld's `transfer.forward`s: a block's storage is another's.
+    pub forwards: std::collections::BTreeMap<(i32, i32, i32), [i32; 3]>,
     /// The mobs in the Overworld (`entities.living-nearby`): a step's
     /// `living`, then what the mod's `hurt` and `discard` leave of them.
     pub living: Vec<crate::Living>,
@@ -71,6 +73,7 @@ struct ScriptWorld {
     power: std::collections::BTreeMap<(i32, i32, i32), u8>,
     dropped: Vec<crate::DroppedStack>,
     living: Vec<crate::Living>,
+    forwards: std::collections::BTreeMap<(i32, i32, i32), [i32; 3]>,
     recipes: Vec<(String, String, String)>,
     /// Item tags by id, each its values as the files list them (`#` for a
     /// tag in a tag): the package's own over vanilla's.
@@ -326,6 +329,10 @@ impl crate::WorldView for ScriptWorld {
     fn items(&self) -> Vec<String> {
         self.item_ids.to_vec()
     }
+    fn forward(&self, dimension: &str, pos: [i32; 3]) -> Option<[i32; 3]> {
+        let to = self.forwards.get(&(pos[0], pos[1], pos[2]))?;
+        (dimension == "minecraft:overworld").then_some(*to)
+    }
     fn living(&self, dimension: &str) -> Vec<crate::Living> {
         match dimension {
             "minecraft:overworld" => self.living.clone(),
@@ -468,6 +475,7 @@ impl TestGame {
             power: Default::default(),
             items: Vec::new(),
             living: Vec::new(),
+            forwards: Default::default(),
             visuals: Default::default(),
             containers: Default::default(),
             inventories: Default::default(),
@@ -1139,6 +1147,7 @@ impl Step {
             power: game.power.clone(),
             dropped: game.items.clone(),
             living: game.living.clone(),
+            forwards: game.forwards.clone(),
             recipes: game.recipes.clone(),
             tags: game.tags.clone(),
             block_tags: game.block_tags.clone(),
@@ -1326,13 +1335,15 @@ impl Step {
                         game.visuals.remove(&at);
                     } else {
                         // Scrolls and orientations stay on the parts by index,
-                        // as in the game.
+                        // and fluid boxes after them, as in the game.
                         let mut parts = parts.clone();
                         if let Some(old) = game.visuals.get(&at) {
-                            for (p, o) in parts.iter_mut().zip(old) {
+                            let own = old.iter().filter(|o| o.fluid.is_none());
+                            for (p, o) in parts.iter_mut().zip(own) {
                                 p.scroll = o.scroll.clone();
                                 p.orientation = o.orientation;
                             }
+                            parts.extend(old.iter().filter(|o| o.fluid.is_some()).cloned());
                         }
                         game.visuals.insert(at, parts);
                     }
@@ -1346,6 +1357,35 @@ impl Step {
                     }
                     crate::LivingOp::Discard { id } => game.living.retain(|l| l.id != *id),
                 },
+                Output::VisualFluids {
+                    dimension,
+                    pos,
+                    boxes,
+                    ..
+                } if overworld(dimension) => {
+                    let at = (pos[0], pos[1], pos[2]);
+                    let mut parts: Vec<_> = game
+                        .visuals
+                        .get(&at)
+                        .into_iter()
+                        .flatten()
+                        .filter(|p| p.fluid.is_none())
+                        .cloned()
+                        .collect();
+                    parts.extend(boxes.iter().cloned());
+                    if parts.is_empty() {
+                        game.visuals.remove(&at);
+                    } else {
+                        game.visuals.insert(at, parts);
+                    }
+                }
+                Output::Forward { dimension, pos, to } if overworld(dimension) => {
+                    let at = (pos[0], pos[1], pos[2]);
+                    match to {
+                        Some(t) => game.forwards.insert(at, *t),
+                        None => game.forwards.remove(&at),
+                    };
+                }
                 Output::VisualOrientation {
                     dimension,
                     pos,
@@ -1605,6 +1645,12 @@ impl Step {
                 .iter()
                 .flat_map(|((x, y, z), parts)| {
                     parts.iter().map(move |p| {
+                        if let Some(b) = &p.fluid {
+                            return format!(
+                                "{x} {y} {z} fluid {} {:?} {:?}",
+                                p.state, b.min, b.max
+                            );
+                        }
                         let mut line = format!("{x} {y} {z} {} {}", p.state, p.speed);
                         // What moves is shown by where it stands and where it goes.
                         if p.offset != [0.0; 3] || p.velocity != [0.0; 3] {
@@ -1702,6 +1748,7 @@ mod tests {
             power: Default::default(),
             dropped: Vec::new(),
             living: Vec::new(),
+            forwards: Default::default(),
             recipes: Vec::new(),
             tags: std::sync::Arc::new(tags),
             block_tags: std::sync::Arc::new(block_tags),

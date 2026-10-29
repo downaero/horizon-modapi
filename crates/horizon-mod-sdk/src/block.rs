@@ -133,6 +133,7 @@ pub struct Visual {
     parts: Vec<visuals::Part>,
     scrolls: Vec<visuals::Scroll>,
     orientations: Vec<visuals::Orientation>,
+    fluids: Vec<visuals::FluidBox>,
 }
 
 /// A turn of `degrees` about `axis`, counterclockwise looking from its
@@ -229,8 +230,23 @@ impl Visual {
         }
         self
     }
+    /// A box of `fluid` (`minecraft:water`, a mod's) from `min` to `max`,
+    /// in blocks from the block's corner, drawn as Create draws what a tank
+    /// or a basin holds (`visuals.set-fluids`).
+    pub fn fluid(&mut self, fluid: &str, min: [f32; 3], max: [f32; 3]) -> &mut Self {
+        self.fluids.push(visuals::FluidBox {
+            fluid: fluid.to_owned(),
+            min: (min[0], min[1], min[2]),
+            max: (max[0], max[1], max[2]),
+        });
+        self
+    }
     pub fn parts(&self) -> &[visuals::Part] {
         &self.parts
+    }
+    fn same_fluids(&self, other: &[visuals::FluidBox]) -> bool {
+        let key = |b: &visuals::FluidBox| (b.fluid.clone(), b.min, b.max);
+        self.fluids.len() == other.len() && self.fluids.iter().map(key).eq(other.iter().map(key))
     }
     fn same_orientations(&self, other: &[visuals::Orientation]) -> bool {
         let key = |o: &visuals::Orientation| (o.part, o.rotation);
@@ -288,9 +304,13 @@ fn draw<T: BlockEntity>(entity: &T, level: &Level, pos: BlockPos, state: &BlockS
     {
         return;
     }
+    if !visual.same_fluids(&last.fluids) && visuals::set_fluids(d, x, y, z, &visual.fluids).is_err()
+    {
+        return;
+    }
     DRAWN.with(|d| {
         let mut d = d.borrow_mut();
-        if visual.parts.is_empty() {
+        if visual.parts.is_empty() && visual.fluids.is_empty() {
             d.remove(&key);
         } else {
             d.insert(key, visual);

@@ -1,0 +1,35 @@
+# Crates stacked are one (transfer.forward), and water poured on one shows
+# on its lid (visuals.set-fluids).
+
+[[step]]
+join = "Alex"
+blocks = [
+    { x = 0, y = 62, z = 0, state = "gears:crate" },
+    { x = 0, y = 63, z = 0, state = "gears:crate" },
+]
+place = { x = 0, y = 62, z = 0, state = "gears:crate" }
+
+[[step]]
+place = { x = 0, y = 63, z = 0, state = "gears:crate" }
+# An empty chest's slots for the lowest crate, as the game keeps them.
+slots = [{ x = 0, y = 62, z = 0, slot = 0, item = "minecraft:stone", count = 0 }]
+
+# A counter on the stack gives its nuggets to the lowest crate.
+[[step]]
+blocks = [{ x = 0, y = 64, z = 0, state = "gears:counter" }]
+place = { x = 0, y = 64, z = 0, state = "gears:counter" }
+items = [{ id = 7, item = "minecraft:iron_ingot", x = 0.5, y = 64.5, z = 0.5 }]
+ticks = 20
+expect.slots = ["0 62 0 0 minecraft:iron_nugget x9"]
+
+# Two buckets on the upper crate fill the lowest one's tank, half full.
+[[step]]
+use = { x = 0, y = 63, z = 0, item = "minecraft:water_bucket" }
+
+[[step]]
+use = { x = 0, y = 63, z = 0, item = "minecraft:water_bucket" }
+expect.visuals = [
+    "0 63 0 fluid minecraft:water [0.0625, 1.0, 0.0625] [0.9375, 1.125, 0.9375]",
+    "0 64 0 minecraft:iron_trapdoor[half=bottom] 2.8125 offset [0.0, 1.1, 0.0] velocity [0.0, 0.0, 0.0]",
+    "0 64 0 minecraft:iron_ingot 2.8125 offset [0.0, 0.82, 0.0] velocity [0.0, 0.0, 0.0] turned [0.707, 0.0, 0.0, 0.707]",
+]

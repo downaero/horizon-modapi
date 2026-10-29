@@ -301,6 +301,20 @@ fn play(path: &Path, report: &mut Report) -> Result<(), String> {
                 } => format!("hurt entity {id} by {amount} ({damage_type})"),
                 horizon_mods::LivingOp::Discard { id } => format!("discarded entity {id}"),
             },
+            Output::VisualFluids { boxes, pos, .. } => format!(
+                "drew {} fluid box(es) at {} {} {}",
+                boxes.len(),
+                pos[0],
+                pos[1],
+                pos[2]
+            ),
+            Output::Forward { pos, to, .. } => match to {
+                Some(t) => format!(
+                    "forwarded {} {} {} to {} {} {}",
+                    pos[0], pos[1], pos[2], t[0], t[1], t[2]
+                ),
+                None => format!("stopped forwarding {} {} {}", pos[0], pos[1], pos[2]),
+            },
             Output::VisualOrientation {
                 orientations, pos, ..
             } => format!(

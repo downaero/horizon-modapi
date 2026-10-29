@@ -111,6 +111,9 @@ pub struct World {
     /// slot of a container block, set by server mods: per slot, `None` for
     /// vanilla's rules.
     pub hopper_rules: HashMap<(i32, i32, i32), Vec<Option<HopperRule>>>,
+    /// The block whose storage a server mod's block hands out
+    /// (`transfer.forward`): a multiblock's parts their controller's.
+    pub forwards: HashMap<(i32, i32, i32), (i32, i32, i32)>,
     /// The signal comparators read from a server mod's block, set by the mod
     /// in place of vanilla's (`redstone.set-comparator-signal`).
     pub comparator_signals: HashMap<(i32, i32, i32), u8>,
@@ -218,6 +221,7 @@ impl World {
             neighbor_log: None,
             slot_rules: HashMap::new(),
             hopper_rules: HashMap::new(),
+            forwards: HashMap::new(),
             comparator_signals: HashMap::new(),
             light_log: None,
             moving_piston_fallback: Vec::new(),
@@ -301,6 +305,9 @@ impl World {
             }
             if !self.hopper_rules.is_empty() {
                 self.hopper_rules.remove(&(x, y, z));
+            }
+            if !self.forwards.is_empty() {
+                self.forwards.remove(&(x, y, z));
             }
             if !self.comparator_signals.is_empty() {
                 self.comparator_signals.remove(&(x, y, z));

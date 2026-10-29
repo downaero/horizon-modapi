@@ -311,6 +311,28 @@ fn belt_strip(pos: BlockPos) {
     let _ = visuals::set_scrolls(DIMENSION, x, y, z, &[scroll]);
 }
 
+/// A crate's water (its tank, or the lowest crate's under it), drawn on its
+/// lid: a quarter block deep when the tank is full.
+fn crate_water(dimension: &str, x: i32, y: i32, z: i32) {
+    let Some(tank) = transfer::get_tank(dimension, x, y, z) else {
+        return;
+    };
+    let boxes: Vec<visuals::FluidBox> = tank
+        .content
+        .filter(|_| tank.capacity > 0)
+        .map(|f| {
+            let depth = 0.25 * f.amount as f32 / tank.capacity as f32;
+            visuals::FluidBox {
+                fluid: f.fluid,
+                min: (0.0625, 1.0, 0.0625),
+                max: (0.9375, 1.0 + depth, 0.9375),
+            }
+        })
+        .into_iter()
+        .collect();
+    let _ = visuals::set_fluids(dimension, x, y, z, &boxes);
+}
+
 /// A drill's block entity: the ticks since it last mined.
 struct Drill {
     ticks: u8,
@@ -471,6 +493,20 @@ impl ServerMod for Gears {
                 max: 1,
             };
             let _ = containers::set_hopper_rule(DIMENSION, pos.x, pos.y, pos.z, 0, Some(rule));
+            // A tank of 4 buckets, filled by a water bucket used on it.
+            let _ = transfer::add_tank(DIMENSION, pos.x, pos.y, pos.z, 4000);
+            // Crates stacked are one: each above the lowest hands out its
+            // items and tank (`transfer::forward`), as Create's vaults do.
+            let mut lowest = pos.y;
+            while world::get_block(DIMENSION, pos.x, lowest - 1, pos.z)
+                .is_some_and(|s| s.starts_with(CRATE))
+            {
+                lowest -= 1;
+            }
+            if lowest != pos.y {
+                let to = Some((pos.x, lowest, pos.z));
+                let _ = transfer::forward(DIMENSION, pos.x, pos.y, pos.z, to);
+            }
         }
         if state.starts_with(BELT) {
             belt_strip(pos);
@@ -632,6 +668,17 @@ impl ServerMod for Gears {
         match target {
             Some(t) if item == "minecraft:stick" && t.state == "minecraft:crafting_table" => {
                 auto_craft(player, t);
+                true
+            }
+            // A water bucket pours a bucket into a crate's tank, which shows
+            // as water on its lid (`visuals::set_fluids`).
+            Some(t) if item == "minecraft:water_bucket" && t.state.starts_with(CRATE) => {
+                let water = transfer::FluidStack {
+                    fluid: "minecraft:water".into(),
+                    amount: 1000,
+                };
+                transfer::fill(&t.dimension, t.x, t.y, t.z, &water, false);
+                crate_water(&t.dimension, t.x, t.y, t.z);
                 true
             }
             // Sneaking, a stick on one of the mod's blocks lets a roller out.

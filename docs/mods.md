@@ -856,6 +856,17 @@ with `block::rotation_degrees(axis, degrees)` and `block::mul_quaternions(a, b)`
 `a`, as JOML's `a.mul(b)`) to build `q`. The gears example's counter lays the ingot on its gear
 flat and turns it with the gear.
 
+`visuals.set-fluids(dimension, x, y, z, boxes)` (API level 49) draws boxes of fluid at one of the
+mod's blocks, as Create's tanks, basins, spouts and drains draw what they hold: each a fluid and
+its `min` and `max` corners in blocks from the position's corner (-16 to 32, so a tank three
+blocks across is one box), at most 16. The faces carry the fluid's still texture, animated, one
+tile a block and world-aligned as a fluid's, shaded by face: water's tinted by the biome's water
+colour, lava's lit as it glows, a mod's fluid (`create:honey`) its sprite `create:fluid/honey_still`
+or `create:block/honey_still`, untinted. They are apart from the parts: `set` keeps them and they
+keep the parts, and they are saved and sent with them. In the SDK, `Visual::fluid(fluid, min,
+max)`. The gears example's crate shows its tank's water on its lid, a water bucket used on it
+pouring a bucket in.
+
 ### Moving structures and networks
 
 `entities.spawn-block(dimension, x, y, z, state)` (API level 24) places a block state as an
@@ -1024,6 +1035,15 @@ in and out of another's blocks and vanilla's, at once, during the call (`simulat
 Tanks and batteries are saved with the world (among the mods' block data, as `@transfer`) and
 go when their block does; `remove-storage` takes them off. The gears example's counter charges
 a battery and puts what it presses into the inventory under it, dropping what does not fit.
+
+`transfer.forward(pos, to)` (API level 49) makes one of the mod's own blocks hand out another's
+storage, as a multiblock's parts hand out their controller's (Create's fluid tanks, vaults and
+boilers): its items, tank and battery are those of the block at `to` (within 64 blocks on each
+axis) for every mod's `transfer`, and for hoppers, droppers and comparators, until `to` is none.
+One step: a block forwarded to is not forwarded on, so forward to the controller itself. It is
+not saved, as `containers.set-hopper-rule` is not, and goes when the block changes: a mod forwards
+again after a load. The gears example's crates stacked are one, each above the lowest handing out
+its items and tank.
 
 ### Data attachments
 

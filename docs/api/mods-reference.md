@@ -1088,12 +1088,23 @@ A part turned any way, as a chain of turns draws a mechanical arm's segments: a 
 | `part` | `u32` | The part, by its index in the parts drawn at the position. |
 | `rotation` | `tuple<f32, f32, f32, f32>` |  |
 
+### record `fluid-box`
+
+A box of fluid, as Create's tanks, basins, spouts and drains draw what they hold: the fluid's still texture, animated, one tile a block across its faces, tinted as the fluid is (water by the biome's water colour), lava lit as it glows.
+
+| Field | Type | |
+| --- | --- | --- |
+| `fluid` | `string` | `minecraft:water`, `minecraft:lava`, a mod's (`create:honey`: its sprite `create:fluid/honey_still` or `create:block/honey_still`). |
+| `min` | `tuple<f32, f32, f32>` | Its corners, in blocks from the position's corner, each -16 to 32: a tank three blocks across is one box. |
+| `max` | `tuple<f32, f32, f32>` |  |
+
 | Function | Signature | What it does |
 | --- | --- | --- |
 | `set` | `func(dimension: string, x: s32, y: s32, z: s32, parts: list<part>) -> result<_, string>` | Draws `parts` (at most 16) at a block of the mod's own, replacing what it drew there, after the call; none draws nothing there any more. |
 | `set-in-phase` | `func(dimension: string, x: s32, y: s32, z: s32, parts: list<part>) -> result<_, string>` | `set`, with each part's `angle` its angle at game time 0 instead of at the tick it was set: parts at one speed turn in step however far apart they were set, as Flywheel turns Create's cogs (angle = time x speed + offset), so their teeth mesh. |
 | `set-scrolls` | `func(dimension: string, x: s32, y: s32, z: s32, scrolls: list<scroll>) -> result<_, string>` | The scrolls on the parts drawn at a block of the mod's own (at most 16), replacing those there, after the call; none stops them. They stay on the parts by index when `set` draws them again, and go when no parts are drawn there. Measured from game time 0, so belts set apart run in step. |
 | `set-orientations` | `func(dimension: string, x: s32, y: s32, z: s32, orientations: list<orientation>) -> result<_, string>` | The orientations of the parts drawn at a block of the mod's own (at most 16), replacing those there, after the call; a part named by none is not turned. They stay on the parts by index when `set` draws them again, as scrolls do; a mod animating them sets them each tick. |
+| `set-fluids` | `func(dimension: string, x: s32, y: s32, z: s32, boxes: list<fluid-box>) -> result<_, string>` | The fluid boxes drawn at a block of the mod's own (at most 16), replacing those there, after the call; none draws none. Apart from the parts: `set` keeps them, and they keep the parts. |
 
 ## `block-data`
 
@@ -1361,6 +1372,7 @@ The face of the block reached through, as a hopper or pipe touches it; none for 
 | `receive-energy` | `func(dimension: string, x: s32, y: s32, z: s32, amount: u64, simulate: bool) -> u64` | Charges: how much it took. |
 | `extract-energy` | `func(dimension: string, x: s32, y: s32, z: s32, amount: u64, simulate: bool) -> u64` | Discharges: how much came out. |
 | `remove-storage` | `func(dimension: string, x: s32, y: s32, z: s32)` | Takes the tank and battery off one of the mod's own blocks. |
+| `forward` | `func(dimension: string, x: s32, y: s32, z: s32, to: option<tuple<s32, s32, s32>>) -> result<_, string>` | Makes one of the mod's own blocks hand out another block's storage, as a multiblock's parts hand out their controller's (Create's tanks and vaults): its items, tank and battery are those of the block at `to` (within 64 blocks on each axis), for every mod's `transfer` and for hoppers and comparators, until none. After the call; not saved, as `containers.set-hopper-rule` is not: gone when the block changes, so a mod forwards again after a load. One step: a block forwarded to is not forwarded on. |
 
 ## `item-events`
 

@@ -165,6 +165,81 @@ pub(super) fn mod_breaker_id(mod_id: &str, breaker: u32) -> i32 {
     -1 - (((hash & 0x7fff) << 16) | (breaker & 0xffff)) as i32
 }
 
+/// A fluid box's faces (`visuals.set-fluids`), `o` its position's corner
+/// from the camera: one tile of `sprite` a block, world-aligned as a
+/// fluid's faces are, `tint` (ARGB) shaded by face as blocks are, in the
+/// corners' order vanilla's `FaceInfo` gives each face.
+#[cfg(feature = "mods")]
+fn fluid_box_vertices(
+    o: glam::Vec3,
+    b: &horizon_mods::visual::FluidBox,
+    sprite: horizon_client::hud::Rect,
+    tint: u32,
+    light: u32,
+    out: &mut Vec<horizon_client::mesher::Vertex>,
+) {
+    // (fixed axis, shade, corners as (x, y, z) picks of 0 min / 1 max):
+    // down, up, north, south, west, east.
+    const FACES: [(usize, u32, [[usize; 3]; 4]); 6] = [
+        (1, 127, [[0, 0, 1], [0, 0, 0], [1, 0, 0], [1, 0, 1]]),
+        (1, 255, [[0, 1, 0], [0, 1, 1], [1, 1, 1], [1, 1, 0]]),
+        (2, 204, [[1, 1, 0], [1, 0, 0], [0, 0, 0], [0, 1, 0]]),
+        (2, 204, [[0, 1, 1], [0, 0, 1], [1, 0, 1], [1, 1, 1]]),
+        (0, 153, [[0, 1, 0], [0, 0, 0], [0, 0, 1], [0, 1, 1]]),
+        (0, 153, [[1, 1, 1], [1, 0, 1], [1, 0, 0], [1, 1, 0]]),
+    ];
+    let shade = |c: u32, s: u32| {
+        let ch = |shift: u32| ((c >> shift & 0xFF) * s / 255) << shift;
+        (c & 0xFF00_0000) | ch(16) | ch(8) | ch(0)
+    };
+    // Vertex colours are ABGR, the tint ARGB.
+    let abgr = |c: u32| (c & 0xFF00_FF00) | (c >> 16 & 0xFF) | (c & 0xFF) << 16;
+    for (fixed, s, corners) in FACES {
+        let color = abgr(shade(tint, s));
+        // The two axes across the face: u along the first, v the second
+        // (down the side faces, as textures run).
+        let across: Vec<usize> = (0..3).filter(|&k| k != fixed).collect();
+        let cells = |k: usize| (b.min[k].floor() as i32)..(b.max[k].ceil() as i32);
+        for ca in cells(across[0]) {
+            for cb in cells(across[1]) {
+                let mut lo = b.min;
+                let mut hi = b.max;
+                for (k, c) in [(across[0], ca), (across[1], cb)] {
+                    lo[k] = lo[k].max(c as f32);
+                    hi[k] = hi[k].min(c as f32 + 1.0);
+                }
+                if lo[across[0]] >= hi[across[0]] || lo[across[1]] >= hi[across[1]] {
+                    continue;
+                }
+                for pick in corners {
+                    let p = [0, 1, 2].map(|k| if pick[k] == 1 { hi[k] } else { lo[k] });
+                    let (u, v) = match fixed {
+                        1 => (p[0] - ca as f32, p[2] - cb as f32),
+                        _ => {
+                            let side = if fixed == 2 { 0 } else { 2 };
+                            let cell = if across[0] == side { ca } else { cb };
+                            let cy = if across[0] == 1 { ca } else { cb };
+                            (p[side] - cell as f32, cy as f32 + 1.0 - p[1])
+                        }
+                    };
+                    out.push(horizon_client::mesher::Vertex {
+                        pos: (o + glam::Vec3::from(p)).to_array(),
+                        uv: [
+                            sprite.u0 + u * (sprite.u1 - sprite.u0),
+                            sprite.v0 + v * (sprite.v1 - sprite.v0),
+                        ],
+                        layer: 0,
+                        color,
+                        light,
+                        normal: [0; 4],
+                        glint_uv: [0.0, 0.0],
+                    });
+                }
+            }
+        }
+    }
+}
+
 /// Marks a synced entry's dimension in a `.blocks` file.
 #[cfg_attr(not(feature = "mods"), allow(dead_code))]
 pub(super) const SYNCED_MARK: char = '\u{2}';
@@ -487,6 +562,8 @@ mod run {
         res: std::sync::Arc<crate::game::Resources>,
         /// Chunks whose block entities `transfer` changed, to save.
         touched: Vec<(i32, i32)>,
+        /// The simulated dimension's `transfer.forward`s.
+        forwards: std::collections::HashMap<(i32, i32, i32), (i32, i32, i32)>,
     }
     /// The slots of an inventory a hopper reaches through `face` (0 down,
     /// 1 up, 2 to 5 the sides; none: all), to put in or to take out, as
@@ -786,6 +863,13 @@ mod run {
                 return Vec::new();
             }
             self.dropped.clone()
+        }
+        fn forward(&self, dimension: &str, pos: [i32; 3]) -> Option<[i32; 3]> {
+            if dimension != self.container_dim {
+                return None;
+            }
+            let (x, y, z) = *self.forwards.get(&(pos[0], pos[1], pos[2]))?;
+            Some([x, y, z])
         }
         fn living(&self, dimension: &str) -> Vec<horizon_mods::Living> {
             if dimension != self.container_dim {
@@ -1277,13 +1361,18 @@ mod run {
             let start = if phased { 0 } else { set_at };
             let key = (mod_id, dimension, pos);
             // Scrolls and orientations stay on the parts by index
-            // (`visuals.set-scrolls`, `set-orientations`).
+            // (`visuals.set-scrolls`, `set-orientations`), and the fluid
+            // boxes after them (`set-fluids`).
             let mut parts = parts;
             if let Some((_, _, old)) = self.mods.visuals.get(&key) {
-                for (p, o) in parts.iter_mut().zip(old) {
+                for (p, o) in parts
+                    .iter_mut()
+                    .zip(old.iter().filter(|o| o.fluid.is_none()))
+                {
                     p.scroll = o.scroll.clone();
                     p.orientation = o.orientation;
                 }
+                parts.extend(old.iter().filter(|o| o.fluid.is_some()).cloned());
             }
             // Parts set again as they are change nothing, and keep the angle
             // and the motion they started from.
@@ -1330,6 +1419,40 @@ mod run {
                 p.scroll = scroll;
                 changed
             });
+        }
+
+        /// Replaces the fluid boxes a mod draws at `pos`, keeping its parts,
+        /// and sends them on when that changes.
+        fn store_mod_visual_fluids(
+            &mut self,
+            mod_id: String,
+            dimension: String,
+            pos: [i32; 3],
+            boxes: Vec<horizon_mods::visual::VisualPart>,
+            host: Option<&mut LanHost>,
+        ) {
+            let key = (mod_id, dimension, pos);
+            let now = self.world.game_time;
+            let (start, set_at, old) =
+                self.mods
+                    .visuals
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or((now, now, Vec::new()));
+            let mut parts: Vec<_> = old.iter().filter(|p| p.fluid.is_none()).cloned().collect();
+            parts.extend(boxes);
+            if parts == old {
+                return;
+            }
+            if parts.is_empty() {
+                self.mods.visuals.remove(&key);
+            } else {
+                self.mods
+                    .visuals
+                    .insert(key.clone(), (start, set_at, parts.clone()));
+            }
+            self.mods.block_data_dirty = true;
+            self.publish_mod_visual(host, &key, start, set_at, &parts);
         }
 
         /// Changes each part a mod draws at a position (`change` takes its
@@ -1714,6 +1837,7 @@ mod run {
                 hopper_rules: self.world.hopper_rules.clone(),
                 res: self.res.clone(),
                 touched: Vec::new(),
+                forwards: self.world.forwards.clone(),
             }));
         }
 
@@ -3568,7 +3692,10 @@ mod run {
             let parts: Vec<_> = parts
                 .into_iter()
                 .filter_map(|p| {
-                    let model = if p.item {
+                    let model = if p.fluid.is_some() {
+                        let (sprite, tint, glows) = self.mod_fluid_look(&p.state, pos)?;
+                        VisualModel::Fluid(sprite, tint, glows)
+                    } else if p.item {
                         // As an item frame shows it (ItemDisplayContext.FIXED).
                         self.res.items().get(&p.state)?;
                         let stack = horizon_client::items::ItemStack::new(&p.state, 1);
@@ -3700,6 +3827,43 @@ mod run {
         /// and its neighbours', since an opaque block (a press, a gearbox)
         /// has none of its own and what turns inside it is lit by what
         /// surrounds it.
+        /// A fluid's still sprite, tint (ARGB) and whether it glows, for a
+        /// fluid box at `pos`: water's and lava's as vanilla draws them, a
+        /// mod's `<ns>:fluid/<path>_still` or `<ns>:block/<path>_still`,
+        /// untinted.
+        fn mod_fluid_look(
+            &self,
+            fluid: &str,
+            pos: [i32; 3],
+        ) -> Option<(horizon_client::hud::Rect, u32, bool)> {
+            let sprites = &self.gui.atlas.sprites;
+            let (ns, path) = fluid.split_once(':').unwrap_or(("minecraft", fluid));
+            let path = path.trim_start_matches("flowing_");
+            if ns == "minecraft" && path == "water" {
+                let biome = self
+                    .world
+                    .chunks
+                    .get(&(pos[0] >> 4, pos[2] >> 4))
+                    .map_or(0, |c| c.biome(pos[0], pos[1], pos[2]));
+                let water = self.res.biomes().get(biome).water;
+                return Some((
+                    *sprites.get("block/water_still")?,
+                    0xFF00_0000 | water,
+                    false,
+                ));
+            }
+            if ns == "minecraft" && path == "lava" {
+                return Some((*sprites.get("block/lava_still")?, u32::MAX, true));
+            }
+            let sprite = [
+                format!("{ns}:fluid/{path}_still"),
+                format!("{ns}:block/{path}_still"),
+            ]
+            .iter()
+            .find_map(|n| sprites.get(n.as_str()).copied())?;
+            Some((sprite, u32::MAX, false))
+        }
+
         fn mod_visual_light(&self, pos: [i32; 3]) -> u8 {
             const AROUND: [[i32; 3]; 7] = [
                 [0, 0, 0],
@@ -3784,6 +3948,13 @@ mod run {
                         // An item's model is centred on its origin.
                         VisualModel::Item(state) => {
                             self.submit_item_world(state, transform, packed, out)
+                        }
+                        // Lava lights itself as it does in the world.
+                        VisualModel::Fluid(sprite, tint, glows) => {
+                            let light = if *glows { packed | (240 << 8) } else { packed };
+                            if let Some(b) = &part.fluid {
+                                super::fluid_box_vertices(o, b, *sprite, *tint, light, out);
+                            }
                         }
                     }
                 }
@@ -3923,6 +4094,19 @@ mod run {
                     pos,
                     scrolls,
                 } => self.store_mod_visual_scrolls(mod_id, dimension, pos, scrolls, host),
+                Output::VisualFluids {
+                    mod_id,
+                    dimension,
+                    pos,
+                    boxes,
+                } => self.store_mod_visual_fluids(mod_id, dimension, pos, boxes, host),
+                Output::Forward { dimension, pos, to } if dimension == self.dim.id() => {
+                    let key = (pos[0], pos[1], pos[2]);
+                    match to {
+                        Some(t) => self.world.forwards.insert(key, (t[0], t[1], t[2])),
+                        None => self.world.forwards.remove(&key),
+                    };
+                }
                 Output::VisualOrientation {
                     mod_id,
                     dimension,

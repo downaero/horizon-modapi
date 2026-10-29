@@ -34,7 +34,41 @@ pub struct VisualPart {
     /// A unit quaternion (x, y, z, w) turning its model about `pivot`
     /// before its spin about `axis` (`visuals.set-orientations`).
     pub orientation: Option<[f32; 4]>,
+    /// A box of fluid instead (`visuals.set-fluids`): `state` names the
+    /// fluid, and the box is from `min` to `max` in blocks from the
+    /// position's corner. Kept after the parts, never among them.
+    pub fluid: Option<FluidBox>,
 }
+
+/// A box of a fluid drawn at a block: a tank's or a basin's content.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FluidBox {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+}
+
+impl VisualPart {
+    /// A box of `fluid` from `min` to `max` (`visuals.set-fluids`).
+    pub fn fluid(fluid: &str, min: [f32; 3], max: [f32; 3]) -> Self {
+        VisualPart {
+            state: fluid.to_owned(),
+            axis: 1,
+            pivot: [0.0; 3],
+            offset: [0.0; 3],
+            speed: 0.0,
+            angle: 0.0,
+            velocity: [0.0; 3],
+            item: false,
+            scale: 1.0,
+            scroll: None,
+            orientation: None,
+            fluid: Some(FluidBox { min, max }),
+        }
+    }
+}
+
+/// The most fluid boxes at one position.
+pub const FLUIDS: usize = 16;
 
 /// A quaternion as a mod gave it, made unit length; none for one that is
 /// not finite or too short to turn by.
@@ -130,6 +164,15 @@ impl VisualPart {
         {
             return Err("an orientation is a quaternion of finite numbers, not all 0".into());
         }
+        if let Some(b) = &self.fluid {
+            let inside = |v: &[f32; 3]| {
+                v.iter()
+                    .all(|c| c.is_finite() && (-16.0..=32.0).contains(c))
+            };
+            if !inside(&b.min) || !inside(&b.max) || (0..3).any(|k| b.min[k] > b.max[k]) {
+                return Err("a fluid box is from min to max, each -16 to 32 blocks".into());
+            }
+        }
         Ok(())
     }
 }
@@ -139,8 +182,10 @@ impl VisualPart {
 /// were set, or 0 for parts set in phase) and the tick they were set
 /// (i64), then each part's state (u16 length and bytes), axis (u8), whether it
 /// is an item (u8), pivot, offset, speed, angle, velocity and scale (f32),
-/// little-endian. Orientations follow when a part has one: 0xFFFE (u16, no
-/// state's length), their count (u8), then for each the part's index (u8)
+/// little-endian. Fluid boxes follow when there are any: 0xFFFD (u16, no
+/// state's length), their count (u8), then for each the fluid (u16 length
+/// and bytes) and min and max (f32 each). Orientations follow when a part
+/// has one: 0xFFFE, their count (u8), then for each the part's index (u8)
 /// and x, y, z, w (f32). Then scrolls, when a part has one: 0xFFFF, then for
 /// each the part's index (u8), from and to (u16 length and bytes), speed and
 /// span (f32), to the end. No parts: none drawn there any more.
@@ -159,7 +204,7 @@ pub fn encode(
     }
     out.extend(start.to_le_bytes());
     out.extend(set_at.to_le_bytes());
-    for p in parts {
+    for p in parts.iter().filter(|p| p.fluid.is_none()) {
         out.extend((p.state.len() as u16).to_le_bytes());
         out.extend(p.state.as_bytes());
         out.push(p.axis);
@@ -171,6 +216,21 @@ pub fn encode(
             .chain(last)
         {
             out.extend(v.to_le_bytes());
+        }
+    }
+    let fluids: Vec<(&str, FluidBox)> = parts
+        .iter()
+        .filter_map(|p| Some((p.state.as_str(), p.fluid?)))
+        .collect();
+    if !fluids.is_empty() {
+        out.extend(FLUID_BOXES.to_le_bytes());
+        out.push(fluids.len() as u8);
+        for (fluid, b) in fluids {
+            out.extend((fluid.len() as u16).to_le_bytes());
+            out.extend(fluid.as_bytes());
+            for c in b.min.iter().chain(&b.max) {
+                out.extend(c.to_le_bytes());
+            }
         }
     }
     let turned: Vec<(usize, [f32; 4])> = parts
@@ -208,6 +268,8 @@ pub fn encode(
 const SCROLLS: u16 = 0xFFFF;
 /// Where [`encode`]'s orientations start, before the scrolls.
 const ORIENTATIONS: u16 = 0xFFFE;
+/// Where [`encode`]'s fluid boxes start, before the orientations.
+const FLUID_BOXES: u16 = 0xFFFD;
 
 /// [`encode`]'s inverse; none for damaged bytes.
 pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPart>)> {
@@ -227,10 +289,29 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPar
     let set_at = i64::from_le_bytes(take(&mut b, 8)?.try_into().ok()?);
     let mut parts = Vec::new();
     let mut turned = Vec::new();
+    let mut fluids = Vec::new();
     while !b.is_empty() {
         let n = u16::from_le_bytes(take(&mut b, 2)?.try_into().ok()?);
         if n == SCROLLS {
             break;
+        }
+        if n == FLUID_BOXES {
+            let count = take(&mut b, 1)?[0];
+            if usize::from(count) > FLUIDS {
+                return None;
+            }
+            for _ in 0..count {
+                let n = u16::from_le_bytes(take(&mut b, 2)?.try_into().ok()?) as usize;
+                let fluid = std::str::from_utf8(take(&mut b, n)?).ok()?.to_owned();
+                let mut f = [0f32; 6];
+                for v in &mut f {
+                    *v = f32::from_le_bytes(take(&mut b, 4)?.try_into().ok()?);
+                }
+                let part = VisualPart::fluid(&fluid, [f[0], f[1], f[2]], [f[3], f[4], f[5]]);
+                part.check().ok()?;
+                fluids.push(part);
+            }
+            continue;
         }
         if n == ORIENTATIONS {
             for _ in 0..take(&mut b, 1)?[0] {
@@ -272,6 +353,7 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPar
             scale: f[11],
             scroll: None,
             orientation: None,
+            fluid: None,
         };
         part.check().ok()?;
         parts.push(part);
@@ -298,6 +380,7 @@ pub fn decode(bytes: &[u8]) -> Option<(String, [i32; 3], i64, i64, Vec<VisualPar
         scroll.check().ok()?;
         parts.get_mut(i)?.scroll = Some(scroll);
     }
+    parts.extend(fluids);
     Some((id, pos, start, set_at, parts))
 }
 
@@ -318,6 +401,7 @@ mod tests {
             scale: 1.0,
             scroll: None,
             orientation: None,
+            fluid: None,
         }
     }
 
@@ -388,6 +472,36 @@ mod tests {
         );
         assert_eq!(unit_quaternion([0.0; 4]), None);
         assert_eq!(unit_quaternion([f32::NAN, 0.0, 0.0, 1.0]), None);
+    }
+
+    /// Fluid boxes come after the parts, before their orientations and
+    /// scrolls, which keep their indices.
+    #[test]
+    fn fluid_boxes_round_trip_after_the_parts() {
+        let mut parts = vec![shaft(0.0), shaft(1.0)];
+        parts[1].scroll = Some(belt());
+        parts[0].orientation = Some([0.0, 0.0, 0.0, 1.0]);
+        parts.push(VisualPart::fluid(
+            "minecraft:water",
+            [0.0; 3],
+            [3.0, 1.5, 3.0],
+        ));
+        parts.push(VisualPart::fluid(
+            "create:honey",
+            [-1.0, 0.0, -1.0],
+            [2.0, 0.25, 2.0],
+        ));
+        let bytes = encode("gears", [0; 3], 0, 7, &parts);
+        assert_eq!(decode(&bytes).unwrap().4, parts);
+        let only = vec![VisualPart::fluid("minecraft:lava", [0.0; 3], [1.0; 3])];
+        assert_eq!(
+            decode(&encode("gears", [0; 3], 0, 7, &only)).unwrap().4,
+            only
+        );
+        let past = VisualPart::fluid("minecraft:lava", [0.0; 3], [40.0, 1.0, 1.0]);
+        assert!(past.check().is_err());
+        let inside_out = VisualPart::fluid("minecraft:lava", [1.0; 3], [0.0; 3]);
+        assert!(inside_out.check().is_err());
     }
 
     #[test]

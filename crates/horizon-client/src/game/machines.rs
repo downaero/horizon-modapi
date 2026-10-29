@@ -151,6 +151,8 @@ impl Containers<'_> {
     /// first). `blocked_chests`: `ChestBlock.getContainer(.., false)` returns
     /// nothing for a chest under a redstone conductor.
     fn view(&self, pos: Pos, blocked_chests: bool) -> Option<View> {
+        // A server mod's block may hand out another's (`transfer.forward`).
+        let pos = self.world.forwards.get(&pos).copied().unwrap_or(pos);
         let state = self.world.block(pos.0, pos.1, pos.2);
         let name = self.name(state);
         if name == "minecraft:composter" {

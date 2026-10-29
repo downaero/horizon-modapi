@@ -1022,6 +1022,24 @@ interface visuals {
     /// is not turned. They stay on the parts by index when `set` draws them
     /// again, as scrolls do; a mod animating them sets them each tick.
     set-orientations: func(dimension: string, x: s32, y: s32, z: s32, orientations: list<orientation>) -> result<_, string>;
+    /// A box of fluid, as Create's tanks, basins, spouts and drains draw
+    /// what they hold: the fluid's still texture, animated, one tile a block
+    /// across its faces, tinted as the fluid is (water by the biome's water
+    /// colour), lava lit as it glows.
+    record fluid-box {
+        /// `minecraft:water`, `minecraft:lava`, a mod's (`create:honey`:
+        /// its sprite `create:fluid/honey_still` or
+        /// `create:block/honey_still`).
+        fluid: string,
+        /// Its corners, in blocks from the position's corner, each -16 to
+        /// 32: a tank three blocks across is one box.
+        min: tuple<f32, f32, f32>,
+        max: tuple<f32, f32, f32>,
+    }
+    /// The fluid boxes drawn at a block of the mod's own (at most 16),
+    /// replacing those there, after the call; none draws none. Apart from
+    /// the parts: `set` keeps them, and they keep the parts.
+    set-fluids: func(dimension: string, x: s32, y: s32, z: s32, boxes: list<fluid-box>) -> result<_, string>;
 }
 
 /// Capability `net`, client mods: the bytes the mod's server half keeps
@@ -1418,6 +1436,15 @@ interface transfer {
     extract-energy: func(dimension: string, x: s32, y: s32, z: s32, amount: u64, simulate: bool) -> u64;
     /// Takes the tank and battery off one of the mod's own blocks.
     remove-storage: func(dimension: string, x: s32, y: s32, z: s32);
+    /// Makes one of the mod's own blocks hand out another block's storage,
+    /// as a multiblock's parts hand out their controller's (Create's tanks
+    /// and vaults): its items, tank and battery are those of the block at
+    /// `to` (within 64 blocks on each axis), for every mod's `transfer` and
+    /// for hoppers and comparators, until none. After the call; not saved,
+    /// as `containers.set-hopper-rule` is not: gone when the block changes,
+    /// so a mod forwards again after a load. One step: a block forwarded to
+    /// is not forwarded on.
+    forward: func(dimension: string, x: s32, y: s32, z: s32, to: option<tuple<s32, s32, s32>>) -> result<_, string>;
 }
 
 /// What the server calls in a server mod when a player uses an item

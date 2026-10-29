@@ -52,6 +52,8 @@ pub(super) struct ClientVisual {
 pub(super) enum VisualModel {
     Block(horizon_world::registry::BlockStateId),
     Item(Box<horizon_client::item_render::ItemRenderState>),
+    /// A fluid box: its still sprite, its tint (ARGB) and whether it glows.
+    Fluid(horizon_client::hud::Rect, u32, bool),
 }
 
 /// A server mod's structure as the server keeps it.
@@ -904,6 +906,8 @@ impl Game<'_> {
                 | Output::Visual { .. }
                 | Output::VisualScroll { .. }
                 | Output::VisualOrientation { .. }
+                | Output::VisualFluids { .. }
+                | Output::Forward { .. }
                 | Output::Living { .. }
                 | Output::Structure { .. }
                 | Output::Entity { .. }
