@@ -910,6 +910,7 @@ What a block state is made of, as vanilla's block properties say.
 | `scan` | `func(dimension: string, min-x: s32, min-y: s32, min-z: s32, max-x: s32, max-y: s32, max-z: s32) -> result<region, string>` | Reads every block from (min-x, min-y, min-z) to (max-x, max-y, max-z), both ends included, as of this call; air and blocks in chunks not loaded are left out. At most 32768 positions in the box. |
 | `block-info` | `func(state: string) -> option<state-info>` | The properties of a block state (`minecraft:stone`, a mod's own), none for one that names no state: a drill timing its breaking by its hardness, a contraption leaving what it cannot move. |
 | `game-time` | `func() -> u64` | The world's game time, the ticks since it was made, as of this tick: what `visuals.set-in-phase` turns parts by. |
+| `block-tags` | `func(state: string) -> list<string>` | The block tags a block state's block is in, without `#` (`minecraft:logs`, `minecraft:mineable/axe`), every mod's additions included, in id order; empty for one that names no state. As `BlockState.is(tag)` asks: a saw cutting logs and leaves. |
 
 ## `server-events`
 
@@ -1581,6 +1582,7 @@ A recipe file of a type the game does not run itself.
 | `stonecut` | `func(item: string) -> list<tuple<string, item-count>>` | The stonecutter's recipes taking `item`, in its order: each recipe's id and result. |
 | `of-type` | `func(kind: string) -> list<recipe-file>` | Every recipe file of type `kind` (`gears:pressing`) the content mods carry, by id; empty for vanilla's own types (`minecraft:`). |
 | `test-ingredient` | `func(ingredient: string, item: string) -> bool` | Whether an ingredient, as recipe files write one (`minecraft:iron_ingot`, `#minecraft:logs`, or a JSON list of them), takes `item`. |
+| `items` | `func() -> list<string>` | Every item id in the item registry's order, vanilla's then the content mods': what a mod builds recipes from at load, as Create's sawing of every wood's log, planks, stairs and slabs. |
 
 ## `entity-data`
 

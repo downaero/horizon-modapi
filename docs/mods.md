@@ -650,6 +650,9 @@ it holds a fluid, and its `push-reaction` (`normal`, `destroy`, `block`, `ignore
 drill timing its breaking, a contraption leaving what it cannot move. `world.game-time()` is the
 world's game time as of the tick, what `visuals.set-in-phase` turns parts by, so a mod phases a
 part to an angle it keeps. The gears example's drill takes a second for each point of hardness.
+`world.block-tags(state)` (API level 45) is every block tag its block is in, without `#` and in id
+order, the mods' additions included; the SDK's `BlockState::is_tag("minecraft:logs")` asks it as
+NeoForge's `state.is(BlockTags.LOGS)` does. The drill cuts leaves as shears do.
 
 **Capability `block-entities` (API level 8, experimental).** The base for
 ports of mods with machines, such as Create: bytes a mod keeps at the
@@ -1024,7 +1027,9 @@ Every server mod, with no capability, asks the game about its recipes through
 - `of-type(kind)`: every recipe file of a type the game does not run itself (`gears:pressing`),
   from the `data/<namespace>/recipe/` folders (subfolders too) of every content mod, as JSON;
 - `test-ingredient(ingredient, item)`: whether an ingredient as recipe files write one
-  (`minecraft:iron_ingot`, `#minecraft:logs`, a list) takes an item, tags included.
+  (`minecraft:iron_ingot`, `#minecraft:logs`, a list) takes an item, tags included;
+- `items()` (API level 45): every item id in the item registry's order, vanilla's then the
+  content mods', for recipes a mod makes at load (Create's sawing of every wood).
 
 A mod with capability `registries` puts recipe files in its package's `data/<namespace>/recipe/`:
 vanilla's types join the game's recipes (the crafting table, furnaces, the recipe book), and its
@@ -1042,7 +1047,9 @@ display, so `/recipe give` learns them but counts none (`Recipe.display` is empt
 
 `cargo horizon-mod test` answers `of-type` from the package's own recipe files and tests
 ingredients by item id and by item tags (the package's over vanilla's, when the prepared
-resources are found); it has no vanilla recipes.
+resources are found); it has no vanilla recipes. `items` there is vanilla's (from those
+resources) then the package's own, and `world.block-tags` reads block tags as it reads item
+tags.
 
 ### Capability `entities`
 

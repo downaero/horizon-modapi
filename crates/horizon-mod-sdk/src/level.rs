@@ -211,6 +211,11 @@ impl BlockState {
     pub fn is(&self, block: &str) -> bool {
         self.block == block
     }
+    /// Whether its block is in a block tag, `minecraft:logs` (no `#`), as
+    /// `BlockState.is(TagKey)` asks (`world.block-tags`).
+    pub fn is_tag(&self, tag: &str) -> bool {
+        world::block_tags(&self.block).iter().any(|t| t == tag)
+    }
     pub fn is_air(&self) -> bool {
         matches!(
             self.block.as_str(),

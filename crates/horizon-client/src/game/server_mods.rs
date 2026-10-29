@@ -567,6 +567,26 @@ mod run {
                 })
                 .collect()
         }
+        fn items(&self) -> Vec<String> {
+            let items = self.res.items();
+            items.registry_order.iter().map(|i| i.to_string()).collect()
+        }
+        fn block_tags(&self, state: &str) -> Vec<String> {
+            let Ok(id) = crate::game::render_control::parse_state(self.registry, state) else {
+                return Vec::new();
+            };
+            let name = self.res.facts().get(id).name.clone();
+            let mut tags: Vec<String> = self
+                .res
+                .items()
+                .block_tags
+                .iter()
+                .filter(|(_, blocks)| blocks.contains(&*name))
+                .map(|(tag, _)| tag.clone())
+                .collect();
+            tags.sort();
+            tags
+        }
         fn recipes_of_type(&self, kind: &str) -> Vec<(String, String)> {
             self.res
                 .recipes()

@@ -54,6 +54,11 @@ pub struct TestGame {
     /// Item tags by id, each its values as the files list them (`#` for a
     /// tag in a tag): the package's own over vanilla's.
     tags: std::sync::Arc<Tags>,
+    /// Block tags by id, as `tags`.
+    block_tags: std::sync::Arc<Tags>,
+    /// Every item id (`recipe-manager.items`): vanilla's, when the prepared
+    /// resources are found, then the package's own.
+    item_ids: std::sync::Arc<Vec<String>>,
 }
 
 /// The world a script's mod reads: [`TestGame::world`], the signals and item
@@ -66,6 +71,8 @@ struct ScriptWorld {
     /// Item tags by id, each its values as the files list them (`#` for a
     /// tag in a tag): the package's own over vanilla's.
     tags: std::sync::Arc<Tags>,
+    block_tags: std::sync::Arc<Tags>,
+    item_ids: std::sync::Arc<Vec<String>>,
     containers: Containers,
 }
 
@@ -99,26 +106,51 @@ fn add_tag(tags: &mut Tags, id: String, json: &str) {
     list.extend(values);
 }
 
-/// The item tags a test game knows: vanilla's, from the prepared resources
-/// when they are found (`HORIZON_RESOURCES`, or `.local/horizon-client/26.3`
-/// in the working folder or one above it), then the package's own
-/// `data/<ns>/tags/item/` (vanilla's and the convention tags it adds to too).
-fn item_tags(hmod: &Path) -> Tags {
-    let mut tags = Tags::new();
-    let found = std::env::var_os("HORIZON_RESOURCES")
+/// The prepared resources, when they are found: `HORIZON_RESOURCES`, or
+/// `.local/horizon-client/26.3` in the working folder or one above it.
+fn prepared_resources() -> Option<PathBuf> {
+    std::env::var_os("HORIZON_RESOURCES")
         .map(PathBuf::from)
         .or_else(|| {
             let here = std::env::current_dir().ok()?;
             here.ancestors()
                 .map(|d| d.join(".local/horizon-client/26.3"))
                 .find(|d| d.join("data").is_dir())
-        });
-    if let Some(root) = found
+        })
+}
+
+/// The item ids a test game knows: vanilla's in registry order, from the
+/// prepared resources when they are found, then the package's own blocks'
+/// items and items.
+fn item_ids(hmod: &Path) -> Vec<String> {
+    let mut ids: Vec<String> = prepared_resources()
+        .and_then(|root| std::fs::read(root.join("command-registries.json")).ok())
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| serde_json::from_value(v["items"].clone()).ok())
+        .unwrap_or_default();
+    let content = crate::Package::read(hmod)
+        .ok()
+        .and_then(|p| crate::Content::read(hmod, &p.manifest).ok());
+    if let Some(content) = content {
+        let blocks = content.blocks.iter().filter(|b| b.item).map(|b| &b.id);
+        ids.extend(blocks.chain(content.items.iter().map(|i| &i.id)).cloned());
+    }
+    ids
+}
+
+/// The tags of `registry` (`item`, `block`) a test game knows: vanilla's,
+/// from the prepared resources when they are found, then the package's own
+/// `data/<ns>/tags/<registry>/` (vanilla's and the convention tags it adds
+/// to too).
+fn package_tags(hmod: &Path, registry: &str) -> Tags {
+    let mut tags = Tags::new();
+    let folder = format!("/tags/{registry}/");
+    if let Some(root) = prepared_resources()
         && let Ok(namespaces) = std::fs::read_dir(root.join("data"))
     {
         for ns in namespaces.flatten() {
             let namespace = ns.file_name().to_string_lossy().into_owned();
-            let base = ns.path().join("tags/item");
+            let base = ns.path().join("tags").join(registry);
             let mut stack = vec![base.clone()];
             while let Some(dir) = stack.pop() {
                 for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
@@ -149,7 +181,7 @@ fn item_tags(hmod: &Path) -> Tags {
         let name = entry.name().to_owned();
         let Some((ns, path)) = name
             .strip_prefix("data/")
-            .and_then(|n| n.split_once("/tags/item/"))
+            .and_then(|n| n.split_once(folder.as_str()))
         else {
             continue;
         };
@@ -287,6 +319,22 @@ impl crate::WorldView for ScriptWorld {
         }
         Some((item, take))
     }
+    fn items(&self) -> Vec<String> {
+        self.item_ids.to_vec()
+    }
+    fn block_tags(&self, state: &str) -> Vec<String> {
+        let block = state.split('[').next().unwrap_or(state);
+        // A Script's world names vanilla's states bare too (`stone`).
+        let block = match block.contains(':') {
+            true => block.to_owned(),
+            false => format!("minecraft:{block}"),
+        };
+        let tags = &self.block_tags;
+        tags.keys()
+            .filter(|t| in_tag(tags, t, &block, 0))
+            .cloned()
+            .collect()
+    }
     fn recipes_of_type(&self, kind: &str) -> Vec<(String, String)> {
         if kind.starts_with("minecraft:") {
             return Vec::new();
@@ -413,7 +461,9 @@ impl TestGame {
             containers: Default::default(),
             inventories: Default::default(),
             recipes: package_recipes(hmod),
-            tags: std::sync::Arc::new(item_tags(hmod)),
+            tags: std::sync::Arc::new(package_tags(hmod, "item")),
+            block_tags: std::sync::Arc::new(package_tags(hmod, "block")),
+            item_ids: std::sync::Arc::new(item_ids(hmod)),
         };
         copy_mod(hmod, &copy)?;
         game.start()?;
@@ -1009,6 +1059,8 @@ impl Step {
             dropped: game.items.clone(),
             recipes: game.recipes.clone(),
             tags: game.tags.clone(),
+            block_tags: game.block_tags.clone(),
+            item_ids: game.item_ids.clone(),
             containers: game.containers.clone(),
         }));
         // Blocks a step set, as /setblock sets them: a mod's ticking blocks
@@ -1478,12 +1530,30 @@ mod tests {
         assert!(in_tag(&tags, "c:stripped_logs", "mymod:log", 0));
         assert!(!in_tag(&tags, "c:stripped_logs", "minecraft:oak_log", 0));
         assert_eq!(tags["mymod:gone"], ["c:d"]);
+        let mut block_tags = Tags::new();
+        add_tag(
+            &mut block_tags,
+            "minecraft:logs".into(),
+            r##"{"values": ["#minecraft:oak_logs", "mymod:log"]}"##,
+        );
+        add_tag(
+            &mut block_tags,
+            "minecraft:oak_logs".into(),
+            r#"{"values": ["minecraft:oak_log"]}"#,
+        );
+        add_tag(
+            &mut block_tags,
+            "minecraft:leaves".into(),
+            r#"{"values": ["minecraft:oak_leaves"]}"#,
+        );
         let world = ScriptWorld {
             blocks: Default::default(),
             power: Default::default(),
             dropped: Vec::new(),
             recipes: Vec::new(),
             tags: std::sync::Arc::new(tags),
+            block_tags: std::sync::Arc::new(block_tags),
+            item_ids: std::sync::Arc::new(vec!["minecraft:stick".into()]),
             containers: Default::default(),
         };
         use crate::WorldView;
@@ -1493,5 +1563,14 @@ mod tests {
         assert!(world.test_ingredient(r##"["minecraft:stick", "#c:stripped_logs"]"##, log));
         assert!(world.test_ingredient(r#"{"item": "minecraft:stick"}"#, "minecraft:stick"));
         assert!(!world.test_ingredient("#c:stripped_logs", "minecraft:stick"));
+        // A state's block tags, through the tags a tag names; a bare id is vanilla's.
+        assert_eq!(
+            world.block_tags("minecraft:oak_log[axis=y]"),
+            ["minecraft:logs", "minecraft:oak_logs"]
+        );
+        assert_eq!(world.block_tags("oak_leaves"), ["minecraft:leaves"]);
+        assert_eq!(world.block_tags("mymod:log"), ["minecraft:logs"]);
+        assert!(world.block_tags("minecraft:stone").is_empty());
+        assert_eq!(world.items(), ["minecraft:stick"]);
     }
 }

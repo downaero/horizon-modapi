@@ -1006,6 +1006,14 @@ pub trait WorldView: std::any::Any + Send {
     fn block_info(&self, _state: &str) -> Option<BlockInfo> {
         None
     }
+    /// The block tags of a block state's block (`world.block-tags`).
+    fn block_tags(&self, _state: &str) -> Vec<String> {
+        Vec::new()
+    }
+    /// Every item id in registry order (`recipe-manager.items`).
+    fn items(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// The 27 slots of a mod container at a position, as of the tick's
     /// start (capability `containers`); `None` where there is none.
     fn container(
@@ -3136,6 +3144,14 @@ impl mod_world::Host for State {
     fn game_time(&mut self) -> u64 {
         self.snapshot.game_time
     }
+    fn block_tags(&mut self, state: String) -> Vec<String> {
+        let Ok(view) = self.world.lock() else {
+            return Vec::new();
+        };
+        view.as_ref()
+            .map(|v| v.block_tags(&state))
+            .unwrap_or_default()
+    }
     fn get_block(&mut self, dimension: String, x: i32, y: i32, z: i32) -> Option<String> {
         let view = self.world.lock().ok()?;
         view.as_ref()?.block(&dimension, x, y, z)
@@ -4049,6 +4065,12 @@ impl recipe_manager::Host for State {
         };
         view.as_ref()
             .is_some_and(|v| v.test_ingredient(&ingredient, &item))
+    }
+    fn items(&mut self) -> Vec<String> {
+        let Ok(view) = self.world.lock() else {
+            return Vec::new();
+        };
+        view.as_ref().map(|v| v.items()).unwrap_or_default()
     }
 }
 /// A typed entity as its mod sees it.

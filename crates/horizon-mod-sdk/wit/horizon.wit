@@ -771,6 +771,11 @@ interface %world {
     /// The world's game time, the ticks since it was made, as of this tick:
     /// what `visuals.set-in-phase` turns parts by.
     game-time: func() -> u64;
+    /// The block tags a block state's block is in, without `#`
+    /// (`minecraft:logs`, `minecraft:mineable/axe`), every mod's additions
+    /// included, in id order; empty for one that names no state. As
+    /// `BlockState.is(tag)` asks: a saw cutting logs and leaves.
+    block-tags: func(state: string) -> list<string>;
 }
 
 /// What the server calls in a server mod (manifest `api = "0.3"`,
@@ -1594,6 +1599,10 @@ interface recipe-manager {
     /// Whether an ingredient, as recipe files write one (`minecraft:iron_ingot`,
     /// `#minecraft:logs`, or a JSON list of them), takes `item`.
     test-ingredient: func(ingredient: string, item: string) -> bool;
+    /// Every item id in the item registry's order, vanilla's then the
+    /// content mods': what a mod builds recipes from at load, as Create's
+    /// sawing of every wood's log, planks, stairs and slabs.
+    items: func() -> list<string>;
 }
 
 /// One of a server mod's entities of its own types (`entity-types`), as

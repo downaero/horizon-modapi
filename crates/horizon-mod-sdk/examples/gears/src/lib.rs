@@ -293,8 +293,9 @@ impl BlockEntity for Drill {
     /// It mines the block under it as an iron pickaxe would, a second for
     /// each point of its hardness (`world.block-info`), its cracks showing
     /// as it goes (`effects.destroy-progress`), the drops into the
-    /// inventory above it (`world.break-block`). Air and what nothing
-    /// breaks (bedrock) it leaves.
+    /// inventory above it (`world.break-block`). Leaves (`#minecraft:leaves`,
+    /// `world.block-tags`) it cuts as shears do, so they drop themselves. Air
+    /// and what nothing breaks (bedrock) it leaves.
     fn tick(&mut self, level: &Level, pos: BlockPos, _state: &BlockState) {
         let under = pos.below();
         let d = level.dimension();
@@ -313,12 +314,16 @@ impl BlockEntity for Drill {
         }
         self.ticks = 0;
         let _ = effects::destroy_progress(d, under.x, under.y, under.z, 0, -1);
+        let tool = match BlockState::parse(&below).is_tag("minecraft:leaves") {
+            true => "minecraft:shears",
+            false => "minecraft:iron_pickaxe",
+        };
         let _ = world::break_block(
             d,
             under.x,
             under.y,
             under.z,
-            Some("minecraft:iron_pickaxe"),
+            Some(tool),
             &[],
             Some((pos.x, pos.y + 1, pos.z)),
         );
@@ -883,8 +888,13 @@ impl ServerMod for Gears {
         }
         if state.starts_with(CRATE) {
             let _ = containers::set_name(dimension, pos.x, pos.y, pos.z, Some("Gear Crate"));
-            // Slot 0 takes iron ingots only; slot 1 is only for taking from.
-            let ingots = Some(vec!["minecraft:iron_ingot".to_string()]);
+            // Slot 0 takes ingots only, every mod's too (`recipe-manager.items`);
+            // slot 1 is only for taking from.
+            let ingots: Vec<String> = recipe_manager::items()
+                .into_iter()
+                .filter(|i| i.ends_with("_ingot"))
+                .collect();
+            let ingots = Some(ingots);
             let _ = containers::set_slot_rule(dimension, pos.x, pos.y, pos.z, 0, ingots.as_deref());
             let _ = containers::set_slot_rule(dimension, pos.x, pos.y, pos.z, 1, Some(&[]));
             // Opened as a press of its own (capability `menus`): its input
